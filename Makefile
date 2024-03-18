@@ -348,11 +348,11 @@ else
     SAMPLE_ENABLED := 0
   else
     CUDALIB := $(shell echo $(CUDALIB) | sed "s/ .*//" | sed "s/\/libcuda.so//" )
-    LIBRARIES += -L$(CUDALIB) -lcuda
+    LIBRARIES += -L$(CUDALIB) -lcuda -L$(CUDA_PATH)/lib64 -L$(CUDA_PATH)/extras/CUPTI/lib64 -lcupti -lcuda   -lnvidia-ml -lnvperf_host -lnvperf_target -lcurand
   endif
 endif
 
-ALL_CCFLAGS += --threads 0 --std=c++11
+ALL_CCFLAGS += --threads 0 --std=c++17
 
 INCLUDES += -I$(CUDA_PATH)/include
 
@@ -376,7 +376,7 @@ else
 	@echo "Sample is ready - all dependencies have been met"
 endif
 
-QuickRunCUDA.o:QuickRunCUDA.cpp
+QuickRunCUDA.o:QuickRunCUDA.cpp nvmlClass.h cuda_helper.h testRunner.h
 	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
 QuickRunCUDA: QuickRunCUDA.o
