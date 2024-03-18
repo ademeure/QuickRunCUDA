@@ -1,4 +1,3 @@
-
 const size_t outerloop = 5000;
 
 template <size_t innerloop>
@@ -74,8 +73,8 @@ extern "C" __global__ void kernel(const float *A, float *B, int sm0, int sm1, in
   if ((threadIdx.x & 31) == 0 && f0 != 77.0f) {
     int instructions = FMA_LOOP_ALWAYS + FMA_LOOP_SKIP + (FMA_LOOP_SKIP > 0 ? 4 : 0);
     int footprint = innerloop * instructions * 16;
-    float IPC = (float)(instructions*innerloop*outerloop)/(float)(duration);
-    printf("%d, %d, %d, %d, %d, %.5f\n", innerloop, footprint, smid, threadIdx.x/32, duration, IPC);
+    float clocksPerIteration = 1.0 / ((float)(innerloop*outerloop)/(float)(duration));
+    printf("%d, %d, %d, %d, %d, %.5f\n", innerloop, footprint, smid, threadIdx.x/32, duration, clocksPerIteration);
   }
 }
 
