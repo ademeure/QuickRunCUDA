@@ -1,4 +1,4 @@
-const size_t outerloop = 5000;
+const size_t outerloop = 25;
 
 template <size_t innerloop>
 __forceinline__ __device__ float inner(float f0, float f1, float f2, float f3) {
@@ -67,14 +67,15 @@ extern "C" __global__ void kernel(const float *A, float *B, int sm0, int sm1, in
   }
   end = clock64();
 
-  __nanosleep(1000*1000);
+  __nanosleep(1000);
 
-  int duration = (int)(end-start);  
+  int duration = (int)(end-start);
   if ((threadIdx.x & 31) == 0 && f0 != 77.0f) {
-    int instructions = FMA_LOOP_ALWAYS + FMA_LOOP_SKIP + (FMA_LOOP_SKIP > 0 ? 4 : 0);
-    int footprint = innerloop * instructions * 16;
+    //int instructions = FMA_LOOP_ALWAYS + FMA_LOOP_SKIP + (FMA_LOOP_SKIP > 0 ? 4 : 0);
+    //int footprint = innerloop * instructions * 16;
     float clocksPerIteration = 1.0 / ((float)(innerloop*outerloop)/(float)(duration));
-    printf("%d, %d, %d, %d, %d, %.5f\n", innerloop, footprint, smid, threadIdx.x/32, duration, clocksPerIteration);
+    //printf("%d, %d, %d, %d, %d, %.5f\n", innerloop, footprint, smid, threadIdx.x/32, duration, clocksPerIteration);
+    printf("%d,%.5f\n", smid, clocksPerIteration);
   }
 }
 
