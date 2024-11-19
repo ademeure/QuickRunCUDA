@@ -185,7 +185,7 @@ public:
   }
   */
 
-  void compileFileToCUBIN(char **cubinResult, char const *filename, char const *header=NULL, size_t *cubinResultSize=NULL, const char* cudaIncludePath = "/usr/local/cuda/include/") {
+  void compileFileToCUBIN(CUdevice cuDevice, char **cubinResult, char const *filename, char const *header=NULL, size_t *cubinResultSize=NULL, const char* cudaIncludePath = "/usr/local/cuda/include/") {
     if (!filename) {
       std::cerr << "\nerror: filename is empty for compileFileToCUBIN()!\n";
       exit(1);
@@ -212,15 +212,11 @@ public:
     inputFile.close();
     memBlock[totalSize] = '\x0';
 
-    // Picks the 1st CUDA device
-    CUdevice cuDevice;
-    checkCudaErrors(cuDeviceGet(&cuDevice, 0));
-
     // get compute capabilities
     int major = 0, minor = 0;
     checkCudaErrors(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, cuDevice));
     checkCudaErrors(cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, cuDevice));
-    
+
     int numCompileOptions = 0;
     char *compileParams[3];
 
@@ -281,17 +277,10 @@ public:
     }
   }
 
-  CUmodule loadCUBIN(char *cubin) {
+  CUmodule loadCUBIN(char *cubin, CUcontext context, CUdevice cuDevice) {
     CUmodule module;
-    CUcontext context;
-    CUdevice cuDevice;
-    cuDeviceGet(&cuDevice, 0);
-
-    checkCudaErrors(cuInit(0));
-    checkCudaErrors(cuCtxCreate(&context, 0, cuDevice));
     checkCudaErrors(cuModuleLoadData(&module, cubin));
     free(cubin);
-
     return module;
   }
 
