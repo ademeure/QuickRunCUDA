@@ -168,6 +168,18 @@ NVCCFLAGS   := -m${TARGET_SIZE}
 CCFLAGS     :=
 LDFLAGS     :=
 
+ifndef GPU_COMPUTE_CAPABILITY # set to defaults if: make GPU_COMPUTE_CAPABILITY=
+    # Remove decimal points, sort numerically in ascending order, and select the first (lowest) value
+    GPU_COMPUTE_CAPABILITY := $(shell nvidia-smi --query-gpu=compute_cap --format=csv,noheader | sed 's/\.//g' | sort -n | head -n 1)
+    GPU_COMPUTE_CAPABILITY := $(strip $(GPU_COMPUTE_CAPABILITY))
+endif
+
+ifneq ($(GPU_COMPUTE_CAPABILITY),)
+  # Add 'a' suffix to sm_xx for compute capabilities 90 and 100
+  SM_COMPUTE_CAPABILITY := $(GPU_COMPUTE_CAPABILITY)$(if $(filter 90 100,$(GPU_COMPUTE_CAPABILITY)),a,)
+  NVCCFLAGS += --generate-code arch=compute_$(GPU_COMPUTE_CAPABILITY),code=[compute_$(GPU_COMPUTE_CAPABILITY),sm_$(SM_COMPUTE_CAPABILITY)]
+endif
+
 # build flags
 ifeq ($(TARGET_OS),darwin)
     LDFLAGS += -rpath $(CUDA_PATH)/lib
@@ -376,10 +388,7 @@ else
 	@echo "Sample is ready - all dependencies have been met"
 endif
 
-QuickRunCUDA.o:QuickRunCUDA.cpp nvmlClass.h cuda_helper.h testRunner.h
-	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
-
-QuickRunCUDA: QuickRunCUDA.o
+QuickRunCUDA: QuickRunCUDA.cpp
 	$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES)
 
 run: build
@@ -388,7 +397,7 @@ run: build
 testrun: build
 
 clean:
-	rm -f QuickRunCUDA QuickRunCUDA.o
+	rm -f QuickRunCUDA QuickRunCUDA.o output.cubin
 	rm -rf ../../../bin/$(TARGET_ARCH)/$(TARGET_OS)/$(BUILD_TYPE)/QuickRunCUDA
 
 clobber: clean

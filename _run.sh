@@ -1,0 +1,1 @@
+ncu -o profile --clock-control none --set full --import-source yes -c 1 -f ./QuickRunCUDA -f tests/1_RELU.cu -n 10000 -t 256 -T 100 && nvdisasm output.cubin --print-code > sass && nvdisasm output.cubin --print-line-info-inline > sass_lineinfo && nvdisasm output.cubin --print-life-ranges
