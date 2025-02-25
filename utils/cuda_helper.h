@@ -1,4 +1,4 @@
-#define GPU_SM_COUNT 128
+#define GPU_SM_COUNT 132 // H100 SXM5 & H200
 #define FLOPS_PER_SM 256
 #define DEFAULT_GPU_CLOCK 735
 #define MAX_FLOPS_PER_CLOCK ((GPU_SM_COUNT * FLOPS_PER_SM) * 1e6f)
@@ -217,14 +217,23 @@ public:
     checkCudaErrors(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, cuDevice));
     checkCudaErrors(cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, cuDevice));
 
-    int numCompileOptions = 0;
-    char *compileParams[3];
+    int numCompileOptions = 2;
+    char *compileParams[4];
+
+    std::string other_options_0 = "--generate-line-info";
+    compileParams[0] = reinterpret_cast<char *>(malloc(sizeof(char) * (other_options_0.length() + 1)));
+    strcpy(compileParams[0], other_options_0.c_str());
+
+    std::string other_options_1 = "-use_fast_math";
+    compileParams[1] = reinterpret_cast<char *>(malloc(sizeof(char) * (other_options_1.length() + 1)));
+    strcpy(compileParams[1], other_options_1.c_str());
 
     // Compile cubin for the GPU arch on which are going to run cuda kernel.
     // HACK: Turn sm_90 into sm_90a
     std::string compileOptions;
     compileOptions = "--gpu-architecture=sm_";
     compileParams[numCompileOptions] = reinterpret_cast<char *>(malloc(sizeof(char) * (compileOptions.length() + 11)));
+
   #if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
     sprintf_s(compileParams[numCompileOptions], sizeof(char) * (compileOptions.length() + 10),
               "%s%d%d%s", compileOptions.c_str(), major, minor, (major == 9 && minor == 0) ? "a" : "");
