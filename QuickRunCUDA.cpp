@@ -85,6 +85,8 @@ struct CmdLineArgs {
 	int timedRuns = 100;                     // Number of timed runs
 	float perfMultiplier = 0.0f;             // Performance multiplier
 	float perfMultiplierPerThread = 0.0f;    // Per-thread performance multiplier
+	float perfSpeedOfLight = 0.0f;           // Speed of light (in perf metric units)
+
 	std::string perfMultiplier_unit = "ops/s"; // Unit for performance metric
 	
 	// Compilation and kernel settings
@@ -138,6 +140,7 @@ void setupCommandLineParser(CLI::App& app, CmdLineArgs& args) {
 	perf_group->add_option("-P,--perfMultiplier", args.perfMultiplier, "Performance multiplier to convert time to ops/s");
 	perf_group->add_option("-N,--perfMultiplierPerThread", args.perfMultiplierPerThread, "Performance multiplier per thread");
 	perf_group->add_option("-U,--perfMultiplier-unit", args.perfMultiplier_unit, "Performance multiplier unit (ops/s, ms, us, ns)");
+	perf_group->add_option("-L,--perfSpeedOfLight", args.perfSpeedOfLight, "Speed of light (e.g. 2000 for GB/s on H100 PCIe)");
 	
 	// Kernel source and compilation
 	auto kernel_source_group = app.add_option_group("Kernel Source and Compilation");
@@ -487,8 +490,14 @@ int run_cuda_test(const CmdLineArgs& args) {
 		float multiplier = args.perfMultiplier;
 		if (args.perfMultiplierPerThread > 0.0f) {
 			multiplier = args.perfMultiplierPerThread * args.threadsPerBlockX * args.numBlocksX;
+		}
+    	if (multiplier > 0.0f) {
 			float perf = args.timedRuns * multiplier / (total_time / 1000.f);
 			printf(" ==> %.4f %s", perf, args.perfMultiplier_unit.c_str());
+			if (args.perfSpeedOfLight > 0.0f) {
+				float perf_percentage = 100.0f * perf / args.perfSpeedOfLight;
+				printf(" ==> %.3f%%", perf_percentage);
+			}
 		}
 		printf("\n\n");
 		
