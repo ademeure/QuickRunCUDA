@@ -11,13 +11,11 @@ HOST_COMPILER ?= g++
 # NVCC compiler
 NVCC := $(CUDA_PATH)/bin/nvcc -ccbin $(HOST_COMPILER)
 
-# Detect host architecture and operating system
+# Detect host architecture
 HOST_ARCH := $(shell uname -m)
-HOST_OS   := $(shell uname -s 2>/dev/null | tr "[:upper:]" "[:lower:]")
 
-# Set target architecture to host architecture by default
-TARGET_ARCH ?= $(HOST_ARCH)
-TARGET_OS ?= $(HOST_OS)
+# Set target architecture to host architecture
+TARGET_ARCH := $(HOST_ARCH)
 
 # Debug build flags
 ifeq ($(dbg),1)
@@ -27,14 +25,13 @@ else
     BUILD_TYPE := release
 endif
 
-# Compiler flags
+# Common NVCC flags
 NVCCFLAGS := -m64
 CCFLAGS   :=
 LDFLAGS   :=
 
-# Add C++17 support
-ALL_CCFLAGS := $(NVCCFLAGS)
-ALL_CCFLAGS += --threads 0 --std=c++17
+# Add C++17 support and compiler flags
+ALL_CCFLAGS := --threads 0 --std=c++17
 ALL_CCFLAGS += $(addprefix -Xcompiler ,$(CCFLAGS))
 
 # GPU Compute capability
@@ -45,26 +42,30 @@ ifndef GPU_COMPUTE_CAPABILITY
     GPU_COMPUTE_CAPABILITY := $(strip $(GPU_COMPUTE_CAPABILITY))
 endif
 
-# If we found a GPU, add the appropriate flags
+# If we found a GPU, add the appropriate architecture flags
 ifneq ($(GPU_COMPUTE_CAPABILITY),)
-  # Add 'a' suffix to sm_xx for compute capabilities 90 and 100
-  SM_COMPUTE_CAPABILITY := $(GPU_COMPUTE_CAPABILITY)$(if $(filter 90 100,$(GPU_COMPUTE_CAPABILITY)),a,)
-  NVCCFLAGS += --generate-code arch=compute_$(GPU_COMPUTE_CAPABILITY),code=[compute_$(GPU_COMPUTE_CAPABILITY),sm_$(SM_COMPUTE_CAPABILITY)]
+    # Add 'a' suffix to sm_xx for compute capabilities 90 and 100
+    SM_COMPUTE_CAPABILITY := $(GPU_COMPUTE_CAPABILITY)$(if $(filter 90 100,$(GPU_COMPUTE_CAPABILITY)),a,)
+    GENCODE_FLAGS := --generate-code arch=compute_$(GPU_COMPUTE_CAPABILITY),code=[compute_$(GPU_COMPUTE_CAPABILITY),sm_$(SM_COMPUTE_CAPABILITY)]
+    NVCCFLAGS += $(GENCODE_FLAGS)
 endif
 
 # Linker flags
-ALL_LDFLAGS := $(ALL_CCFLAGS)
-ALL_LDFLAGS += $(addprefix -Xlinker ,$(LDFLAGS))
+ALL_LDFLAGS := $(addprefix -Xlinker ,$(LDFLAGS))
 
-# Libraries, start by finding libcuda.so
+# Libraries
+LIBRARIES :=
+
+# Find libcuda.so on Linux
 CUDA_SEARCH_PATH := $(CUDA_PATH)/lib64/stubs $(CUDA_PATH)/lib/stubs
 CUDALIB := $(shell find -L $(CUDA_SEARCH_PATH) -maxdepth 1 -name libcuda.so 2> /dev/null | head -1)
 
 ifeq ("$(CUDALIB)","")
-  $(info >>> WARNING - libcuda.so not found, CUDA Driver is not installed. Please re-install the driver. <<<)
+    $(info >>> WARNING - libcuda.so not found, CUDA Driver is not installed. Please re-install the driver. <<<)
 else
-  CUDALIB := $(shell echo $(CUDALIB) | sed "s/ .*//" | sed "s/\/libcuda.so//" )
-  LIBRARIES := -L$(CUDALIB) -lcuda -L$(CUDA_PATH)/lib64 -lcupti -lnvidia-ml -lnvperf_host -lnvperf_target -lcurand
+    CUDALIB := $(shell echo $(CUDALIB) | sed "s/ .*//" | sed "s/\/libcuda.so//" )
+    LIBRARIES += -L$(CUDALIB) -lcuda
+    LIBRARIES += -L$(CUDA_PATH)/lib64 -lcupti -lnvidia-ml -lnvperf_host -lnvperf_target -lcurand
 endif
 
 # Always add NVRTC
@@ -82,7 +83,7 @@ all: build
 build: QuickRunCUDA
 
 QuickRunCUDA: $(SOURCES)
-	$(NVCC) $(ALL_LDFLAGS) $(INCLUDES) -o $@ $+ $(LIBRARIES)
+	$(NVCC) $(NVCCFLAGS) $(ALL_CCFLAGS) $(ALL_LDFLAGS) $(INCLUDES) -o $@ $+ $(LIBRARIES)
 
 run: build
 	./QuickRunCUDA
