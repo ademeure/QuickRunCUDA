@@ -63,6 +63,7 @@
 // Global CUDA variables
 CUdevice cuDeviceGlobal;
 CUcontext cuContextGlobal;
+CUdeviceptr d_flush = 0;  // L2 flush buffer
 
 /**
  * Structure to hold all command line arguments
@@ -94,8 +95,8 @@ struct CmdLineArgs {
 	std::string perfMultiplier_unit = "ops/s"; // Unit for performance metric
 
 	// Compilation and kernel settings
-	std::string header = "";                 // Header to prepend to kernel
 	std::string kernel_filename = "default_kernel.cu"; // Kernel source file
+	std::string header = "";                 // Header to prepend to kernel
 	bool reuse_cubin = false;                // Reuse existing compiled cubin
 
 	// Operational modes
@@ -106,9 +107,20 @@ struct CmdLineArgs {
 	std::string dump_c_array = "";           // File to dump C array to
 	std::string dump_c_format = "raw";       // Format for C array dump
 	std::string load_c_array = "";           // File to load C array from
+	std::string reference_c_filename = "";   // Reference file to compare C array against
+	float compare_tolerance = 0.0f;          // Floating point comparison tolerance
 
 	// Positional arguments
 	std::vector<std::string> positional_args; // For kernel filename as positional argument
+
+	// Add to CmdLineArgs struct
+	enum L2FlushMode {
+		NO_FLUSH = 0,
+		FLUSH_AT_START = 1,
+		FLUSH_EVERY_RUN = 2
+	} l2FlushMode = NO_FLUSH;
+
+	bool listIndividualTimes = false;        // List individual run times
 };
 
 /**
@@ -119,9 +131,26 @@ struct CmdLineArgs {
 void setupCommandLineParser(CLI::App& app, CmdLineArgs& args) {
 	// Operational modes
 	auto modes_group = app.add_option_group("Operational Modes");
-	modes_group->add_flag("--server", args.server_mode, "Run in server mode for remote control");
-	modes_group->add_flag("--reuse-cubin", args.reuse_cubin, "Reuse compiled cubin in output.cubin instead of recompiling");
-	modes_group->add_option("--clock-speed", args.clock_speed, "GPU clock in MHz (0 = no force) (init only for server mode)");
+	modes_group->add_flag("--server", args.server_mode, "Run in server mode for subprocess control (advanced)");
+	modes_group->add_option("--clock-speed", args.clock_speed, "GPU clock in MHz (0=no force, 1=unlocked) (does not reset after run)");
+
+	// Kernel execution configuration
+	auto kernel_exec_group = app.add_option_group("Kernel Execution Configuration");
+	kernel_exec_group->add_option("-t,--threadsPerBlockX", args.threadsPerBlockX, "Number of threads per block");
+	kernel_exec_group->add_option("-n,--numBlocksX", args.numBlocksX, "Number of blocks");
+	kernel_exec_group->add_option("-s,--sharedMemoryBlockBytes", args.sharedMemoryBlockBytes, "Shared memory size per block in bytes");
+	kernel_exec_group->add_option("-o,--sharedMemoryCarveoutBytes", args.sharedMemoryCarveoutBytes, "Shared memory carveout in bytes");
+	kernel_exec_group->add_flag("-i,--runInitKernel", args.runInitKernel, "Run initialization kernel before main kernel");
+	kernel_exec_group->add_option("--l2flush", args.l2FlushMode, "L2 flush mode: 0=none, 1=at start, 2=every run");
+
+	// Performance measurement
+	auto perf_group = app.add_option_group("Performance Measurement");
+	perf_group->add_option("-T,--timedRuns", args.timedRuns, "Number of timed kernel executions");
+	perf_group->add_option("-P,--perfMultiplier", args.perfMultiplier, "Performance multiplier to convert time to ops/s");
+	perf_group->add_option("-N,--perfMultiplierPerThread", args.perfMultiplierPerThread, "Performance multiplier per thread");
+	perf_group->add_option("-U,--perfMultiplier-unit", args.perfMultiplier_unit, "Performance multiplier unit (ops/s, ms, us, ns)");
+	perf_group->add_option("-L,--perfSpeedOfLight", args.perfSpeedOfLight, "Speed of light (e.g. 2000 for GB/s on H100 PCIe)");
+	perf_group->add_flag("--timesPerRun", args.listIndividualTimes, "List individual run times");
 
 	// Array configuration
 	auto array_group = app.add_option_group("Array Configuration");
@@ -137,39 +166,26 @@ void setupCommandLineParser(CLI::App& app, CmdLineArgs& args) {
 				   str; });
 	array_group->add_option("--randomSeed", args.randomSeed, "Base seed for random number generation");
 
-	// Kernel execution configuration
-	auto kernel_exec_group = app.add_option_group("Kernel Execution Configuration");
-	kernel_exec_group->add_option("-t,--threadsPerBlockX", args.threadsPerBlockX, "Number of threads per block");
-	kernel_exec_group->add_option("-n,--numBlocksX", args.numBlocksX, "Number of blocks");
-	kernel_exec_group->add_option("-s,--sharedMemoryBlockBytes", args.sharedMemoryBlockBytes, "Shared memory size per block in bytes");
-	kernel_exec_group->add_option("-o,--sharedMemoryCarveoutBytes", args.sharedMemoryCarveoutBytes, "Shared memory carveout in bytes");
-	kernel_exec_group->add_flag("-i,--runInitKernel", args.runInitKernel, "Run initialization kernel before main kernel");
-
-	// Performance measurement
-	auto perf_group = app.add_option_group("Performance Measurement");
-	perf_group->add_option("-T,--timedRuns", args.timedRuns, "Number of timed kernel executions");
-	perf_group->add_option("-P,--perfMultiplier", args.perfMultiplier, "Performance multiplier to convert time to ops/s");
-	perf_group->add_option("-N,--perfMultiplierPerThread", args.perfMultiplierPerThread, "Performance multiplier per thread");
-	perf_group->add_option("-U,--perfMultiplier-unit", args.perfMultiplier_unit, "Performance multiplier unit (ops/s, ms, us, ns)");
-	perf_group->add_option("-L,--perfSpeedOfLight", args.perfSpeedOfLight, "Speed of light (e.g. 2000 for GB/s on H100 PCIe)");
-
-	// Kernel source and compilation
-	auto kernel_source_group = app.add_option_group("Kernel Source and Compilation");
-	kernel_source_group->add_option("-H,--header", args.header, "Header string to prepend to kernel source");
-	kernel_source_group->add_option("-f,--kernel-filename", args.kernel_filename, "Kernel source filename")
-		->check(CLI::ExistingFile);
-
 	// Kernel arguments
 	auto kernel_args_group = app.add_option_group("Kernel Arguments");
 	kernel_args_group->add_option("-0,--kernel-int-arg0", args.kernel_int_args[0], "Kernel integer argument 0");
 	kernel_args_group->add_option("-1,--kernel-int-arg1", args.kernel_int_args[1], "Kernel integer argument 1");
 	kernel_args_group->add_option("-2,--kernel-int-arg2", args.kernel_int_args[2], "Kernel integer argument 2");
 
+	// Kernel source and compilation
+	auto kernel_source_group = app.add_option_group("Kernel Source and Compilation");
+	kernel_source_group->add_option("-f,--kernel-filename", args.kernel_filename, "Kernel source filename (same as positional)")
+		->check(CLI::ExistingFile);
+	kernel_source_group->add_option("-H,--header", args.header, "Header string to prepend to kernel source");
+	modes_group->add_flag("--reuse-cubin", args.reuse_cubin, "Reuse compiled cubin in output.cubin instead of recompiling");
+
 	// Array I/O
 	auto array_io_group = app.add_option_group("Array I/O");
 	array_io_group->add_option("--dump-c", args.dump_c_array, "Dump C array to specified file");
 	array_io_group->add_option("--dump-c-format", args.dump_c_format, "Format for C array dump (raw, int_csv, float_csv)");
 	array_io_group->add_option("--load-c", args.load_c_array, "Load C array from specified file");
+	array_io_group->add_option("--reference-c", args.reference_c_filename, "Compare C array to reference file (raw format)");
+	array_io_group->add_option("--compare-tolerance", args.compare_tolerance, "Floating point tolerance for C vs reference C");
 
 	// Add positional argument for kernel filename
 	app.add_option("kernel", args.positional_args, "Kernel source filename")
@@ -233,6 +249,12 @@ CmdLineArgs parseCommandString(const std::string& cmd) {
     return cmd_args;
 }
 
+void flushL2Cache() {
+    constexpr size_t L2_FLUSH_SIZE = 200 * 1024 * 1024;
+    if (d_flush == 0) checkCudaErrors(cuMemAlloc(&d_flush, L2_FLUSH_SIZE));
+    checkCudaErrors(cuMemsetD8(d_flush, 0, L2_FLUSH_SIZE));
+}
+
 /**
  * Run the CUDA test using the provided command line arguments
  * @param args Command line arguments struct
@@ -255,9 +277,7 @@ int main(int argc, char **argv) {
 		CLI11_PARSE(app, argc, argv);
 
 		// If positional arg provided, use it as kernel filename
-		if (!args.positional_args.empty()) {
-			args.kernel_filename = args.positional_args[0];
-		}
+		if (!args.positional_args.empty()) args.kernel_filename = args.positional_args[0];
 
 		// Initialize CUDA (unfortunately a bit slow which is another reason why server mode is useful)
 		checkCudaErrors(cuInit(0));
@@ -266,13 +286,13 @@ int main(int argc, char **argv) {
 
 		// Set GPU clock speed if requested
 		if (args.clock_speed > 0) {
-			nvmlClass nvml(0, args.clock_speed);
+			nvmlClass nvml(0, args.clock_speed, false, false, false);
 		}
 
 		// Run in server mode (loop via IPC) or normal mode (single run based on provided arguments)
 		if (!args.server_mode) {
 			// Run the test directly
-			return run_cuda_test(args);
+			int result = run_cuda_test(args);
 		} else {
 			// Server mode - loop waiting for new commands via IPC
 			IPCHelper ipc;
@@ -330,7 +350,7 @@ int main(int argc, char **argv) {
  * @return Exit code (0 for success)
  */
 int run_cuda_test(const CmdLineArgs& args) {
-	// Allocate device memory
+	// Allocate memory
 	CUdeviceptr d_A, d_B, d_C;
 	size_t sizeA = args.arrayDwordsA * sizeof(uint);
 	size_t sizeB = args.arrayDwordsB * sizeof(uint);
@@ -338,6 +358,7 @@ int run_cuda_test(const CmdLineArgs& args) {
 	checkCudaErrors(cuMemAlloc(&d_A, sizeA));
 	checkCudaErrors(cuMemAlloc(&d_B, sizeB));
 	checkCudaErrors(cuMemAlloc(&d_C, sizeC));
+	uint *h_C = reinterpret_cast<uint *>(malloc(sizeC));
 
 	// Compile or load kernel
 	char *cubin;
@@ -383,7 +404,6 @@ int run_cuda_test(const CmdLineArgs& args) {
 
 	// Load C array from file if specified, otherwise initialize with zeros
 	if (!args.load_c_array.empty()) {
-		uint *h_C = reinterpret_cast<uint *>(malloc(sizeC));
 		std::ifstream infile(args.load_c_array, std::ios::binary);
 		if (!infile) {
 			fprintf(stderr, "Failed to open C array input file: %s\n", args.load_c_array.c_str());
@@ -396,7 +416,6 @@ int run_cuda_test(const CmdLineArgs& args) {
 			exit(EXIT_FAILURE);
 		}
 		checkCudaErrors(cuMemcpyHtoD(d_C, h_C, sizeC));
-		free(h_C);
 	} else {
 		checkCudaErrors(cuMemsetD8(d_C, 0, sizeC));
 	}
@@ -458,6 +477,7 @@ int run_cuda_test(const CmdLineArgs& args) {
 									 args.sharedMemoryBlockBytes, 0, /* shared mem, stream */
 									 kernel_args, 0));
 	}
+	if (args.l2FlushMode >= CmdLineArgs::FLUSH_AT_START) flushL2Cache();
 
 	// Configure and launch the main kernel
 	checkCudaErrors(cuFuncSetAttribute(kernel_addr, CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT,
@@ -470,51 +490,93 @@ int run_cuda_test(const CmdLineArgs& args) {
 								  args.sharedMemoryBlockBytes, 0, /* shared mem, stream */
 								  kernel_args, 0));
 	// Wait for kernel to complete
+	if (args.l2FlushMode == CmdLineArgs::FLUSH_AT_START) flushL2Cache();
 	checkCudaErrors(cuCtxSynchronize());
 
 	// Perform timed runs if requested
 	if (args.timedRuns > 0) {
-		// Create timing event
-		float total_time = 0.f;
-		CUevent start, stop;
-		checkCudaErrors(cuEventCreate(&start, CU_EVENT_DEFAULT));
-		checkCudaErrors(cuEventCreate(&stop, CU_EVENT_DEFAULT));
-		// Start timing
-		checkCudaErrors(cuEventRecord(start, nullptr));
-		// Run the kernel N times
-		for (int i = 0; i < args.timedRuns; i++) {
-			checkCudaErrors(cuLaunchKernel(kernel_addr,
-										 args.numBlocksX, 1, 1,        /* grid dim */
-										 args.threadsPerBlockX, 1, 1,  /* block dim */
-										 args.sharedMemoryBlockBytes, 0, /* shared mem, stream */
-										 kernel_args, 0));
+		// Individual events have a slight overhead so avoid them unless we flush the L2 or list individual times
+		bool individual_events = (args.l2FlushMode >= CmdLineArgs::FLUSH_EVERY_RUN || args.listIndividualTimes);
+		// Create overall timing events to include L2 flushes
+		CUevent overall_start, overall_stop;
+		checkCudaErrors(cuEventCreate(&overall_start, CU_EVENT_DEFAULT));
+		checkCudaErrors(cuEventCreate(&overall_stop, CU_EVENT_DEFAULT));
+
+		// Create arrays of start/stop events and initialize them
+		CUevent* start_events = new CUevent[args.timedRuns];
+		CUevent* stop_events = new CUevent[args.timedRuns];
+		float* run_times = new float[args.timedRuns];
+		for (int i = 0; i < (individual_events ? args.timedRuns : 0); i++) {
+			checkCudaErrors(cuEventCreate(&start_events[i], CU_EVENT_DEFAULT));
+			checkCudaErrors(cuEventCreate(&stop_events[i], CU_EVENT_DEFAULT));
 		}
-		// Stop timing
-		checkCudaErrors(cuEventRecord(stop, nullptr));
-		checkCudaErrors(cuEventSynchronize(start));
-		checkCudaErrors(cuEventSynchronize(stop));
-		checkCudaErrors(cuEventElapsedTime(&total_time, start, stop));
+
+		// Run the kernel N times, recording events without synchronizing
+		checkCudaErrors(cuEventRecord(overall_start, nullptr));
+		for (int i = 0; i < args.timedRuns; i++) {
+			if (args.l2FlushMode == CmdLineArgs::FLUSH_EVERY_RUN) flushL2Cache();
+
+			if (individual_events) { checkCudaErrors(cuEventRecord(start_events[i], nullptr)); }
+			checkCudaErrors(cuLaunchKernel(kernel_addr,
+										 args.numBlocksX, 1, 1,
+										 args.threadsPerBlockX, 1, 1,
+										 args.sharedMemoryBlockBytes, 0,
+										 kernel_args, 0));
+			if (individual_events) { checkCudaErrors(cuEventRecord(stop_events[i], nullptr)); }
+		}
+		checkCudaErrors(cuEventRecord(overall_stop, nullptr));
+		checkCudaErrors(cuEventSynchronize(overall_stop));
+
+		// Calculate elapsed time for each run
+		float total_time = 0.f;
+		for (int i = 0; i < (individual_events ? args.timedRuns : 0); i++) {
+			checkCudaErrors(cuEventElapsedTime(&run_times[i], start_events[i], stop_events[i]));
+			total_time += run_times[i];
+		}
+
+		// Calculate overall time including L2 flushes
+		float overall_time = 0.f;
+		checkCudaErrors(cuEventElapsedTime(&overall_time, overall_start, overall_stop));
+
+		// Print individual times when requested
+		if (args.listIndividualTimes) {
+			printf("Individual runtimes: ");
+			for (int i = 0; i < args.timedRuns; i++) {
+				printf("%.5f %s", run_times[i], i < args.timedRuns - 1 ? " / " : "\n");
+			}
+		}
 
 		// Print average time per run
-		float avg_time = total_time / args.timedRuns;
+		float avg_time = (individual_events ? total_time : overall_time) / args.timedRuns;
 		printf("\n%.5f ms", avg_time);
+
+		// Print overall time including L2 flushes for comparison
+		if (individual_events) {
+			printf(" (%.5f ms including L2 flushes)", overall_time / args.timedRuns);
+		}
 
 		// Print performance metric if requested
 		float multiplier = args.perfMultiplier;
 		if (args.perfMultiplierPerThread > 0.0f) {
 			multiplier = args.perfMultiplierPerThread * args.threadsPerBlockX * args.numBlocksX;
 		}
-    	if (multiplier > 0.0f) {
-			float perf = args.timedRuns * multiplier / (total_time / 1000.f);
+		if (multiplier > 0.0f) {
+			float perf = multiplier / (avg_time / 1000.f);
 			printf(" ==> %.4f %s", perf, args.perfMultiplier_unit.c_str());
-			if (args.perfSpeedOfLight > 0.0f) {
-				float perf_percentage = 100.0f * perf / args.perfSpeedOfLight;
-				printf(" ==> %.3f%%", perf_percentage);
-			}
+			if (args.perfSpeedOfLight > 0.0f) printf(" ==> %.3f%%", 100.0f * perf / args.perfSpeedOfLight);
 		}
 		printf("\n\n");
-		checkCudaErrors(cuEventDestroy(start));
-		checkCudaErrors(cuEventDestroy(stop));
+
+		// Clean up events
+		checkCudaErrors(cuEventDestroy(overall_start));
+		checkCudaErrors(cuEventDestroy(overall_stop));
+		for (int i = 0; i < (individual_events ? args.timedRuns : 0); i++) {
+			checkCudaErrors(cuEventDestroy(start_events[i]));
+			checkCudaErrors(cuEventDestroy(stop_events[i]));
+		}
+		delete[] start_events;
+		delete[] stop_events;
+		delete[] run_times;
 	}
 
 	// Ensure all kernels have completed
@@ -544,13 +606,44 @@ int run_cuda_test(const CmdLineArgs& args) {
 		}
 	}
 
+	// Optionally compare with reference file
+	if (!args.reference_c_filename.empty()) {
+		std::ifstream ref_file(args.reference_c_filename, std::ios::binary | std::ios::ate);
+		if (!ref_file || ref_file.tellg() != sizeC) {
+			fprintf(stderr, "Reference file missing or wrong size\n");
+			exit(EXIT_FAILURE);
+		}
+		ref_file.seekg(0);
+
+		uint *ref_C = reinterpret_cast<uint *>(malloc(sizeC));
+		ref_file.read(reinterpret_cast<char*>(ref_C), sizeC);
+		checkCudaErrors(cuMemcpyDtoH(h_C, d_C, sizeC));
+
+		for (size_t i = 0; i < args.arrayDwordsC; i++) {
+			if (args.compare_tolerance > 0.0f) {
+				float diff = std::abs(*reinterpret_cast<float*>(&h_C[i]) - *reinterpret_cast<float*>(&ref_C[i]));
+				if (diff > args.compare_tolerance) {
+					printf("First difference at index %zu: %.8f vs %.8f (diff %.8f)\n",
+						   i, *reinterpret_cast<float*>(&h_C[i]),
+						   *reinterpret_cast<float*>(&ref_C[i]), diff);
+					break;
+				}
+			} else if (h_C[i] != ref_C[i]) {
+				printf("First difference at index %zu: %u vs %u\nHex: %08x vs %08x\nFP32: %.4f vs %.4f\n",
+					   i, h_C[i], ref_C[i], h_C[i], ref_C[i],
+					   *reinterpret_cast<float*>(&h_C[i]), *reinterpret_cast<float*>(&ref_C[i]));
+				break;
+			}
+		}
+		free(ref_C);
+	}
+
 	// Clean up resources
+	free(h_C);
 	checkCudaErrors(cuMemFree(d_A));
 	checkCudaErrors(cuMemFree(d_B));
 	checkCudaErrors(cuMemFree(d_C));
-	free(h_A);
-	free(h_B);
-	free(h_C);
+	if (d_flush) { checkCudaErrors(cuMemFree(d_flush)); d_flush = 0; }
 	checkCudaErrors(cuModuleUnload(module));
 
 	return 0;
