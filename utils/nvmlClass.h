@@ -87,37 +87,47 @@ typedef struct _nvml_stats {
 
 class nvmlClass {
   public:
-    nvmlClass( int const &deviceID, uint force_clock=0, std::string const &filename="gpuStats.csv", bool write_csv=true ) :
-        time_steps_ {}, filename_ { filename }, outfile_ {}, device_ {},
+    nvmlClass( int const &deviceID, uint force_clock=0, bool gather_stats=true, bool force_fan_speed=true,
+               bool write_csv=true, std::string const &filename="gpuStats.csv" ) :
+        time_steps_ {}, filename_ { filename }, outfile_ {}, device_ {}, forced_fan_ { force_fan_speed },
         loop_ { false }, outer_loop_ { true }, inside_loop_ { false }, write_csv_ { write_csv } {
 
         // Initialize NVML library and get device handle
         NVML_RT_CALL( nvmlInit() );
         NVML_RT_CALL( nvmlDeviceGetHandleByIndex(deviceID, &device_) );
-
         time_steps_.reserve( size_of_vector );
 
-        if (force_clock) {
+        if (force_clock == 1) {
+            unlockClocks();
+        } else if (force_clock > 1) {
             lockClocks(force_clock);
+        }
+        if (forced_fan_) {
+            nvmlDeviceSetFanSpeed_v2(device_, 0, 100); // maximum fan speed
         }
 
         if (write_csv) {
             outfile_.open( filename_, std::ios::out );
             printHeader();
         }
-
-        nvmlDeviceSetFanSpeed_v2(device_, 0, 100); // Force maximum fan speed
-        startThread();
+        if (gather_stats) {
+            startThread();
+        } else {
+            thread_alive_ = false;
+        }
     }
 
     ~nvmlClass() {
         killThread(write_csv_);
-        nvmlDeviceSetDefaultFanSpeed_v2(device_, 0);  // Set fan speed back to auto (default)
+        if (forced_fan_) {
+            nvmlDeviceSetFanSpeed_v2(device_, 0, 0);  // Set fan speed back to auto (default)
+        }
         NVML_RT_CALL(nvmlShutdown());
     }
 
     void startThread() {
         thread_alive_ = true;
+        loop_ = true, outer_loop_ = true, inside_loop_ = true;
         statsThread_ = std::thread(&nvmlClass::sampleStatsLoop, this);
     }
 
@@ -264,13 +274,11 @@ class nvmlClass {
 
     void sampleStatsLoop() {
         nvmlStats device_stats {};
-        loop_ = true;
-        outer_loop_ = true;
         while ( outer_loop_ ) {
             while ( loop_ ) {
                 inside_loop_ = true;
                 device_stats.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-                
+
                 auto field_value_struct = nvmlFieldValue_t();
                 field_value_struct.fieldId = NVML_FI_DEV_POWER_INSTANT;
                 field_value_struct.value.uiVal = 0;
@@ -309,6 +317,7 @@ class nvmlClass {
 
     bool               thread_alive_;
     bool               write_csv_;
+    bool               forced_fan_;
     volatile bool      loop_;
     volatile bool      outer_loop_;
     volatile bool      inside_loop_;
