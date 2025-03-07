@@ -1,5 +1,4 @@
-COMMIT_CHANGES = False
-
+#!/usr/bin/env python
 import subprocess
 import sys
 import os
@@ -11,24 +10,65 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileModifiedEvent
 from threading import Timer
 import openai
+import argparse
+
+import os
+import time
+import subprocess
+from pathlib import Path
+
+class SubprocessController:
+    def __init__(self, subprocess_popen):
+        self.cmd_pipe_path = "/tmp/gitandrun_cmd"
+        self.resp_pipe_path = "/tmp/gitandrun_resp"
+        self.process = subprocess.Popen(subprocess_popen.split(' '))
+        while not (os.path.exists(self.cmd_pipe_path) and os.path.exists(self.resp_pipe_path)):
+            time.sleep(0.1)
+
+    def send_command(self, args, read_response=True):
+        cmd = " ".join(str(arg) for arg in args)
+        with open(self.cmd_pipe_path, "w") as f:
+            f.write(cmd)
+        if read_response:
+            with open(self.resp_pipe_path, "r") as f:
+                return f.read()
+        return None
+
+    def __del__(self):
+        try: self.send_command(["exit"], False)
+        except: pass
+        self.process.terminate()
+        self.process.wait()
 
 logging.basicConfig(filename='directory_watcher.log', level=logging.ERROR,
                     format='%(asctime)s %(levelname)s %(message)s')
 
 class DirectoryChangeHandler(FileSystemEventHandler):
-    def __init__(self, command, output_file, repo_path, openai_key=None, max_summary_length=200):
+    def __init__(self, command, output_file, repo_path, openai_key=None, max_summary_length=200,
+                 max_input_characters=10000, auto_commit=False, auto_push=False,
+                 use_ai_summary=False, dry_run=False, subprocess_args_file=None):
         self.command = command
         self.output_file = os.path.abspath(output_file)
         self.repo_path = os.path.abspath(repo_path)
         self.openai_key = openai_key
         self.max_summary_length = max_summary_length
-        self.max_input_characters = None
+        self.max_input_characters = max_input_characters
         self.is_handling_event = False
         self.lock = threading.Lock()
         self.debounce_timer = None
         self.last_modified_path = None
         self.last_modified_time = None
         self.has_command_error = False
+        self.auto_push = auto_push
+        self.auto_commit = auto_commit
+        self.dry_run = dry_run
+        self.use_ai_summary = use_ai_summary
+        self.subprocess_args_file = subprocess_args_file
+        self.subprocess_controller = SubprocessController(command) if subprocess_args_file else None
+
+    def __del__(self):
+        if self.subprocess_controller:
+            del self.subprocess_controller
 
     def on_modified(self, event):
         if not isinstance(event, FileModifiedEvent):
@@ -66,33 +106,48 @@ class DirectoryChangeHandler(FileSystemEventHandler):
                 threading.Thread(target=self.handle_event).start()
 
     def handle_event(self):
-        # Run the given command and stream the output in real-time
         with open(self.output_file, 'w') as f:
             self.has_command_error = False
             with self.lock:
                 self.is_handling_event = True
-            process = subprocess.Popen(f"bash -c \"{self.command}\"", stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1, shell=True)
 
-            for line in iter(process.stdout.readline, ''):
-                print(line, end='', flush=True)
-                f.write(line)
-                f.flush()
+            if self.subprocess_controller:
+                try:
+                    with open(self.subprocess_args_file, 'r') as args_file:
+                        args = args_file.read().strip().split()
+                    response = self.subprocess_controller.send_command(args)
+                    print(response, end='', flush=True)
+                    f.write(response)
+                    f.flush()
+                except Exception as e:
+                    print(f"Error: {e}", flush=True)
+                    f.write(f"Error: {e}\n")
+                    self.has_command_error = True
+            else:
+                # Original subprocess behavior
+                process = subprocess.Popen(f"bash -c \"{self.command}\"", stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, text=True, bufsize=1, shell=True)
 
-            # Check if there are errors and handle them
-            error_lines = [line for line in iter(process.stderr.readline, '')]
-            if error_lines:
-                print("\n-----\nERROR\n-----\n", flush=True)
-                f.write("\n-----\nERROR\n-----\n\n")
-                f.flush()
-                for line in error_lines:
+                for line in iter(process.stdout.readline, ''):
                     print(line, end='', flush=True)
                     f.write(line)
                     f.flush()
-                self.has_command_error = True
 
-            process.stdout.close()
-            process.stderr.close()
-            process.wait()
+                # Check if there are errors and handle them
+                error_lines = [line for line in iter(process.stderr.readline, '')]
+                if error_lines:
+                    print("\n-----\nERROR\n-----\n", flush=True)
+                    f.write("\n-----\nERROR\n-----\n\n")
+                    f.flush()
+                    for line in error_lines:
+                        print(line, end='', flush=True)
+                        f.write(line)
+                        f.flush()
+                    self.has_command_error = True
+
+                process.stdout.close()
+                process.stderr.close()
+                process.wait()
 
         self.commit_changes()
         # Allow time for filesystem events to settle before re-enabling event handling
@@ -103,18 +158,22 @@ class DirectoryChangeHandler(FileSystemEventHandler):
             self.is_handling_event = False
 
     def commit_changes(self):
-        if not COMMIT_CHANGES:
+        if not self.auto_commit:
             return
 
         # Print git diff after running the command
         repo = git.Repo(self.repo_path)
         try:
             diff = repo.git.diff(':!directory_watcher.log')
+            if not diff:
+                print("No changes to commit.")
+                return
         except git.exc.GitCommandError:
             diff = repo.git.diff()
         commit_message = f"Auto-commit: Change in {self.last_modified_path}"
+
         # Optionally create a summary of the diff using OpenAI API
-        if self.openai_key and diff:
+        if self.use_ai_summary and self.openai_key and diff:
             client = openai.OpenAI(api_key=self.openai_key)
 
             # Truncate diff to max_input_characters
@@ -135,6 +194,16 @@ class DirectoryChangeHandler(FileSystemEventHandler):
             print(summary)
             print("------------------------------------------------------------")
             commit_message = f"[AUTO {int(len(diff) / 1000)}K] {summary}"
+
+        if self.has_command_error:
+            commit_message = "[ERROR] " + commit_message
+        if self.dry_run:
+            print("\n--- DRY RUN - Would commit the following changes ---")
+            print(f"Commit message: {commit_message}")
+            print(f"Changes:\n{diff[:500]}{'...' if len(diff) > 500 else ''}")
+            print("--- End of dry run ---\n")
+            return
+
         try:
             # Keep directory_watcher.log locally but ignored by git
             try:
@@ -154,26 +223,62 @@ class DirectoryChangeHandler(FileSystemEventHandler):
                 pass  # File isn't tracked by git
 
             repo.git.add(A=True)
-            if self.has_command_error:
-                commit_message = "[ERROR] " + commit_message
             repo.index.commit(commit_message)
-            repo.remote(name='origin').push()
+
+            # Only push if auto_push is enabled
+            if self.auto_push:
+                repo.remote(name='origin').push()
+            else:
+                print("Auto-push disabled. Changes committed but not pushed.")
+
         except git.exc.GitCommandError as e:
             print(f"Error during Git operations: {e}")
             logging.error(f"Error during Git operations: {e}")
 
-
 def main():
-    if len(sys.argv) < 4 or len(sys.argv) > 6:
-        print("Usage: ./directory_watcher.py <directory_to_watch> <command_to_run> <output_file> [max_summary_length] [max_input_characters]")
-        print("Note: Set OPENAI_API_KEY environment variable to enable OpenAI-powered commit messages")
+    parser = argparse.ArgumentParser(description='Watch a directory and run a command when files change.')
+    parser.add_argument('auto_commit', choices=['0', '1', 'no','commit'],
+                        help='Whether to automatically commit changes')
+    parser.add_argument('auto_push', choices=['0', '1', 'no','push'],
+                        help='Whether to automatically push commits to remote')
+    parser.add_argument('use_ai_summary', choices=['0', '1', 'no', 'summary'],
+                        help='Whether to use OpenAI to generate commit summaries')
+    parser.add_argument('directory_to_watch', help='Directory to watch for changes')
+    parser.add_argument('command_to_run', help='Command to run when changes are detected (or at init for subprocess mode)')
+    parser.add_argument('output_file', help='File to write command output to')
+    parser.add_argument('--max-summary-length', type=int, default=400,
+                        help='Maximum length of commit summary')
+    parser.add_argument('--max-input-characters', type=int, default=10000,
+                        help='Maximum number of characters to send to OpenAI API')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Show what would be committed without making changes')
+    parser.add_argument('--subprocess-args-file',
+                        help='Use subprocess server instead and read arguments from given file')
+
+    # For backward compatibility with positional args
+    if len(sys.argv) >= 7 and not any(arg.startswith('--') for arg in sys.argv[1:7]):
+        args = parser.parse_args()
+        auto_commit = args.auto_commit.lower() in ('1', 'commit')
+        auto_push = args.auto_push.lower() in ('1', 'push')
+        use_ai_summary = args.use_ai_summary.lower() in ('1', 'summary')
+        directory_to_watch = args.directory_to_watch
+        command_to_run = args.command_to_run
+        output_file = args.output_file
+        max_summary_length = args.max_summary_length
+        max_input_characters = args.max_input_characters
+        dry_run = args.dry_run
+        subprocess_args_file = args.subprocess_args_file
+    else:
+        print("Error: Invalid arguments")
+        parser.print_help()
         sys.exit(1)
 
-    directory_to_watch = sys.argv[1]
-    command_to_run = sys.argv[2]
-    output_file = sys.argv[3]
-    max_summary_length = int(sys.argv[4]) if len(sys.argv) > 4 else 400
-    max_input_characters = int(sys.argv[5]) if len(sys.argv) > 5 else 10000
+    # Check if OpenAI API key is set when AI summary is enabled
+    openai_api_key = os.environ.get('OPENAI_API_KEY')
+    if use_ai_summary and not openai_api_key:
+        print("Error: OpenAI API key (OPENAI_API_KEY) must be set when AI summary is enabled.")
+        print("Please set the environment variable and try again.")
+        sys.exit(1)
 
     # Create empty output file if it does not exist
     if not os.path.exists(output_file):
@@ -181,15 +286,31 @@ def main():
             f.write("")
 
     repo_path = os.path.abspath(directory_to_watch)
-    openai_api_key = os.environ.get('OPENAI_API_KEY')
 
-    event_handler = DirectoryChangeHandler(command_to_run, output_file, repo_path, openai_key=openai_api_key, max_summary_length=max_summary_length)
-    event_handler.max_input_characters = max_input_characters
+    # Create event handler with all parameters
+    event_handler = DirectoryChangeHandler(
+        command=command_to_run,
+        output_file=output_file,
+        repo_path=repo_path,
+        openai_key=openai_api_key if use_ai_summary else None,
+        max_summary_length=max_summary_length,
+        max_input_characters=max_input_characters,
+        auto_commit=auto_commit,
+        auto_push=auto_push,
+        use_ai_summary=use_ai_summary,
+        dry_run=dry_run,
+        subprocess_args_file=subprocess_args_file
+    )
+
     observer = Observer()
     observer.schedule(event_handler, path=directory_to_watch, recursive=True)
 
-    observer.start()
+    # Print status message about git operations
+    print(f"Git operations: {'Commit ' if auto_commit else 'No commit '}{'+ Push' if auto_push else '(no push)'}")
+    print(f"AI commit summaries: {'Enabled' if use_ai_summary else 'Disabled'}")
     print(f"Watching directory: {directory_to_watch}")
+
+    observer.start()
     try:
         while True:
             time.sleep(1)
@@ -200,7 +321,6 @@ def main():
         if event_handler.is_handling_event:
             print("Waiting for event handling to complete...")
             time.sleep(1.5)
-
 
 if __name__ == "__main__":
     main()
