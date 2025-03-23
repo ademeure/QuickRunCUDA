@@ -70,9 +70,9 @@ CUdeviceptr d_flush = 0;  // L2 flush buffer
  */
 struct CmdLineArgs {
 	// Array sizes
-	size_t arrayDwordsA = 256 * 1024 * 1024;  // Size of array A in DWORDs
-	size_t arrayDwordsB = 256 * 1024 * 1024;  // Size of array B in DWORDs
-	size_t arrayDwordsC = 256 * 1024 * 1024;  // Size of array C in DWORDs
+	size_t arrayDwordsA = 64 * 1024 * 1024;  // Size of array A in DWORDs (32 bits)
+	size_t arrayDwordsB = 64 * 1024 * 1024;  // Size of array B in DWORDs (32 bits)
+	size_t arrayDwordsC = 64 * 1024 * 1024;  // Size of array C in DWORDs (32 bits)
 
 	// Kernel configuration
 	bool randomArrayA = false;               // Use random data in array A
@@ -82,6 +82,7 @@ struct CmdLineArgs {
 	int kernel_int_args[3] = {0};            // Integer arguments to pass to kernel
 	int threadsPerBlockX = 32;               // Number of threads per block
 	int numBlocksX = 1;                      // Number of blocks
+	bool persistentBlocks = false;           // Automatically set gridDim.x to number of SMs
 	int sharedMemoryBlockBytes = 0;          // Shared memory size per block
 	int sharedMemoryCarveoutBytes = 0;       // Shared memory carveout
 	bool runInitKernel = false;              // Run initialization kernel
@@ -136,8 +137,9 @@ void setupCommandLineParser(CLI::App& app, CmdLineArgs& args) {
 
 	// Kernel execution configuration
 	auto kernel_exec_group = app.add_option_group("Kernel Execution Configuration");
-	kernel_exec_group->add_option("-t,--threadsPerBlockX", args.threadsPerBlockX, "Number of threads per block");
-	kernel_exec_group->add_option("-n,--numBlocksX", args.numBlocksX, "Number of blocks");
+	kernel_exec_group->add_option("-t,--threadsPerBlock", args.threadsPerBlockX, "Number of threads per block (blockDim.x)");
+	kernel_exec_group->add_option("-b,--blocksPerGrid", args.numBlocksX, "Number of blocks (gridDim.x)");
+	kernel_exec_group->add_flag("-p,--persistentBlocks", args.persistentBlocks, "Automatically set gridDim.x to number of SMs");
 	kernel_exec_group->add_option("-s,--sharedMemoryBlockBytes", args.sharedMemoryBlockBytes, "Shared memory size per block in bytes");
 	kernel_exec_group->add_option("-o,--sharedMemoryCarveoutBytes", args.sharedMemoryCarveoutBytes, "Shared memory carveout in bytes");
 	kernel_exec_group->add_flag("-i,--runInitKernel", args.runInitKernel, "Run initialization kernel before main kernel");
@@ -154,9 +156,9 @@ void setupCommandLineParser(CLI::App& app, CmdLineArgs& args) {
 
 	// Array configuration
 	auto array_group = app.add_option_group("Array Configuration");
-	array_group->add_option("-a,--arrayDwordsA", args.arrayDwordsA, "Size of array A in DWORDs");
-	array_group->add_option("-b,--arrayDwordsB", args.arrayDwordsB, "Size of array B in DWORDs");
-	array_group->add_option("-c,--arrayDwordsC", args.arrayDwordsC, "Size of array C in DWORDs");
+	array_group->add_option("-A,--arrayDwordsA", args.arrayDwordsA, "Size of array A in DWORDs");
+	array_group->add_option("-B,--arrayDwordsB", args.arrayDwordsB, "Size of array B in DWORDs");
+	array_group->add_option("-C,--arrayDwordsC", args.arrayDwordsC, "Size of array C in DWORDs");
 	array_group->add_flag("-r,--randomA", args.randomArrayA, "Initialize array A with random data");
 	array_group->add_flag("--randomB", args.randomArrayB, "Initialize array B with random data");
 	array_group->add_option("--randomMask", args.randomArraysBitMask, "Bit mask for random values (0x for hex, 0b for binary)")
@@ -260,7 +262,7 @@ void flushL2Cache() {
  * @param args Command line arguments struct
  * @return Exit code (0 for success)
  */
-int run_cuda_test(const CmdLineArgs& args);
+int run_cuda_test(CmdLineArgs& args);
 
 /**
  * Main entry point
@@ -349,7 +351,7 @@ int main(int argc, char **argv) {
  * @param args Command line arguments struct
  * @return Exit code (0 for success)
  */
-int run_cuda_test(const CmdLineArgs& args) {
+int run_cuda_test(CmdLineArgs& args) {
 	// Allocate memory
 	CUdeviceptr d_A, d_B, d_C;
 	size_t sizeA = args.arrayDwordsA * sizeof(uint);
@@ -359,6 +361,12 @@ int run_cuda_test(const CmdLineArgs& args) {
 	checkCudaErrors(cuMemAlloc(&d_B, sizeB));
 	checkCudaErrors(cuMemAlloc(&d_C, sizeC));
 	uint *h_C = reinterpret_cast<uint *>(malloc(sizeC));
+
+	if (args.persistentBlocks) {
+		checkCudaErrors(cuDeviceGetAttribute(&args.numBlocksX, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, cuDeviceGlobal));
+		printf("Using persistent blocks (%d = 1 per SM)\n", args.numBlocksX);
+		args.persistentBlocks = false;
+	}
 
 	// Compile or load kernel
 	char *cubin;
