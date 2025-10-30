@@ -284,7 +284,7 @@ int main(int argc, char **argv) {
 		// Initialize CUDA (unfortunately a bit slow which is another reason why server mode is useful)
 		checkCudaErrors(cuInit(0));
 		checkCudaErrors(cuDeviceGet(&cuDeviceGlobal, 0));
-		checkCudaErrors(cuCtxCreate(&cuContextGlobal, 0, cuDeviceGlobal));
+		checkCudaErrors(cuCtxCreate(&cuContextGlobal, NULL, 0, cuDeviceGlobal));
 
 		// Set GPU clock speed if requested
 		if (args.clock_speed > 0) {
