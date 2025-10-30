@@ -217,8 +217,8 @@ public:
     checkCudaErrors(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, cuDevice));
     checkCudaErrors(cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, cuDevice));
 
-    int numCompileOptions = 2;
-    char *compileParams[4];
+    int numCompileOptions = 3;
+    char *compileParams[5];
 
     std::string other_options_0 = "--generate-line-info";
     compileParams[0] = reinterpret_cast<char *>(malloc(sizeof(char) * (other_options_0.length() + 1)));
@@ -227,6 +227,10 @@ public:
     std::string other_options_1 = "-use_fast_math";
     compileParams[1] = reinterpret_cast<char *>(malloc(sizeof(char) * (other_options_1.length() + 1)));
     strcpy(compileParams[1], other_options_1.c_str());
+
+    std::string other_options_2 = "--std=c++17";
+    compileParams[2] = reinterpret_cast<char *>(malloc(sizeof(char) * (other_options_2.length() + 1)));
+    strcpy(compileParams[2], other_options_2.c_str());
 
     // Compile cubin for the GPU arch on which are going to run cuda kernel.
     // HACK: Turn sm_90 into sm_90a
