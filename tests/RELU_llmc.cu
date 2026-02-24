@@ -106,7 +106,7 @@ typedef float floatN;
 
 typedef Packed128<floatX> x128;
 
-extern "C" __global__  void kernel(float *in, float* out, float* unused_C, int unused_0, int unused_1, int unused_2) {
+extern "C" __global__  void kernel(float *in, float* out) {
     int id = (threadIdx.x + blockIdx.x * blockDim.x) * f128::size;
 
     f128 input = load128(in + id);

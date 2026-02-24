@@ -28,7 +28,7 @@ __forceinline__ __device__ float inner(float f0, float f1, float f2, float f3) {
   return f0;
 }
 
-extern "C" __global__ void kernel(const float *A, float *B, int sm0, int sm1, int unused) {
+extern "C" __global__ void kernel(const float *A, float *B, int sm0, int sm1) {
   unsigned int smid;
   asm("mov.u32 %0, %smid;" : "=r"(smid));
 

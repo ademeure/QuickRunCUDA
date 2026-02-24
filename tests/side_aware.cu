@@ -69,7 +69,7 @@ __device__ __forceinline__ int test_latency_l2(unsigned int* data, size_t offset
 // Initialization kernel that is run exactly once if QuickRunCUDA is called with "-i"
 // It determines the average L2 latency for each SM *and* each 2MiB page
 // Also determines which bits affect the side inside a given 2MiB page
-extern "C" __global__  void init(float* A, unsigned int *side_info, float* output, int num_dwords, float dynamic_float, int unused_2) {
+extern "C" __global__  void init(float* A, unsigned int *side_info, float* output, int num_dwords) {
     if (threadIdx.x == 0) {
         assert(num_dwords > 0);
         size_t num_bytes = (size_t)num_dwords * 4;
@@ -254,7 +254,7 @@ __device__ inline float block_reduce(float val, bool final_sync=false, float out
 // Main kernel that does a L2-side-aware reduction of the input data
 // This is called 100 times if QuickRunCUDA is called with "-T 100"
 // __launch_bounds__ is very important otherwise the FORCED_UNROLL loop is not properly unrolled
-extern "C" __global__ __launch_bounds__(1024, 1, 1) void kernel(float *A, unsigned int* side_info, float* output, int num_dwords, float dynamic_float, int unused_2) {
+extern "C" __global__ __launch_bounds__(1024, 1, 1) void kernel(float *A, unsigned int* side_info, float* output, int num_dwords) {
     int smid;
     asm volatile("mov.u32 %0, %smid;\n" : "=r"(smid) :);
 

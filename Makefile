@@ -13,8 +13,8 @@ NVCC := $(CUDA_PATH)/bin/nvcc -ccbin $(HOST_COMPILER)
 
 # Common flags
 NVCCFLAGS := -m64
-ALL_CCFLAGS := --threads 0 --std=c++17 -Xcompiler -fopenmp
-ALL_LDFLAGS := -Xcompiler -fopenmp
+ALL_CCFLAGS := --threads 0 --std=c++17
+ALL_LDFLAGS :=
 
 # GPU Compute capability (auto-detect)
 ifndef GPU_COMPUTE_CAPABILITY

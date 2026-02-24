@@ -15,12 +15,12 @@ static CUcontext  g_context;
 static CUdeviceptr g_flush_buf = 0;
 
 struct CmdLineArgs {
-	std::vector<size_t> arrayDwords = {64*1024*1024, 64*1024*1024, 64*1024*1024};
+	std::vector<size_t> arrayDwords = {64*1024*1024, 64*1024*1024};
 	std::vector<size_t> randomArrays;
 	uint32_t randomArraysBitMask = 0xFFFFFFFF;
 	uint32_t randomSeed = 1234;
 
-	std::vector<int> intArgs = {0, 0, 0};
+	std::vector<int> intArgs;
 	std::vector<float> floatArgs;
 
 	int threadsPerBlockX = 32;
@@ -41,72 +41,56 @@ struct CmdLineArgs {
 	std::string ptx_input;
 	std::string cubin_input;
 
-	std::string dump_array;
+	std::vector<std::string> dump_array;
 	std::string dump_format = "raw";
-	std::string load_array;
+	std::vector<std::string> load_array;
 	std::string reference_filename;
-	float compare_tolerance = 0.0f;
+	float compare_atol = 0.0f;
+	float compare_rtol = 0.0f;
 
-	std::pair<size_t, std::string> parseIndexedArg(const std::string& str) const {
-		auto colon = str.find(':');
-		if (colon != std::string::npos && colon > 0 &&
-		    str.substr(0, colon).find_first_not_of("0123456789") == std::string::npos) {
-			size_t idx = std::stoull(str.substr(0, colon));
-			if (idx >= arrayDwords.size()) {
-				fprintf(stderr, "Array index %zu out of range (%zu arrays)\n", idx, arrayDwords.size());
-				exit(EXIT_FAILURE);
-			}
-			return {idx, str.substr(colon + 1)};
+	std::pair<size_t, std::string> parseIndexedArg(const std::string& s) const {
+		auto c = s.find(':');
+		if (c > 0 && c != std::string::npos && s.substr(0, c).find_first_not_of("0123456789") == std::string::npos) {
+			size_t i = std::stoull(s.substr(0, c));
+			if (i >= arrayDwords.size()) { fprintf(stderr, "Array index %zu out of range\n", i); exit(1); }
+			return {i, s.substr(c + 1)};
 		}
-		return {arrayDwords.size() - 1, str};
+		return {arrayDwords.size() - 1, s};
 	}
 
 	std::vector<std::string> positional_args;
 };
 
 void setupCLI(CLI::App& app, CmdLineArgs& args) {
-	auto* exec = app.add_option_group("Kernel Execution");
-	exec->add_option("-t,--threadsPerBlock", args.threadsPerBlockX, "blockDim.x");
-	exec->add_option("-b,--blocksPerGrid", args.numBlocksX, "gridDim.x");
-	exec->add_flag("-p,--persistentBlocks", args.persistentBlocks, "Set gridDim.x = SM count");
-	exec->add_option("-s,--sharedMemoryBlockBytes", args.sharedMemoryBlockBytes, "Dynamic shared memory per block (bytes)");
-	exec->add_option("-o,--sharedMemoryCarveoutBytes", args.sharedMemoryCarveoutBytes, "Shared memory carveout (bytes)");
-	exec->add_option("--l2flush", args.l2FlushMode, "L2 flush: 0=none, 1=at start, 2=every run");
-
-	auto* perf = app.add_option_group("Performance Measurement");
-	perf->add_option("-T,--timedRuns", args.timedRuns, "Number of timed kernel runs");
-	perf->add_option("-P,--perfMultiplier", args.perfMultiplier, "Convert time to perf metric (value / seconds)");
-	perf->add_option("-L,--perfSpeedOfLight", args.perfSpeedOfLight, "Theoretical peak for %% utilization");
-
-
-	auto* arr = app.add_option_group("Array Configuration");
-	arr->add_option("-D,--dwords", args.arrayDwords, "Array sizes in DWORDs (comma-separated)")->delimiter(',');
-	arr->add_option("-r,--random", args.randomArrays, "Which arrays to randomize (comma-separated indices)")->delimiter(',');
-	arr->add_option("--randomMask", args.randomArraysBitMask, "Bit mask for random values (0x hex, 0b binary)")
+	app.add_option("-t,--threadsPerBlock", args.threadsPerBlockX, "blockDim.x");
+	app.add_option("-b,--blocksPerGrid", args.numBlocksX, "gridDim.x");
+	app.add_flag("-p,--persistentBlocks", args.persistentBlocks, "Set gridDim.x = SM count");
+	app.add_option("-s,--sharedMemoryBlockBytes", args.sharedMemoryBlockBytes, "Dynamic shared mem bytes");
+	app.add_option("-o,--sharedMemoryCarveoutBytes", args.sharedMemoryCarveoutBytes, "Shared mem carveout bytes");
+	app.add_option("--l2flush", args.l2FlushMode, "L2 flush: 0=none, 1=at start, 2=every run");
+	app.add_option("-T,--timedRuns", args.timedRuns, "Number of timed kernel runs");
+	app.add_option("-P,--perfMultiplier", args.perfMultiplier, "Perf metric = value / seconds");
+	app.add_option("-L,--perfSpeedOfLight", args.perfSpeedOfLight, "Theoretical peak for %% utilization");
+	app.add_option("-D,--dwords", args.arrayDwords, "Array sizes in DWORDs (comma-separated)")->delimiter(',');
+	app.add_option("-r,--random", args.randomArrays, "Which arrays to randomize (indices)")->delimiter(',');
+	app.add_option("--randomMask", args.randomArraysBitMask, "Bit mask for random values (supports 0x, 0b)")
 		->transform([](std::string s) -> std::string {
-			if (s.size() > 2 && s[0] == '0' && s[1] == 'x') return std::to_string(std::stoull(s.substr(2), nullptr, 16));
-			if (s.size() > 2 && s[0] == '0' && s[1] == 'b') return std::to_string(std::stoull(s.substr(2), nullptr, 2));
-			return s;
+			if (s.substr(0, 2) == "0b") return std::to_string(std::stoull(s.substr(2), nullptr, 2));
+			return std::to_string(std::stoull(s, nullptr, 0));
 		});
-	arr->add_option("--randomSeed", args.randomSeed, "Base seed for RNG");
-
-	auto* kargs = app.add_option_group("Kernel Arguments");
-	kargs->add_option("-I,--int-args", args.intArgs, "Int args after array pointers (comma-separated)")->delimiter(',');
-	kargs->add_option("-F,--float-args", args.floatArgs, "Float args after int args (comma-separated)")->delimiter(',');
-
-	auto* compile = app.add_option_group("Kernel Source and Compilation");
-	compile->add_option("-f,--kernel-filename", args.kernel_filename, "Kernel .cu source file")->check(CLI::ExistingFile);
-	compile->add_option("-H,--header", args.header, "Header string to prepend to kernel source");
-	compile->add_option("--ptx-input", args.ptx_input, "Load PTX directly (skip NVRTC)")->check(CLI::ExistingFile);
-	compile->add_option("--cubin-input", args.cubin_input, "Load CUBIN directly (skip all compilation)")->check(CLI::ExistingFile);
-
-	auto* io = app.add_option_group("Array I/O");
-	io->add_option("--dump", args.dump_array, "Dump array to file ([index:]filename)");
-	io->add_option("--dump-format", args.dump_format, "Format: raw, int_csv, float_csv");
-	io->add_option("--load", args.load_array, "Load array from file ([index:]filename)");
-	io->add_option("--reference", args.reference_filename, "Compare array to reference ([index:]filename)");
-	io->add_option("--compare-tolerance", args.compare_tolerance, "FP32 tolerance for comparison");
-
+	app.add_option("--randomSeed", args.randomSeed, "Base seed for RNG");
+	app.add_option("-I,--int-args", args.intArgs, "Int args after array pointers")->delimiter(',');
+	app.add_option("-F,--float-args", args.floatArgs, "Float args after int args")->delimiter(',');
+	app.add_option("-f,--kernel-filename", args.kernel_filename, "Kernel .cu source file")->check(CLI::ExistingFile);
+	app.add_option("-H,--header", args.header, "Header string prepended to kernel source");
+	app.add_option("--ptx-input", args.ptx_input, "Load PTX directly (skip NVRTC)")->check(CLI::ExistingFile);
+	app.add_option("--cubin-input", args.cubin_input, "Load CUBIN directly (skip compilation)")->check(CLI::ExistingFile);
+	app.add_option("--dump", args.dump_array, "Dump array to file ([idx:]file, repeatable)");
+	app.add_option("--dump-format", args.dump_format, "Format: raw, int_csv, float_csv");
+	app.add_option("--load", args.load_array, "Load array from file ([idx:]file, repeatable)");
+	app.add_option("--reference", args.reference_filename, "Compare array to reference ([idx:]file)");
+	app.add_option("--atol", args.compare_atol, "Absolute tolerance for --reference");
+	app.add_option("--rtol", args.compare_rtol, "Relative tolerance (fallback if atol fails)");
 	app.add_option("kernel", args.positional_args, "Kernel source filename")->check(CLI::ExistingFile);
 }
 
@@ -143,15 +127,17 @@ int run_cuda_test(CmdLineArgs& args) {
 	GPUArrays arrays;
 	arrays.allocate(args.arrayDwords);
 	arrays.initRandom(args.randomArrays, args.randomSeed, args.randomArraysBitMask);
-	if (!args.load_array.empty()) {
-		auto [idx, file] = args.parseIndexedArg(args.load_array);
+	for (auto& la : args.load_array) {
+		auto [idx, file] = args.parseIndexedArg(la);
 		arrays.load(idx, file);
 	}
 
+	static int zero_pad[8] = {};
 	std::vector<void*> kernel_args;
 	for (auto& p : arrays.d)       kernel_args.push_back(&p);
 	for (auto& v : args.intArgs)   kernel_args.push_back(&v);
 	for (auto& v : args.floatArgs) kernel_args.push_back(&v);
+	for (int i = 0; i < 8; i++)    kernel_args.push_back(&zero_pad[i]);
 
 	if (has_init) {
 		printf("Found init() kernel, running it first\n");
@@ -195,13 +181,13 @@ int run_cuda_test(CmdLineArgs& args) {
 
 	checkCudaErrors(cuCtxSynchronize());
 
-	if (!args.dump_array.empty()) {
-		auto [idx, file] = args.parseIndexedArg(args.dump_array);
+	for (auto& da : args.dump_array) {
+		auto [idx, file] = args.parseIndexedArg(da);
 		arrays.dump(idx, file, args.dump_format);
 	}
 	if (!args.reference_filename.empty()) {
 		auto [idx, file] = args.parseIndexedArg(args.reference_filename);
-		arrays.compare(idx, file, args.compare_tolerance);
+		arrays.compare(idx, file, args.compare_atol, args.compare_rtol);
 	}
 
 	arrays.free();

@@ -1,13 +1,11 @@
 #pragma once
 
-#include "cuda_helper.h"
+#include "cuda_compile.h"
 #include <vector>
 #include <string>
 #include <fstream>
-#include <random>
 #include <algorithm>
 #include <iomanip>
-#include <omp.h>
 
 struct GPUArrays {
 	CUdeviceptr base = 0;
@@ -62,21 +60,32 @@ struct GPUArrays {
 	}
 
 	void initRandom(const std::vector<size_t>& which, uint32_t seed, uint32_t mask) {
+		static const char* src = R"(
+			extern "C" __global__ void rng_fill(unsigned* out, unsigned long long n,
+			                                    unsigned seed, unsigned mask) {
+				unsigned long long i = blockIdx.x * (unsigned long long)blockDim.x + threadIdx.x;
+				if (i >= n) return;
+				unsigned long long x = seed + i;
+				x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+				x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+				out[i] = (unsigned)(x ^ (x >> 31)) & mask;
+			}
+		)";
+		static CUfunction func = nullptr;
+		if (!func) {
+			static CUmodule mod = compileSource(src, "rng.cu", false);
+			checkCudaErrors(cuModuleGetFunction(&func, mod, "rng_fill"));
+		}
 		for (size_t idx : which) {
 			check(idx, "--random");
-			size_t n = dwords[idx];
-			std::vector<uint32_t> buf(n);
-			constexpr size_t chunk = 1024 * 1024;
-			size_t nchunks = (n + chunk - 1) / chunk;
-			#pragma omp parallel for schedule(static)
-			for (size_t c = 0; c < nchunks; c++) {
-				std::mt19937_64 rng(seed + c);
-				std::uniform_int_distribution<uint32_t> dist;
-				for (size_t i = c * chunk, end = std::min(i + chunk, n); i < end; ++i)
-					buf[i] = dist(rng) & mask;
-			}
-			checkCudaErrors(cuMemcpyHtoD(d[idx], buf.data(), bytes(idx)));
+			unsigned long long n = dwords[idx];
+			uint32_t s = seed + (uint32_t)(idx * n);
+			void* args[] = { &d[idx], &n, &s, &mask };
+			int threads = 256;
+			int blocks = (int)((n + threads - 1) / threads);
+			checkCudaErrors(cuLaunchKernel(func, blocks, 1, 1, threads, 1, 1, 0, nullptr, args, nullptr));
 		}
+		checkCudaErrors(cuCtxSynchronize());
 	}
 
 	void load(size_t index, const std::string& filename) {
@@ -108,16 +117,18 @@ struct GPUArrays {
 		}
 	}
 
-	void compare(size_t index, const std::string& refFilename, float tolerance) {
+	void compare(size_t index, const std::string& refFilename, float atol, float rtol) {
 		check(index, "--reference");
 		auto ref = readBinaryFile(refFilename, bytes(index), "--reference");
 		readback(index);
 		for (size_t i = 0; i < dwords[index]; i++) {
-			if (tolerance > 0.0f) {
+			if (atol > 0.0f || rtol > 0.0f) {
 				float a = *reinterpret_cast<float*>(&h[i]);
 				float b = *reinterpret_cast<float*>(&ref[i]);
-				if (std::abs(a - b) > tolerance) {
-					printf("First difference at %zu: %.8f vs %.8f (diff %.8f)\n", i, a, b, std::abs(a - b));
+				float diff = std::abs(a - b);
+				if (diff > atol && diff > rtol * std::abs(b)) {
+					printf("First difference at %zu: %.8f vs %.8f (abs=%.8f, rel=%.8f)\n",
+					       i, a, b, diff, diff / std::max(std::abs(b), 1e-30f));
 					break;
 				}
 			} else if (h[i] != ref[i]) {
