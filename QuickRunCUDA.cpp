@@ -401,6 +401,28 @@ int run_cuda_test(CmdLineArgs& args) {
 			fprintf(stderr, "Failed to open file to write cubin!\n");
 			exit(EXIT_FAILURE);
 		}
+
+		// Auto-dump SASS to sass/ directory
+		{
+			// Create sass/ directory if it doesn't exist
+			system("mkdir -p sass");
+			// Build descriptive filename from kernel source name
+			std::string base = args.kernel_filename;
+			auto slash = base.rfind('/');
+			if (slash != std::string::npos) base = base.substr(slash + 1);
+			auto dot = base.rfind('.');
+			if (dot != std::string::npos) base = base.substr(0, dot);
+			// Append header hash if header is non-empty (different -H flags = different SASS)
+			if (args.header.length() > 0) {
+				unsigned int h = 0;
+				for (char c : args.header) h = h * 31 + (unsigned char)c;
+				base += "_" + std::to_string(h);
+			}
+			std::string sass_cmd = "nvdisasm output.cubin --print-code > sass/" + base + ".sass 2>/dev/null";
+			system(sass_cmd.c_str());
+			std::string cubin_cp = "cp output.cubin sass/" + base + ".cubin";
+			system(cubin_cp.c_str());
+		}
 	}
 
 	// Load the module and get function pointers
