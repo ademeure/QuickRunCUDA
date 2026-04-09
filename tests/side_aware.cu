@@ -16,7 +16,7 @@
 // Zeroed data: 474W => 442W (-6.8%)
 // (I think it reduced power even more on Blackwell but I don't have one to retest with the latest version)
 // ============================================================================
-//#define FORCE_WRONG_SIDE
+#define FORCE_WRONG_SIDE
 //#define FORCE_RANDOM_SIDE
 
 //#define DEBUG_PRINTF_PER_PAGE
