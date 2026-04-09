@@ -45,7 +45,7 @@ endif
 # If we found a GPU, add the appropriate architecture flags
 ifneq ($(GPU_COMPUTE_CAPABILITY),)
     # Add 'a' suffix to sm_xx for compute capabilities 90 and 100
-    SM_COMPUTE_CAPABILITY := $(GPU_COMPUTE_CAPABILITY)$(if $(filter 90 100,$(GPU_COMPUTE_CAPABILITY)),a,)
+    SM_COMPUTE_CAPABILITY := $(GPU_COMPUTE_CAPABILITY)$(if $(shell [ $(GPU_COMPUTE_CAPABILITY) -ge 90 ] 2>/dev/null && echo yes),a,)
     GENCODE_FLAGS := --generate-code arch=compute_$(GPU_COMPUTE_CAPABILITY),code=[compute_$(GPU_COMPUTE_CAPABILITY),sm_$(SM_COMPUTE_CAPABILITY)]
     NVCCFLAGS += $(GENCODE_FLAGS)
 endif

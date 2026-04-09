@@ -1,0 +1,136 @@
+============================================================
+  Instruction Mix Sweep: e2m1x2 + Companion Instructions
+  GPU: NVIDIA B300 SXM6 AC
+  SM clocks: 120 MHz
+============================================================
+
+=== BASELINE: e2m1x2 CVTs only ===
+  (companion=none)
+  CVT_ONLY      cvt=1  comp=0    0.06146 ms  cvt=     0 comp=    -- GOps/s
+  CVT_ONLY      cvt=2  comp=0    0.11263 ms  cvt=     0 comp=    -- GOps/s
+  CVT_ONLY      cvt=4  comp=0    0.20697 ms  cvt=     0 comp=    -- GOps/s
+  CVT_ONLY      cvt=8  comp=0    0.28576 ms  cvt=     0 comp=    -- GOps/s
+  CVT_ONLY      cvt=12 comp=0    0.33388 ms  cvt=     0 comp=    -- GOps/s
+  CVT_ONLY      cvt=16 comp=0    0.36064 ms  cvt=     0 comp=    -- GOps/s
+
+=== e2m1x2 + FFMA ===
+  FFMA          cvt=0  comp=4    0.07994 ms  cvt=    -- comp=     0 GOps/s
+  FFMA          cvt=0  comp=8    0.15371 ms  cvt=    -- comp=     0 GOps/s
+  FFMA          cvt=0  comp=16   0.29222 ms  cvt=    -- comp=     0 GOps/s
+  ---
+  FFMA          cvt=4  comp=0    0.20698 ms  cvt=     0 comp=    -- GOps/s
+  FFMA          cvt=4  comp=1    0.21725 ms  cvt=     0 comp=     0 GOps/s
+  FFMA          cvt=4  comp=2    0.21729 ms  cvt=     0 comp=     0 GOps/s
+  FFMA          cvt=4  comp=4    0.21109 ms  cvt=     0 comp=     0 GOps/s
+  FFMA          cvt=4  comp=8    0.24947 ms  cvt=     0 comp=     0 GOps/s
+  FFMA          cvt=4  comp=12   0.32986 ms  cvt=     0 comp=     0 GOps/s
+  FFMA          cvt=4  comp=16   0.41749 ms  cvt=     0 comp=     0 GOps/s
+  ---
+  FFMA          cvt=1  comp=4    0.11274 ms  cvt=     0 comp=     0 GOps/s
+  FFMA          cvt=2  comp=4    0.14336 ms  cvt=     0 comp=     0 GOps/s
+  FFMA          cvt=4  comp=4    0.21109 ms  cvt=     0 comp=     0 GOps/s
+  FFMA          cvt=8  comp=4    0.29337 ms  cvt=     0 comp=     0 GOps/s
+  FFMA          cvt=12 comp=4    0.32348 ms  cvt=     0 comp=     0 GOps/s
+  FFMA          cvt=16 comp=4    0.36720 ms  cvt=     0 comp=     0 GOps/s
+
+=== e2m1x2 + FMUL ===
+  FMUL          cvt=0  comp=4    0.07997 ms  cvt=    -- comp=     0 GOps/s
+  FMUL          cvt=0  comp=8    0.14948 ms  cvt=    -- comp=     0 GOps/s
+  FMUL          cvt=0  comp=16   0.28671 ms  cvt=    -- comp=     0 GOps/s
+  ---
+  FMUL          cvt=4  comp=0    0.20699 ms  cvt=     0 comp=    -- GOps/s
+  FMUL          cvt=4  comp=1    0.21917 ms  cvt=     0 comp=     0 GOps/s
+  FMUL          cvt=4  comp=2    0.21727 ms  cvt=     0 comp=     0 GOps/s
+  FMUL          cvt=4  comp=4    0.21498 ms  cvt=     0 comp=     0 GOps/s
+  FMUL          cvt=4  comp=8    0.27257 ms  cvt=     0 comp=     0 GOps/s
+  FMUL          cvt=4  comp=12   0.34945 ms  cvt=     0 comp=     0 GOps/s
+  FMUL          cvt=4  comp=16   0.41797 ms  cvt=     0 comp=     0 GOps/s
+  ---
+  FMUL          cvt=1  comp=4    0.10662 ms  cvt=     0 comp=     0 GOps/s
+  FMUL          cvt=2  comp=4    0.13517 ms  cvt=     0 comp=     0 GOps/s
+  FMUL          cvt=4  comp=4    0.21498 ms  cvt=     0 comp=     0 GOps/s
+  FMUL          cvt=8  comp=4    0.28560 ms  cvt=     0 comp=     0 GOps/s
+  FMUL          cvt=12 comp=4    0.33392 ms  cvt=     0 comp=     0 GOps/s
+  FMUL          cvt=16 comp=4    0.36442 ms  cvt=     0 comp=     0 GOps/s
+
+=== e2m1x2 + LOP3 ===
+  LOP3          cvt=0  comp=4    0.03135 ms  cvt=    -- comp=     1 GOps/s
+  LOP3          cvt=0  comp=8    0.03136 ms  cvt=    -- comp=     2 GOps/s
+  LOP3          cvt=0  comp=16   0.03134 ms  cvt=    -- comp=     4 GOps/s
+  ---
+  LOP3          cvt=4  comp=0    0.20854 ms  cvt=     0 comp=    -- GOps/s
+  LOP3          cvt=4  comp=1    0.21295 ms  cvt=     0 comp=     0 GOps/s
+  LOP3          cvt=4  comp=2    0.21295 ms  cvt=     0 comp=     0 GOps/s
+  LOP3          cvt=4  comp=4    0.21295 ms  cvt=     0 comp=     0 GOps/s
+  LOP3          cvt=4  comp=8    0.21294 ms  cvt=     0 comp=     0 GOps/s
+  LOP3          cvt=4  comp=12   0.21293 ms  cvt=     0 comp=     0 GOps/s
+  LOP3          cvt=4  comp=16   0.21295 ms  cvt=     0 comp=     1 GOps/s
+  ---
+  LOP3          cvt=1  comp=4    0.06768 ms  cvt=     0 comp=     0 GOps/s
+  LOP3          cvt=2  comp=4    0.11469 ms  cvt=     0 comp=     0 GOps/s
+  LOP3          cvt=4  comp=4    0.21292 ms  cvt=     0 comp=     0 GOps/s
+  LOP3          cvt=8  comp=4    0.29298 ms  cvt=     0 comp=     0 GOps/s
+  LOP3          cvt=12 comp=4    0.32556 ms  cvt=     0 comp=     0 GOps/s
+  LOP3          cvt=16 comp=4    0.36441 ms  cvt=     0 comp=     0 GOps/s
+
+=== e2m1x2 + IADD3 ===
+  IADD3         cvt=0  comp=4    0.04514 ms  cvt=    -- comp=     1 GOps/s
+  IADD3         cvt=0  comp=8    0.08001 ms  cvt=    -- comp=     1 GOps/s
+  IADD3         cvt=0  comp=16   0.14955 ms  cvt=    -- comp=     1 GOps/s
+  ---
+  IADD3         cvt=4  comp=0    0.20699 ms  cvt=     0 comp=    -- GOps/s
+  IADD3         cvt=4  comp=1    0.21686 ms  cvt=     0 comp=     0 GOps/s
+  IADD3         cvt=4  comp=2    0.22731 ms  cvt=     0 comp=     0 GOps/s
+  IADD3         cvt=4  comp=4    0.24373 ms  cvt=     0 comp=     0 GOps/s
+  IADD3         cvt=4  comp=8    0.27638 ms  cvt=     0 comp=     0 GOps/s
+  IADD3         cvt=4  comp=12   0.30927 ms  cvt=     0 comp=     0 GOps/s
+  IADD3         cvt=4  comp=16   0.34434 ms  cvt=     0 comp=     0 GOps/s
+  ---
+  IADD3         cvt=1  comp=4    0.08816 ms  cvt=     0 comp=     0 GOps/s
+  IADD3         cvt=2  comp=4    0.13925 ms  cvt=     0 comp=     0 GOps/s
+  IADD3         cvt=4  comp=4    0.24371 ms  cvt=     0 comp=     0 GOps/s
+  IADD3         cvt=8  comp=4    0.32580 ms  cvt=     0 comp=     0 GOps/s
+  IADD3         cvt=12 comp=4    0.35251 ms  cvt=     0 comp=     0 GOps/s
+  IADD3         cvt=16 comp=4    0.39143 ms  cvt=     0 comp=     0 GOps/s
+
+=== e2m1x2 + IMAD ===
+  IMAD          cvt=0  comp=4    0.07996 ms  cvt=    -- comp=     0 GOps/s
+  IMAD          cvt=0  comp=8    0.14949 ms  cvt=    -- comp=     0 GOps/s
+  IMAD          cvt=0  comp=16   0.28680 ms  cvt=    -- comp=     0 GOps/s
+  ---
+  IMAD          cvt=4  comp=0    0.20693 ms  cvt=     0 comp=    -- GOps/s
+  IMAD          cvt=4  comp=1    0.21702 ms  cvt=     0 comp=     0 GOps/s
+  IMAD          cvt=4  comp=2    0.21703 ms  cvt=     0 comp=     0 GOps/s
+  IMAD          cvt=4  comp=4    0.22434 ms  cvt=     0 comp=     0 GOps/s
+  IMAD          cvt=4  comp=8    0.25599 ms  cvt=     0 comp=     0 GOps/s
+  IMAD          cvt=4  comp=12   0.33393 ms  cvt=     0 comp=     0 GOps/s
+  IMAD          cvt=4  comp=16   0.41589 ms  cvt=     0 comp=     0 GOps/s
+  ---
+  IMAD          cvt=1  comp=4    0.09985 ms  cvt=     0 comp=     0 GOps/s
+  IMAD          cvt=2  comp=4    0.12697 ms  cvt=     0 comp=     0 GOps/s
+  IMAD          cvt=4  comp=4    0.22431 ms  cvt=     0 comp=     0 GOps/s
+  IMAD          cvt=8  comp=4    0.29296 ms  cvt=     0 comp=     0 GOps/s
+  IMAD          cvt=12 comp=4    0.32771 ms  cvt=     0 comp=     0 GOps/s
+  IMAD          cvt=16 comp=4    0.36886 ms  cvt=     0 comp=     0 GOps/s
+
+=== e2m1x2 + MUFU ===
+  MUFU          cvt=0  comp=4    0.26832 ms  cvt=    -- comp=     0 GOps/s
+  MUFU          cvt=0  comp=8    0.51385 ms  cvt=    -- comp=     0 GOps/s
+  MUFU          cvt=0  comp=16   0.99589 ms  cvt=    -- comp=     0 GOps/s
+  ---
+  MUFU          cvt=4  comp=0    0.20695 ms  cvt=     0 comp=    -- GOps/s
+  MUFU          cvt=4  comp=1    0.21498 ms  cvt=     0 comp=     0 GOps/s
+  MUFU          cvt=4  comp=2    0.22430 ms  cvt=     0 comp=     0 GOps/s
+  MUFU          cvt=4  comp=4    0.37057 ms  cvt=     0 comp=     0 GOps/s
+  MUFU          cvt=4  comp=8    0.58377 ms  cvt=     0 comp=     0 GOps/s
+  MUFU          cvt=4  comp=12   0.84648 ms  cvt=     0 comp=     0 GOps/s
+  MUFU          cvt=4  comp=16   1.08430 ms  cvt=     0 comp=     0 GOps/s
+  ---
+  MUFU          cvt=1  comp=4    0.29239 ms  cvt=     0 comp=     0 GOps/s
+  MUFU          cvt=2  comp=4    0.29304 ms  cvt=     0 comp=     0 GOps/s
+  MUFU          cvt=4  comp=4    0.37056 ms  cvt=     0 comp=     0 GOps/s
+  MUFU          cvt=8  comp=4    0.38693 ms  cvt=     0 comp=     0 GOps/s
+  MUFU          cvt=12 comp=4    0.38975 ms  cvt=     0 comp=     0 GOps/s
+  MUFU          cvt=16 comp=4    0.40050 ms  cvt=     0 comp=     0 GOps/s
+
+=== SWEEP COMPLETE ===

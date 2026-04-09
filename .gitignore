@@ -7,3 +7,6 @@
 QuickRunCUDA
 out.txt
 directory_watcher.log
+sass/
+ncu/
+sweep_results.txt

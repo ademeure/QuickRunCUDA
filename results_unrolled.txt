@@ -1,0 +1,180 @@
+============================================================
+GPU: NVIDIA B300 SXM6 AC
+Max SM: 2032 MHz, Max Mem: 3996 MHz
+============================================================
+
+========================================
+  Correctness Tests
+========================================
+=== CVT Narrow Format Correctness (SM 10.3a / B300) ===
+f16 encodings: 1.0=0x3C00, 2.0=0x4000, 0.5=0x3800, -0.5=0xB800
+
+--- e2m1x2 (FP4 / NVFP4) ---
+from f32  (1.0, 2.0)  = 0x42
+from f16x2(1.0, 2.0)  = 0x42
+relu f32  (1.0,-0.5)  = 0x02  (hi clamped to 0)
+relu f16x2(1.0,-0.5)  = 0x02  (hi clamped to 0)
+roundtrip (1.0,2.0)   = 0x40003C00  (expect 0x40003C00)
+
+--- e4m3x2 (FP8 E4M3) ---
+from f32  (1.0, 2.0)  = 0x4038
+from f16x2(1.0, 2.0)  = 0x4038
+roundtrip (1.0,2.0)   = 0x40003C00  (expect 0x40003C00)
+
+--- e5m2x2 (FP8 E5M2) ---
+from f32  (1.0, 2.0)  = 0x403C
+from f16x2(1.0, 2.0)  = 0x403C
+roundtrip (1.0,2.0)   = 0x40003C00  (expect 0x40003C00)
+
+--- e2m3x2 (FP6 E2M3, from f32 only) ---
+from f32  (1.0, 2.0)  = 0x1008
+roundtrip (1.0,2.0)   = 0x40003C00  (expect ~0x40003C00)
+
+--- e3m2x2 (FP6 E3M2, from f32 only) ---
+from f32  (1.0, 2.0)  = 0x100C
+roundtrip (1.0,2.0)   = 0x40003C00  (expect ~0x40003C00)
+
+--- ue8m0x2 (scale factors) ---
+bf16x2(1.0,1.0)->ue8m0x2 = 0x7F7F
+roundtrip ue8m0x2->bf16x2 = 0x3F803F80  (expect 0x3F803F80)
+
+=== Instruction availability summary ===
+To-narrow from f16x2:  e2m1x2[+relu] e4m3x2 e5m2x2
+To-narrow from f32:    e2m1x2[+relu] e4m3x2 e5m2x2 e2m3x2 e3m2x2
+From-narrow to f16x2:  e2m1x2 e4m3x2 e5m2x2 e2m3x2 e3m2x2
+Scale factors:         ue8m0x2 <-> bf16x2
+NOT supported on sm_103a: bf16x2 src (except ue8m0x2), bf16x2 dest (except ue8m0x2)
+                          e2m3x2/e3m2x2 from f16x2
+
+========================================
+  1) DRAM Bandwidth
+========================================
+  65536 blocks x 256 threads, 256MB read + 256MB write
+  Theoretical peak: 8183.808 GB/s
+
+0.08418 ms ==> 6377.7871 GB/s ==> 77.932%
+
+
+========================================
+  2) FP32 FMA Throughput
+========================================
+  Persistent blocks, 256 threads/block, 8192 iters x 8 FMAs, UNROLL=8
+  Theoretical peak (160 SMs): 83.23072 TFLOPS
+Using persistent blocks (148 = 1 per SM)
+
+0.07786 ms ==> 63.7830 TFLOPS ==> 76.634%
+
+
+========================================
+  3) CVT Narrow Format Throughput
+========================================
+
+--- To-narrow from f16x2 (16 CVTs/iter) ---
+  e2m1x2.f16x2 (FP4/NVFP4)
+Using persistent blocks (148 = 1 per SM)
+
+0.83905 ms ==> 5918.6611 GOps/s
+
+  relu.e2m1x2.f16x2 (FP4+ReLU)
+Using persistent blocks (148 = 1 per SM)
+
+0.83885 ms ==> 5920.0835 GOps/s
+
+  e4m3x2.f16x2 (FP8 E4M3)
+Using persistent blocks (148 = 1 per SM)
+
+0.72022 ms ==> 6895.2002 GOps/s
+
+  e5m2x2.f16x2 (FP8 E5M2)
+Using persistent blocks (148 = 1 per SM)
+
+0.72015 ms ==> 6895.8188 GOps/s
+
+
+--- To-narrow from f32 pair (8 CVTs/iter) ---
+  e2m1x2.f32 (FP4)
+Using persistent blocks (148 = 1 per SM)
+
+0.40329 ms ==> 6156.8911 GOps/s
+
+  e4m3x2.f32 (FP8 E4M3)
+Using persistent blocks (148 = 1 per SM)
+
+0.36172 ms ==> 6864.5762 GOps/s
+
+  e5m2x2.f32 (FP8 E5M2)
+Using persistent blocks (148 = 1 per SM)
+
+0.36169 ms ==> 6865.1528 GOps/s
+
+  e2m3x2.f32 (FP6 E2M3)
+Using persistent blocks (148 = 1 per SM)
+
+0.36160 ms ==> 6866.7930 GOps/s
+
+  e3m2x2.f32 (FP6 E3M2)
+Using persistent blocks (148 = 1 per SM)
+
+0.36171 ms ==> 6864.6606 GOps/s
+
+
+--- From-narrow to f16x2 (16 CVTs/iter) ---
+  f16x2.e2m1x2 (FP4->FP16)
+Using persistent blocks (148 = 1 per SM)
+
+0.71532 ms ==> 6942.3979 GOps/s
+
+  f16x2.e4m3x2 (FP8->FP16)
+Using persistent blocks (148 = 1 per SM)
+
+0.71542 ms ==> 6941.4385 GOps/s
+
+  f16x2.e5m2x2 (FP8->FP16)
+Using persistent blocks (148 = 1 per SM)
+
+0.71547 ms ==> 6941.0063 GOps/s
+
+  f16x2.e2m3x2 (FP6->FP16)
+Using persistent blocks (148 = 1 per SM)
+
+0.71557 ms ==> 6940.0254 GOps/s
+
+  f16x2.e3m2x2 (FP6->FP16)
+Using persistent blocks (148 = 1 per SM)
+
+0.71546 ms ==> 6941.1055 GOps/s
+
+
+--- x4 Stochastic Rounding from f32 (cvt.rs, 4 CVTs/iter) ---
+  e2m1x4.f32 (FP4 SR)
+Using persistent blocks (148 = 1 per SM)
+
+0.38503 ms ==> 3224.4465 GOps/s
+
+  e2m1x4.f32+relu (FP4 SR)
+Using persistent blocks (148 = 1 per SM)
+
+0.38499 ms ==> 3224.8269 GOps/s
+
+  e4m3x4.f32 (FP8 E4M3 SR)
+Using persistent blocks (148 = 1 per SM)
+
+0.36255 ms ==> 3424.4355 GOps/s
+
+  e5m2x4.f32 (FP8 E5M2 SR)
+Using persistent blocks (148 = 1 per SM)
+
+0.36257 ms ==> 3424.1936 GOps/s
+
+  e2m3x4.f32 (FP6 E2M3 SR)
+Using persistent blocks (148 = 1 per SM)
+
+0.36258 ms ==> 3424.0637 GOps/s
+
+  e3m2x4.f32 (FP6 E3M2 SR)
+Using persistent blocks (148 = 1 per SM)
+
+0.36259 ms ==> 3424.0603 GOps/s
+
+
+Done!

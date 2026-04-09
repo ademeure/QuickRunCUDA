@@ -1,0 +1,146 @@
+============================================================
+  CVT Format Conversion Sweep - NVIDIA B300 SXM6 AC
+  SM arch: sm_103a, CUDA 13.0
+============================================================
+
+=================================================================
+  NARROW FORMAT CONVERSIONS (FP4/FP6/FP8)
+=================================================================
+
+--- To-narrow from f32 pair (cvt.rn.satfinite, 4 CVTs/iter) ---
+cvt.rn.satfinite.e2m1x2.f32                               7047.4956 GOps/s  (0.08808 ms)
+cvt.rn.satfinite.relu.e2m1x2.f32                          7045.4487 GOps/s  (0.08811 ms)
+cvt.rn.satfinite.e4m3x2.f32                               7390.4141 GOps/s  (0.08399 ms)
+cvt.rn.satfinite.relu.e4m3x2.f32                          7389.5142 GOps/s  (0.08401 ms)
+cvt.rn.satfinite.e5m2x2.f32                               7391.3154 GOps/s  (0.08398 ms)
+cvt.rn.satfinite.relu.e5m2x2.f32                          7389.6270 GOps/s  (0.08400 ms)
+cvt.rn.satfinite.e2m3x2.f32                               7389.5703 GOps/s  (0.08400 ms)
+cvt.rn.satfinite.relu.e2m3x2.f32                          7390.5840 GOps/s  (0.08399 ms)
+cvt.rn.satfinite.e3m2x2.f32                               7387.2056 GOps/s  (0.08403 ms)
+cvt.rn.satfinite.relu.e3m2x2.f32                          7390.0205 GOps/s  (0.08400 ms)
+
+--- To-narrow from f16x2 (cvt.rn.satfinite, 4 CVTs/iter) ---
+cvt.rn.satfinite.e2m1x2.f16x2                             5508.6030 GOps/s  (0.11269 ms)
+cvt.rn.satfinite.relu.e2m1x2.f16x2                        5509.4482 GOps/s  (0.11267 ms)
+cvt.rn.satfinite.e4m3x2.f16x2                             5939.3218 GOps/s  (0.10452 ms)
+cvt.rn.satfinite.relu.e4m3x2.f16x2                        5941.9780 GOps/s  (0.10447 ms)
+cvt.rn.satfinite.e5m2x2.f16x2                             5941.3955 GOps/s  (0.10448 ms)
+cvt.rn.satfinite.relu.e5m2x2.f16x2                        5941.9414 GOps/s  (0.10447 ms)
+cvt.rn.satfinite.e2m3x2.f16x2                            UNSUPPORTED
+cvt.rn.satfinite.relu.e2m3x2.f16x2                       UNSUPPORTED
+cvt.rn.satfinite.e3m2x2.f16x2                            UNSUPPORTED
+cvt.rn.satfinite.relu.e3m2x2.f16x2                       UNSUPPORTED
+
+--- To-narrow from bf16x2 (cvt.rn.satfinite, 4 CVTs/iter) ---
+cvt.rn.satfinite.e2m1x2.bf16x2                           UNSUPPORTED
+cvt.rn.satfinite.e4m3x2.bf16x2                           UNSUPPORTED
+cvt.rn.satfinite.e5m2x2.bf16x2                           UNSUPPORTED
+
+--- From-narrow to f16x2 (cvt.rn, 4 CVTs/iter) ---
+cvt.rn.f16x2.e2m1x2                                       6307.6035 GOps/s  (0.09841 ms)
+cvt.rn.relu.f16x2.e2m1x2                                  6310.0249 GOps/s  (0.09838 ms)
+cvt.rn.f16x2.e4m3x2                                       6307.4805 GOps/s  (0.09842 ms)
+cvt.rn.relu.f16x2.e4m3x2                                  6305.8398 GOps/s  (0.09844 ms)
+cvt.rn.f16x2.e5m2x2                                       6308.0957 GOps/s  (0.09841 ms)
+cvt.rn.relu.f16x2.e5m2x2                                  6307.3164 GOps/s  (0.09842 ms)
+cvt.rn.f16x2.e2m3x2                                       6308.4648 GOps/s  (0.09840 ms)
+cvt.rn.relu.f16x2.e2m3x2                                  6306.5366 GOps/s  (0.09843 ms)
+cvt.rn.f16x2.e3m2x2                                       6307.8911 GOps/s  (0.09841 ms)
+cvt.rn.relu.f16x2.e3m2x2                                  6307.8081 GOps/s  (0.09841 ms)
+
+--- From-narrow to bf16x2 (cvt.rn, 4 CVTs/iter) ---
+cvt.rn.bf16x2.e2m1x2                                     UNSUPPORTED
+cvt.rn.bf16x2.e4m3x2                                     UNSUPPORTED
+cvt.rn.bf16x2.e5m2x2                                     UNSUPPORTED
+cvt.rn.bf16x2.e2m3x2                                     UNSUPPORTED
+cvt.rn.bf16x2.e3m2x2                                     UNSUPPORTED
+
+--- x4 Stochastic Rounding from f32 (cvt.rs, 4 CVTs/iter) ---
+cvt.rs.satfinite.e2m1x4.f32                               3788.7112 GOps/s  (0.16384 ms)
+cvt.rs.relu.satfinite.e2m1x4.f32                          3788.4746 GOps/s  (0.16385 ms)
+cvt.rs.satfinite.e4m3x4.f32                               4040.9321 GOps/s  (0.15362 ms)
+cvt.rs.relu.satfinite.e4m3x4.f32                          4041.5718 GOps/s  (0.15359 ms)
+cvt.rs.satfinite.e5m2x4.f32                               4041.3359 GOps/s  (0.15360 ms)
+cvt.rs.relu.satfinite.e5m2x4.f32                          4040.3599 GOps/s  (0.15364 ms)
+cvt.rs.satfinite.e2m3x4.f32                               4040.6121 GOps/s  (0.15363 ms)
+cvt.rs.relu.satfinite.e2m3x4.f32                          4040.7805 GOps/s  (0.15362 ms)
+cvt.rs.satfinite.e3m2x4.f32                               4040.7471 GOps/s  (0.15362 ms)
+cvt.rs.relu.satfinite.e3m2x4.f32                          4040.9490 GOps/s  (0.15362 ms)
+
+=================================================================
+  STANDARD FP CONVERSIONS (f16/bf16/tf32)
+=================================================================
+
+--- f32 -> f16 ---
+cvt.rn.f16.f32                                            4042.6836 GOps/s  (0.15355 ms)
+cvt.rn.relu.f16.f32                                       6442.6816 GOps/s  (0.09635 ms)
+cvt.rn.satfinite.f16.f32                                  6440.4141 GOps/s  (0.09638 ms)
+cvt.rn.relu.satfinite.f16.f32                             6441.0127 GOps/s  (0.09638 ms)
+cvt.rz.f16.f32                                            4046.5796 GOps/s  (0.15340 ms)
+cvt.rz.relu.f16.f32                                       6439.8584 GOps/s  (0.09639 ms)
+cvt.rz.satfinite.f16.f32                                  6440.6284 GOps/s  (0.09638 ms)
+cvt.rz.relu.satfinite.f16.f32                             6440.0293 GOps/s  (0.09639 ms)
+
+--- f32 -> bf16 ---
+cvt.rn.bf16.f32                                           4044.0825 GOps/s  (0.15350 ms)
+cvt.rn.relu.bf16.f32                                      6439.6016 GOps/s  (0.09640 ms)
+cvt.rn.satfinite.bf16.f32                                 6441.9106 GOps/s  (0.09636 ms)
+cvt.rn.relu.satfinite.bf16.f32                            6440.2432 GOps/s  (0.09639 ms)
+cvt.rz.bf16.f32                                           4046.6814 GOps/s  (0.15340 ms)
+cvt.rz.relu.bf16.f32                                      6441.6968 GOps/s  (0.09637 ms)
+cvt.rz.satfinite.bf16.f32                                 6440.5850 GOps/s  (0.09638 ms)
+cvt.rz.relu.satfinite.bf16.f32                            6439.6016 GOps/s  (0.09640 ms)
+
+--- f32,f32 -> f16x2 ---
+cvt.rn.f16x2.f32                                          7389.7388 GOps/s  (0.08400 ms)
+cvt.rn.relu.f16x2.f32                                     7390.7524 GOps/s  (0.08399 ms)
+cvt.rn.satfinite.f16x2.f32                                7391.7666 GOps/s  (0.08398 ms)
+cvt.rn.relu.satfinite.f16x2.f32                           7389.6270 GOps/s  (0.08400 ms)
+cvt.rz.f16x2.f32                                          7388.7822 GOps/s  (0.08401 ms)
+cvt.rz.relu.f16x2.f32                                     7391.0337 GOps/s  (0.08399 ms)
+cvt.rz.satfinite.f16x2.f32                                7390.3013 GOps/s  (0.08400 ms)
+cvt.rz.relu.satfinite.f16x2.f32                           7388.8379 GOps/s  (0.08401 ms)
+
+--- f32,f32 -> bf16x2 ---
+cvt.rn.bf16x2.f32                                         7387.2622 GOps/s  (0.08403 ms)
+cvt.rn.relu.bf16x2.f32                                    7390.0767 GOps/s  (0.08400 ms)
+cvt.rn.satfinite.bf16x2.f32                               7387.3184 GOps/s  (0.08403 ms)
+cvt.rn.relu.satfinite.bf16x2.f32                          7391.6538 GOps/s  (0.08398 ms)
+cvt.rz.bf16x2.f32                                         7388.8945 GOps/s  (0.08401 ms)
+cvt.rz.relu.bf16x2.f32                                    7372.6069 GOps/s  (0.08420 ms)
+cvt.rz.satfinite.bf16x2.f32                               7390.1333 GOps/s  (0.08400 ms)
+cvt.rz.relu.satfinite.bf16x2.f32                          7391.2588 GOps/s  (0.08399 ms)
+
+--- f32 -> tf32 ---
+cvt.rna.satfinite.tf32.f32                                3836.8352 GOps/s  (0.16179 ms)
+cvt.rn.satfinite.tf32.f32                                 7967.6406 GOps/s  (0.07791 ms)
+cvt.rz.satfinite.tf32.f32                                 7971.1113 GOps/s  (0.07788 ms)
+cvt.rna.satfinite.relu.tf32.f32                          UNSUPPORTED
+cvt.rn.satfinite.relu.tf32.f32                            7973.0117 GOps/s  (0.07786 ms)
+cvt.rz.satfinite.relu.tf32.f32                            7969.1470 GOps/s  (0.07790 ms)
+
+--- f16 -> f32 / bf16 -> f32 ---
+cvt.f32.f16                                              255649.1250 GOps/s  (0.00243 ms)
+cvt.f32.bf16                                             276886.3438 GOps/s  (0.00224 ms)
+
+=================================================================
+  UE8M0X2 SCALE FACTOR CONVERSIONS
+=================================================================
+
+cvt.rz.satfinite.ue8m0x2.bf16x2                           5940.4492 GOps/s  (0.10450 ms)
+cvt.rz.ue8m0x2.bf16x2                                     5939.9766 GOps/s  (0.10450 ms)
+cvt.rp.satfinite.ue8m0x2.bf16x2                           5940.1216 GOps/s  (0.10450 ms)
+cvt.rp.ue8m0x2.bf16x2                                     5941.4316 GOps/s  (0.10448 ms)
+cvt.rz.satfinite.ue8m0x2.f32                              7383.4390 GOps/s  (0.08407 ms)
+cvt.rz.ue8m0x2.f32                                        7382.5957 GOps/s  (0.08408 ms)
+cvt.rp.satfinite.ue8m0x2.f32                              7379.4502 GOps/s  (0.08412 ms)
+cvt.rp.ue8m0x2.f32                                        7381.1909 GOps/s  (0.08410 ms)
+cvt.rn.bf16x2.ue8m0x2                                     6307.9316 GOps/s  (0.09841 ms)
+
+=================================================================
+  SWEEP COMPLETE
+=================================================================
+
+SASS files saved to sass/ directory
+107
+ SASS files total

@@ -233,16 +233,18 @@ public:
     strcpy(compileParams[2], other_options_2.c_str());
 
     // Compile cubin for the GPU arch on which are going to run cuda kernel.
-    // HACK: Turn sm_90 into sm_90a
+    // Add 'a' suffix (sm_90a, sm_100a, sm_103a) to unlock architecture-accelerated features
     std::string compileOptions;
     compileOptions = "--gpu-architecture=sm_";
     compileParams[numCompileOptions] = reinterpret_cast<char *>(malloc(sizeof(char) * (compileOptions.length() + 11)));
 
+    const char* arch_suffix = (major >= 9) ? "a" : "";
+
   #if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
     sprintf_s(compileParams[numCompileOptions], sizeof(char) * (compileOptions.length() + 10),
-              "%s%d%d%s", compileOptions.c_str(), major, minor, (major == 9 && minor == 0) ? "a" : "");
+              "%s%d%d%s", compileOptions.c_str(), major, minor, arch_suffix);
   #else
-    snprintf(compileParams[numCompileOptions], compileOptions.size() + 10, "%s%d%d%s", compileOptions.c_str(), major, minor, (major == 9 && minor == 0) ? "a" : "");
+    snprintf(compileParams[numCompileOptions], compileOptions.size() + 10, "%s%d%d%s", compileOptions.c_str(), major, minor, arch_suffix);
   #endif
 
     // Increment numCompileOptions to account for the added option
