@@ -1472,6 +1472,20 @@ Compiler-reachable uniform ops (verified with CUDA 13.2): UIADD3, UIMAD, UMOV, U
 - Headers dated 2026-03-20
 - Driver libcuda 580.126.09
 
+### Verified tcgen05 (Blackwell gen-5 tensor) capabilities on B300
+All the following **compile on sm_100a/100f/103a/103f/110a/110f** (and reject on sm_90a/sm_120a), per CUDA 13.2 `cccl/cuda/__ptx/instructions/generated/tcgen05_*.h` and live `nvcc -arch=... -ptx` tests this session:
+
+| PTX | Purpose |
+|---|---|
+| `tcgen05.alloc` / `tcgen05.dealloc` | tensor-memory column allocation |
+| `tcgen05.ld.sync.aligned.*.b32` | tmem → registers (16x64b / 16x128b / 16x256b / 32x32b shapes) |
+| `tcgen05.st.sync.aligned.*.b32` | registers → tmem |
+| `tcgen05.cp` / `tcgen05.shift` | tmem ↔ tmem operations |
+| `tcgen05.mma.ws.cta_group::{1,2}.kind::{f16,tf32,f8f6f4,i8}.*` | async MMA (FP4/FP6/FP8 via `kind::f8f6f4`) |
+| `tcgen05.commit` / `tcgen05.wait` / `tcgen05.fence` | completion/ordering |
+
+**So B300 has full FP4/FP6/FP8/TF32/FP16/INT8 tensor-core capability, just via the async tcgen05 path rather than warp-synchronous `mma.sync`.** Benchmarking requires the full setup: tcgen05.alloc → UBLKCP/TMA load A/B → build matrix descriptors → tcgen05.mma → tcgen05.wait → tcgen05.ld → tcgen05.dealloc. Not covered by the quick microbenches in this catalog. The `mma.sync.kind::f8f6f4` form tested earlier is NOT the right path for datacenter Blackwell.
+
 ## 29. Warp-reduce & barrier reality check
 
 ### Warp reduction: HW vs software
