@@ -814,7 +814,54 @@ Additional ops verified, with SASS emitted and pipe assignment:
 
 **Immediate-variant SASS (FFMA32I, IADD32I, IMUL32I, LOP32I, ISCADD32I, etc.) exist in the Blackwell opcode table but NOT emitted** by the current nvcc codegen — it uses regular ops with immediate operands. These may be reserved for future compiler paths or higher opt levels.
 
-## 15. Methodological notes
+## 15. Deep-dive: atomics (corrected numbers) + latency
+
+### Atomics on pipe_lsu — real throughput
+
+Earlier I wrote "32 SASS/SM/cy" for `ATOMS.*`. **That was too high.** At full TLP (512 × 592 = 303k threads, per-lane distinct addresses, `-s 16KiB` shared memory) the ATOMS family caps at:
+
+| SASS | pipe_lsu rate | scalar atoms/SM/cy | chip-wide atoms/s |
+|---|---:|---:|---:|
+| `ATOMS.MIN/MAX/ADD/AND/OR/XOR/EXCH/INC/DEC` | 0.125 | **4** | 1.14 TAtoms/s |
+| `ATOMS.CAS` | 0.0625 | **2** | 0.57 TAtoms/s (half) |
+| `red.shared.add` (no-return) | 0.125 | 4 | same — compiler emits `ATOMS.ADD` even for PTX `red` |
+
+That's **1 atom warp-inst every 8 cycles** on LSU (CAS: every 16). No amount of added TLP closes the gap — the atomic-unit throughput is fixed.
+
+**CAS is half-rate irrespective of compare outcome.** Verified with explicit always-succeed (compare matches memory) vs always-fail (compare never matches) kernels: both take exactly 2.189 ms vs atom.add 1.096 ms. Compare-match does not affect performance.
+
+**"With-return" vs no-return (`red.shared.add`)**: same SASS (`ATOMS.ADD`), same rate. On B300 there is no separate reduction-only SASS for shared memory — compiler canonicalizes `red.shared.*` to `ATOMS.*`. (Global-memory `red.global.*` is different — emits `REDG.*` or `ATOMG.*` depending on scope.)
+
+**No native `atom.shared.add.f32`** on B300: compiler emits `BSSY.RECONVERGENT` + `LDS` + CAS-loop to emulate. Very slow (~2× plain atom.add).
+
+### Round-trip latency (1 warp, chained self-op)
+
+Back-to-back dependent operations in a single warp (no ILP):
+
+| Op | SASS | cycles/op (latency) |
+|---|---|---:|
+| FFMA (`fma.rn.f32 %0,%0,%0,%0`) | FFMA | **4.14** |
+| FMUL | FMUL | 4.14 |
+| FADD | FADD | 4.13 |
+| HFMA2 | HFMA2 | 4.13 |
+| IMAD (`mad.lo.u32`) | IMAD | 4.15 |
+| PRMT (`prmt %0,%0,%0,0x3210`) | PRMT | 4.15 |
+| F2FP unpack (`cvt.rn.f16x2.e4m3x2`) | F2FP.F16.E4M3.UNPACK_B | 4.13 |
+| F2FP pack (`cvt.rn.satfinite.e4m3x2.f16x2`) | F2FP.*.UNPACK_B_MERGE_C | **8.13** |
+| u64 add | IADD3 + IMAD.X (2 SASS) | **6.29** |
+| MUFU.EX2 | MUFU.EX2 | **14.45** |
+| MUFU.RSQ | MUFU.RSQ | **40.18** |
+| MUFU.RCP | MUFU.RCP | **42.31** |
+| redux.sync.min | CREDUX.MIN + IMAD.U32 | **18.06** |
+| DFMA (fp64) | DFMA | **302.46** (!) |
+
+Consistent 4-cycle latency for everything on pipe_alu / pipe_fma suggests a single pipelined depth. F2FP pack at 8 cycles reflects the 2-read-port merge. MUFU variants span 14–42 cy (EX2 is cheapest, RCP most expensive). FP64 DFMA at 302 cy is consistent with the throttled fp64 pipe (0.05 warp-inst/SM/cy ≈ 1 inst per 20 cycles + ~5× internal latency).
+
+To saturate pipe_fma with FFMA, you need **ILP ≥ 4 independent chains per warp** (to hide the 4-cycle dep latency). For MUFU.EX2 you'd need ≥ 14 independent chains. For DFMA, need 300+ independent chains — infeasible, so FP64 is always latency-bound per warp.
+
+**DCE-disclaimer:** `LOP3 xor %0,%0,const`, `min.f32 %0,%0,%0`, and `shfl.sync %0,%0,1,…` under uniform warp state all measured <1 cy = DCE'd or optimized away. Real latencies for LOP3/FMNMX/SHFL are expected ≈4 cy (same pipe family) but I don't have a clean kernel for those three.
+
+## 16. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
