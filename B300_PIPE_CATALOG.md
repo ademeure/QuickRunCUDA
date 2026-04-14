@@ -1182,7 +1182,53 @@ Baseline (all 32 lanes FFMA): 0.083 ms. Only lane 0 doing FFMA (via `@p` or `ele
 - `atom.shared::cluster.add` → **`ATOM.E.ADD.STRONG.GPU`** (generic atomic, not ATOMS) — because address may map to a peer block's SMEM requiring generic routing
 - `mapa.shared::cluster` address mapping doesn't emit visible SASS (folded into atom addressing)
 
-## 21. Methodological notes
+## 21. Additional findings (research-loop batch 6)
+
+### MUFU + transcendental latency (chained, 1 warp)
+- `tanh.approx`: 50 cy
+- `sin.approx` / `cos.approx`: 55 cy
+- `ex2.approx`: 83 cy
+- `sqrt.approx` / `rsqrt.approx` / `lg2.approx`: 93 cy
+- `rcp.approx`: 98 cy
+- `sqrt.rn` precise: **138 cy**
+- `rcp.rn` precise: **185 cy** (2× approx — Newton-Raphson iterations)
+
+### Register pressure knee
+FP32 chains per thread, 256 threads/block:
+- 1 chain: latency-bound (pipe_fma = 2.85)
+- 16 chains: saturated at 3.92 (98% of 4.0 dispatch)
+- **Up to 96 chains: still at peak** (3.95 sm_inst)
+- **128 chains: 3× cliff** (pipe drops to 3.79, register spill)
+- 192 chains: 5× penalty
+
+### Atomic hotspot — warp-coalesce fast path confirmed
+Deep investigation of the 2-hotspot anomaly:
+- 1 hotspot (all lanes same addr): **0.78 ms — warp-level coalesce fast path** (32 lane values reduce to 1 atomic per warp)
+- Within-warp 2 hotspots (`lane%2`, `lane/16`, etc.): **25.4 ms (32× slower)** — fast path breaks
+- Warps target 1 addr each, different warps = different addrs (layout 6): **49.7 ms (WORST)** — no warp coalesce AND cross-warp serialization on shared addresses
+- 32 per-lane hotspots: 4.87 ms
+- Per-thread unique: 0.063 ms
+
+**Takeaway:** atomic-to-same-address is 400× slower than unique, BUT if all lanes in every warp hit the identical address, hardware coalesces to a single atomic per warp — 12× slowdown only. Any within-warp divergence activates the slow path.
+
+### FP16 HMMA accumulator type — no speedup on B300
+FP16×FP16 → FP32 accumulator and FP16×FP16 → FP16 accumulator take **identical time** (5.4 ms each). Unlike earlier architectures where F16 accumulator ran 2× faster. B300's HMMA pipeline is accumulator-precision agnostic.
+
+### cp.async wait latency
+- `cp.async + wait_all`: ~54 ns per transaction (full drain)
+- `cp.async + wait_group N`: ~27 ns (non-blocking on last group)
+- `wait_all` adds a ~27 ns drain penalty over `wait_group`
+
+### DRAM bandwidth by access pattern
+- Sequential stride-1 v4: **7.42 TB/s** (92% of HBM3E peak)
+- Stride-8 per-lane cacheline: 523 GB/s (14× penalty)
+- L2-resident: 31 TB/s
+
+### nanosleep
+- Minimum sleep = ~34 ns
+- Actual sleep = 2.2-3.5× requested for N ≥ 500 ns (scheduler tick rounding)
+
+## 22. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
