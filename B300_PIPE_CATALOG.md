@@ -209,9 +209,9 @@ The XU pipe accepts a simple op every 2 cycles (0.5/SM/cy) for compound MUFUs. C
 | `bar.sync 0` / `barrier.sync 0` | `BAR.SYNC.DEFER` | **adu** | 0.36 | CTA-wide barrier, thread-waiting dominates |
 | `bar.arrive` | `BAR.ARV` | **adu** | 0.47 | no wait → faster |
 | `bar.red.popc.u32` | `BAR.RED.POPC.DEFER` | **adu** (+ alu for ISETP) | 0.37 | |
-| `redux.sync.min.u32` / `.max` | `CREDUX.MIN/MAX` | **alu + fma** | 1.88 each = 2.00 warp-inst/cy | unique: dual-pipe (CREDUX routed through arithmetic) |
-| `redux.sync.add.u32` | `REDUX.SUM` + IMAD.U32 | **adu** + alu/fma | 0.5 adu | slower than min/max |
-| `redux.sync.or.b32` / `.and` / `.xor` | `REDUX.{OR,AND,XOR}` | **adu** | 0.5 | |
+| `redux.sync.min.u32` / `.max.u32` | `CREDUX.MIN/MAX` + `IMAD.U32` (2 SASS/op intrinsic) | CREDUX → **alu**, IMAD → **fmaheavy** | **1.92 PTX-op/SM/cy** (≈ 61 thread-ops/SM/cy); each pipe runs at 1.92/2.00 | |
+| `redux.sync.add.u32` | `REDUX.SUM` + minor IMAD | **adu** | **0.50 PTX-op/SM/cy** (≈ 16 thread-ops/SM/cy) — **~4× slower** than min/max | |
+| `redux.sync.or.b32` / `.and` / `.xor` | `REDUX.{OR,AND,XOR}` | **adu** | 0.50 PTX-op/SM/cy (same as add) | |
 | `membar.cta` | `MEMBAR.SC.CTA` | **lsu** | 0.83 | scoped fence on lsu |
 | `membar.gl` | `MEMBAR.SC.GPU` + `ERRBAR` | adu + lsu | extremely slow (~38 ms) | GPU-wide fence |
 | `ldmatrix.sync.x1.b16` | `LDSM` (1 quad) | **uniform (1.0) + lsu (0.5)** | ~1.0 | |
