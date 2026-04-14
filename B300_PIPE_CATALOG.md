@@ -1455,10 +1455,17 @@ FFMA reference (same methodology): **4 cy** — matches pipeline depth.
 - **FCHK** — testp.* is emulated via LOP3 + FADD instead
 - **BMSK** — PTX syntax fails to reach it
 - **Cluster-scope shared atomics via mapa** — compile or runtime issues
-- **FP4/FP6 MMA inline PTX** with `.kind::f8f6f4` — compiles but DCE/miscompile
-- **UBLKCP** emits correctly via cp.async.bulk, but timing/bandwidth measurements unreliable without proper TMA descriptor setup
+- **`mma.sync.aligned.*.kind::f8f6f4` for FP4/FP6** on sm_103a — ptxas errors ("Instruction mma with FP6/FP4 floating point type not supported on .target sm_103a"). **BUT** B300 DOES support FP4/FP6 MMA via the async `tcgen05.mma.ws.cta_group::1.kind::f8f6f4.*` path (tensor-memory-backed). Verified in CUDA 13.2 headers (`cccl/cuda/__ptx/instructions/generated/tcgen05_mma_ws.h` lists SM_103a alongside 100a/100f/103f/110a/110f). The capability is present; only the synchronous warp-level form is missing.
+- **`mma.sync.aligned.*.kind::f8f6f4.f32.e4m3.e4m3.f32` (FP8 sync)** on sm_103a compiles but ptxas lowers to `F2FP.F16.E4M3.UNPACK_B` + `HMMA.16816.F32` (unpack-to-FP16 + FP16 HMMA). Not native FP8 tensor-core SASS. Native FP8 MMA on B300 is via `tcgen05.mma`.
+- **UBLKCP** emits correctly via cp.async.bulk, but timing/bandwidth measurements unreliable without proper TMA descriptor setup.
 
-Compiler-reachable uniform ops: UIADD3, UIMAD, UMOV, UISETP, ULOP3.LUT.
+Compiler-reachable uniform ops (verified with CUDA 13.2): UIADD3, UIMAD, UMOV, UISETP, ULOP3.LUT. UFFMA/UFADD/UFMUL still not emitted in CUDA 13.2 either.
+
+### Toolchain version sanity (this session)
+- nvcc 13.2.78 (Built 2026-03-19)
+- NVRTC API version 13.2 (libnvrtc.so.13.2.78)
+- Headers dated 2026-03-20
+- Driver libcuda 580.126.09
 
 ## 29. Warp-reduce & barrier reality check
 
