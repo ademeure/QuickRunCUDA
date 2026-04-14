@@ -1455,7 +1455,12 @@ FFMA reference (same methodology): **4 cy** — matches pipeline depth.
 - **FCHK** — testp.* is emulated via LOP3 + FADD instead
 - **BMSK** — PTX syntax fails to reach it
 - **Cluster-scope shared atomics via mapa** — compile or runtime issues
-- **`mma.sync.aligned.*.kind::f8f6f4` for FP4/FP6** on sm_103a — ptxas errors ("Instruction mma with FP6/FP4 floating point type not supported on .target sm_103a"). **BUT** B300 DOES support FP4/FP6 MMA via the async `tcgen05.mma.ws.cta_group::1.kind::f8f6f4.*` path (tensor-memory-backed). Verified in CUDA 13.2 headers (`cccl/cuda/__ptx/instructions/generated/tcgen05_mma_ws.h` lists SM_103a alongside 100a/100f/103f/110a/110f). The capability is present; only the synchronous warp-level form is missing.
+- **`mma.sync.aligned.*.kind::f8f6f4` (warp-sync FP4/FP6 MMA)** — verified across all Blackwell targets with nvcc 13.2:
+  - sm_90a, sm_100a, sm_100f, sm_103a, sm_103f, sm_110a: **all reject** ("not supported on .target ...")
+  - sm_120a (Geforce Blackwell): **compiles at shape m16n8k32 only** (m16n8k64 and m16n8k128 still fail)
+  - So this warp-sync path is effectively sm_120a-only, NOT available on any datacenter Blackwell (B200/B300/etc.)
+  - B300 (and all datacenter Blackwell) FP4/FP6 MMA IS available via the async `tcgen05.mma.ws.cta_group::1.kind::f8f6f4.*` path (tensor-memory-backed), verified in CUDA 13.2 headers (`cccl/cuda/__ptx/instructions/generated/tcgen05_mma_ws.h` lists SM_103a alongside 100a/100f/103f/110a/110f). The HW capability exists on datacenter SKUs — only the synchronous warp-level form is missing.
+  - Block-scaled variants `kind::mxf8f6f4`/`kind::mxf4` also reject on all tested archs — these are future PTX forms not yet in nvcc 13.2's codegen.
 - **`mma.sync.aligned.*.kind::f8f6f4.f32.e4m3.e4m3.f32` (FP8 sync)** on sm_103a compiles but ptxas lowers to `F2FP.F16.E4M3.UNPACK_B` + `HMMA.16816.F32` (unpack-to-FP16 + FP16 HMMA). Not native FP8 tensor-core SASS. Native FP8 MMA on B300 is via `tcgen05.mma`.
 - **UBLKCP** emits correctly via cp.async.bulk, but timing/bandwidth measurements unreliable without proper TMA descriptor setup.
 
