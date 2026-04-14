@@ -1228,7 +1228,55 @@ FP16×FP16 → FP32 accumulator and FP16×FP16 → FP16 accumulator take **ident
 - Minimum sleep = ~34 ns
 - Actual sleep = 2.2-3.5× requested for N ≥ 500 ns (scheduler tick rounding)
 
-## 22. Methodological notes
+## 22. Corrections (audited against CUDA runtime)
+
+### B300 hardware constants (authoritative from `cudaDeviceProp`)
+- **L2 cache: 132,644,864 B = 126 MB** (my earlier 280 MB / 192 MB / 186 MB were all wrong)
+- SMs: **148**
+- Shared mem / SM: **228 KB**
+- Regs / SM: 65536 = 256 KB register file
+- Persisting L2 max: 79 MB (a *separate* limit, not related to total L2 size — my earlier "2.4×" ratio was bogus)
+- cc: 10.3 (sm_103a)
+- Global mem: 268 GB
+
+### Fast math is ON by default
+`utils/cuda_helper.h` line 227 passes `-use_fast_math` to NVRTC. So every measurement in this catalog is already with:
+- `.ftz` flush-to-zero
+- `.approx` preferred over strict `.rn` for rcp/sqrt/div
+- no strict IEEE compliance fallback
+
+The "extra" FFMA.FTZ + FSETP.GEU.AND + LOP3.LUT I previously reported alongside `MUFU.EX2` was emitted by **my own range-reduction scaffolding code** (`f = f * 0.5f + 0.25f` between MUFU calls), NOT from strict-FP corner-case handling. A clean chain of `ex2.approx.ftz` alone emits only `MUFU.EX2` instructions.
+
+### Clean MUFU latency ratios (relative to FFMA self-op)
+Absolute numbers from self-op chains (`fma %0,%0,%0,%0` etc.) are ~2× inflated from register read-port pressure (a single register fills all 3-4 operand slots). The **ratios** to FFMA are the reliable information:
+
+| Op | cy/op (self-op chain) | ratio vs FFMA |
+|---|---:|---:|
+| FFMA reference | 8.46 | 1.00× |
+| ex2.approx.ftz | 29.2 | **3.45×** |
+| rsqrt / sqrt / lg2 approx.ftz | 37.5 | **4.43×** |
+| sin / cos.approx.ftz | 49.9 | **5.90×** |
+| rcp.approx.ftz | DCE'd — rcp(rcp(x))≈x | — |
+| tanh.approx.ftz | DCE'd — converges | — |
+
+### Memory bandwidth by working-set size (cleaner methodology)
+Window-shared test, 148 blocks × 512 threads hitting cyclic window:
+
+| Window | GB/s | Level |
+|---:|---:|---|
+| 4–128 KB | 34–35k | L1 hit (B300 L1 = 228 KB/SM) |
+| 256 KB – 1 MB | 29–35k | L1/L2 transition |
+| 4 MB | 19.5k | L2 |
+| 16-64 MB | 19.7k | L2 plateau |
+| 256 MB | 14.8k | **overflows 126 MB L2** → partial DRAM |
+
+L2 peak BW ≈ 20 TB/s for shared working set. L1 hit BW ≈ 35 TB/s. DRAM BW (coalesced sequential, separate test): **7.4 TB/s = 92% of HBM3E peak**.
+
+### Caveats on earlier numbers in this document
+- "L2-resident 31 TB/s" was a correct measurement but the **working set was ~9 MB** (block windows overlapping), well inside L2 — so it's L2 BW, not DRAM.
+- "MUFU.EX2 ≈ 14.5 cy" from `bench_latency.cu` was clean (single op, no range-reduction). The 83-cy number in `bench_mufu_lat.cu` was inflated by my own range-reduction FFMA chain.
+
+## 23. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
