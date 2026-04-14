@@ -1100,7 +1100,60 @@ Listed in Blackwell SASS table but never observed in my measurements:
 - u ≈ 1.4-1.6 (mostly independent, some SMSP friction): LOP3 + IMAD = 1.61, IMAD + MUFU = 1.45, LOP3 + FFMA = 1.36
 - u = 0.55 for FFMA + MUFU.EX2 (MUFU stretches kernel wall-time; not a pipe sharing issue)
 
-## 19. Methodological notes
+## 19. Additional findings (research-loop batch 4)
+
+### Divergence & reconvergence
+- 2-way if/else with thread-divergent condition: **no branch emitted** — compiler converts to `ISETP + SEL` predicated inline
+- Divergent 4-way switch: real `BSSY` + `BSYNC.RECONVERGENT` barriers, **~5× slowdown**
+- Uniform branch (block-constant condition): DCE'd
+- Small divergent loop: 8× overhead from extra iterations (no reconvergence barrier — natural loop convergence)
+
+### Sustained 4-pipe peak
+- FFMA alone: **sm_inst = 3.87** — 97% of 4.0 theoretical dispatch ceiling
+- ALU + FFMA dual-pipe: 3.79 (both near saturation)
+- Adding MUFU.EX2 to any kernel REDUCES sm_inst (its 14-cy latency stretches wall-time)
+- No 4-pipe combination exceeded 3.87 achievable throughput
+
+### Integer op coverage (additional)
+- `abs.s32` → **`IABS`** (native)
+- `shf.l + add` scaled pattern → **`LEA.HI`** emitted (compiler fuses shift+add)
+- `dp4a.s32.u32` / `.u32.s32` → **`IDP.4A.S8.U8`** / `IDP.4A.U8.S8` (native mixed-signedness)
+- `szext.wrap.s32` → **`SGXT.W`**
+- `popc.b64` = 2× POPC + LOP3 (not native, 577 μs/128 ops)
+- `clz.b64` = 256 IADD3 + LOP3 emulation (heavily expensive)
+- `bfe.u32` = SHF.R + SGXT (2 SASS per op = half rate)
+- `cnot.b32` = LOP3+SEL emulated (no native CNOT)
+- `bmsk.b32` = compile error (opcode exists, PTX path unclear)
+
+### Half-precision specialised opcodes
+- **`MUFU.TANH.F16`** — `tanh.approx.f16` (native, pipe_xu)
+- **`MUFU.EX2.F16`** — `ex2.approx.f16` (native, pipe_xu)
+- Scalar `add.rn.f16` / `fma.rn.f16` / `setp.eq.f16`: **emulated via PRMT + vec2 HADD2/HFMA2** — PTX scalar half-precision is packed+extracted, not a native scalar op
+- `neg.bf16x2` / `abs.bf16x2`: emulated via HFMA2.BF16 multiply-by-±1 (no native neg/abs for bf16)
+
+### Atomic hotspot scaling anomaly
+75k threads contending on N addresses:
+- Unique → 0.064 ms
+- **1 hotspot (all lanes → same addr)**: 0.78 ms (12× slow — warp-coalesce fast path)
+- **2 hotspots** (within-warp divergence): **25 ms (32× WORSE than 1!)** — within-warp addr divergence breaks the coalesce path
+- Recovery: >1024 hotspots ≈ 5× unique time
+
+### TMA opcodes
+- `cp.async.bulk.shared::cluster.global.mbarrier` → **`UBLKCP.S.G`** (TMA bulk-copy)
+- `cp.async.ca.L2::256B` → **`LDGSTS.E.LTC256B.128`** (L2-sector prefetch)
+- `cp.async.commit_group` → `LDGDEPBAR`
+- `mbarrier.*` → new `SYNCS.*` family on pipe_adu
+
+### Special-register costs
+- %clock64 (fastest timestamp): **20 cycles** via `CS2R.32`
+- %clock, %pm0 via S2UR: 21-24 cy
+- %globaltimer, %smid, %warpid via S2R: 36-38 cy
+- Cached SRs (%gridid, %lanemask_eq, etc.): optimized away, effectively free
+
+### Divergent 4-way switch — the only reconvergence-barrier case
+Compiler prefers ISETP+SEL predication over BSSY/BSYNC for simple 2-way branches. Only when SEL is infeasible (4+ divergent targets, unknown control flow) does `BSSY` + `BSYNC.RECONVERGENT` emit.
+
+## 20. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
