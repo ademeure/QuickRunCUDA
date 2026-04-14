@@ -79,3 +79,37 @@ including LOP3, IADD3, IMAD, SHL contention, to answer this.
 supersedes the earlier coarse "share SFU" claim. The 2-slot SFU was a
 functional approximation; the true topology has ALU and XU as separate pipes
 with MUFU.RSQ being a compound op that touches both.
+
+## Addendum — PACK+FFMA at u=1.1 is DISPATCH-bound, not pipe-shared
+
+Additional sweep with various N_P:N_F ratios:
+
+| N_P | N_F | rate_P | rate_F | u |
+|---:|---:|---:|---:|---:|
+| 8 | 0 | 21.30 | — | 1.00 |
+| 0 | 8 | — | 122.93 | 1.00 |
+| 8 | 8 | 21.23 | 21.23 | 1.17 |
+| 2 | 12 (balanced) | 11.63 | 69.75 | 1.11 |
+| 1 | 8 | 11.11 | 88.91 | 1.24 |
+| 2 | 32 | 6.10 | 97.59 | 1.08 |
+| 4 | 48 | 7.54 | 90.52 | 1.09 |
+
+u stays near 1.1 across all ratios. At first glance looks like sharing. But:
+- PACK alone = 21, FFMA alone = 123. Sum = 144.
+- 128 thread-ops/SM/cy is the dispatch aggregate ceiling.
+- 144 > 128 → **their combined demand can't fit even if pipes were independent**.
+
+So u=1.1 is what you'd get if they hit dispatch cap at 128 with proportional
+allocation: PACK gets ~11 (52% of peak), FFMA gets ~70 (57% of peak) → 1.09.
+
+**The u-metric requires (baseline_A + baseline_B) < dispatch_cap to cleanly
+detect pipe sharing.** For PACK+FFMA the test is ambiguous. For UNPACK+EX2
+(32+32=64 << 128) the answer is unambiguous: INDEPENDENT.
+
+## The clean methodology rule
+
+For a pair (A, B):
+1. If `R_A + R_B << dispatch_ceiling` (~128): u ≈ 2 → independent; u ≈ 1 → shared.
+2. If `R_A + R_B ≥ dispatch_ceiling`: inconclusive — always u ≈ 1.x regardless of pipe sharing.
+
+Implication: to test FFMA's independence from F2FP, use lower-ILP FFMA (N_F=1–2) where FFMA baseline drops well below its 128 peak, so the sum is under dispatch cap.
