@@ -1417,7 +1417,50 @@ FFMA reference (same methodology): **4 cy** — matches pipeline depth.
 - **Fast-math (`-use_fast_math`) is on by default** in this harness.
 - **126 MB L2** (authoritative), **228 KB L1 per SM**.
 
-## 26. Methodological notes
+## 26. Warp cooperative primitives (throughput, 303k threads × 4096 iters)
+
+| op | GOps/s | SASS | pipe |
+|---|---:|---|---|
+| **vote.sync.ballot.b32** | **7320** | VOTE.ANY | alu |
+| vote.sync.{all,any,uni}.pred | 3315 | VOTE.{ALL,ANY,EQ} + SELP (2 SASS) | alu |
+| **shfl.sync.bfly.b32** | 5576 | SHFL.BFLY | lsu |
+| shfl.sync.up / down | ~5600 | SHFL.{UP,DOWN} | lsu |
+| match.all | DCE | — | adu |
+| **redux.sync.min.u32** | **6923** | CREDUX.MIN | alu (+fmaH) |
+| redux.sync.add.u32 | 3107 | REDUX.SUM | adu |
+| redux.sync.or.b32 | 3168 | REDUX.OR | adu |
+
+**vote.ballot is 2.2× faster than vote.all/any/uni** — ballot emits one SASS returning a b32 mask; the others need predicate→register SELP fallback (2 SASS).
+**redux.min/max 2.2× faster than redux.add/or** — different pipes (alu vs adu), already documented.
+
+## 27. BF16 non-tensor arith throughput
+| op | GOps/s | SASS | FLOPS equiv |
+|---|---:|---|---:|
+| bf16x2 fma | 17613 | HFMA2.BF16 | 35.2 TFLOPS |
+| bf16x2 add | 17508 | HFMA2.BF16 | 17.5 TFLOPS |
+| bf16x2 mul | 17345 | HMUL2.BF16 | 17.3 TFLOPS |
+| bf16x2 min | 17392 | HMNMX2.BF16 | — (pipe_alu) |
+| bf16x2 abs / neg | ~17400 | HFMA2.BF16 (emulated via ±1 mul) | — |
+| scalar bf16 add / fma | ~20000 | PRMT + HADD2/HFMA2 | — |
+| bf16x2 setp+selp | 8901 | 2-SASS chain | — |
+| cvt f32×2 → bf16x2 | 17400 | F2FP.BF16.F32.PACK | — |
+
+**Non-tensor BF16 FMA peak = 35.2 TFLOPS** — 24× slower than HMMA BF16 at 838 TFLOPS. Tensor cores are a MASSIVE win for any BF16 matrix work.
+
+## 28. Compiler-emission gaps (Blackwell ISA opcodes that don't emit from nvcc 13.0)
+- **UFFMA / UFADD / UFMUL / UFMNMX / UFRND / UFSEL / UFSET / UFSETP** — uniform FP datapath exists in ISA but compiler does NOT emit (tested 4 patterns)
+- **UF2F / UF2FP / UF2I / UF2IP / UI2F / UI2FP / UI2I / UI2IP** — same
+- **FFMA32I / IADD32I / IMUL32I / LOP32I / ISCADD32I** — immediate-form variants never observed
+- **FADD2 / FMUL2** — not emitted (FFMA covers)
+- **FCHK** — testp.* is emulated via LOP3 + FADD instead
+- **BMSK** — PTX syntax fails to reach it
+- **Cluster-scope shared atomics via mapa** — compile or runtime issues
+- **FP4/FP6 MMA inline PTX** with `.kind::f8f6f4` — compiles but DCE/miscompile
+- **UBLKCP** emits correctly via cp.async.bulk, but timing/bandwidth measurements unreliable without proper TMA descriptor setup
+
+Compiler-reachable uniform ops: UIADD3, UIMAD, UMOV, UISETP, ULOP3.LUT.
+
+## 29. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
