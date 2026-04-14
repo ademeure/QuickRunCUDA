@@ -24,7 +24,9 @@ Every table below has explicit column headers for which unit.
 
 ## TL;DR
 
-**Blackwell's SFU is not a simple 32-ops/SM/clock pipe**. It has a dual-issue capability, but only ½ of SASS opcodes can take advantage of it. The determining factor is **register-file port count** per instruction:
+**Blackwell's SFU is not a simple 32-ops/SM/clock pipe**. It has a dual-issue capability, but only ½ of SASS opcodes can take advantage of it. The determining factor is **the SASS opcode's regfile-read-port footprint**: opcodes encoding exactly 1 read port can dual-issue at 64/SM/clk; opcodes encoding ≥2 read ports (whether via a 2nd source or via a MERGE_C carry slot, even if that slot is statically `RZ`) occupy both SFU issue slots and cap at 32/SM/clk.
+
+This was verified by rigorous hypothesis discrimination (see `tests/bench_f2fp_port_hypothesis.cu`): `PACK_AB` variants that write a full 32-bit destination with no MERGE_C *still* cap at 32/clk (2 source reads); `PACK_B` tf32 with full saturation+rounding and single source *still* hits 64/clk; 4 independent packs to 4 distinct destination registers *still* don't dual-issue. Writeback width, dest-register disjointness, pipeline latency (4 cy for both pack and unpack), and direction are all *non-factors* — only the opcode's read-port count matters.
 
 | # of regfile ports used | Example SASS | Peak (thread-inst/SM/clk) |
 |---:|---|---:|
