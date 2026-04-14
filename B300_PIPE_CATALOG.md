@@ -1062,7 +1062,45 @@ Listed in Blackwell SASS table but never observed in my measurements:
 - `FADD2`, `FMUL2`, `FMNMX3` (only emitted for specific chained-min pattern)
 - Tensor memory: `LDT`, `STT`, `UTC*`, `UBLK*` (need tcgen05/TMA setup not tested)
 
-## 18. Methodological notes
+## 18. Additional findings (research-loop batch 3)
+
+### Hot-spot atomics scaling
+`atom.global.add.u32` with N distinct addresses across 75k threads:
+- unique-addr baseline: 0.064 ms
+- **1 hotspot**: 0.78 ms (12× slow — warp-coalesced fast path)
+- **2 hotspots**: **25 ms (32× worse than 1)** — anomaly: within-warp address divergence breaks the fast path
+- 256 hotspots: 2.4 ms; 8k hotspots: 0.10 ms; recovers with dispersion
+
+### TMA (Tensor Memory Access)
+`cp.async.bulk.shared::cluster.global.mbarrier` → **`UBLKCP.S.G`** (Blackwell-specific bulk-copy opcode).
+`cp.async.ca.shared.global.L2::256B` → **`LDGSTS.E.LTC256B.128`** (L2-prefetch variant).
+`cp.async.cg` → `LDGSTS.E.BYPASS.128`.
+`cp.async.commit_group` → `LDGDEPBAR`.
+
+### Special register costs
+| SR | ns | cycles | SASS |
+|---|---:|---:|---|
+| %clock64 | 10.7 | **20** | `CS2R.32` (fastest timestamp) |
+| %clock | 12.7 | 24 | `S2UR` |
+| %pm0 | 10.9 | 21 | `S2UR` (perf counter) |
+| %globaltimer | 18.7 | 36 | `S2UR` |
+| %smid / %warpid | ~19 | 36 | `S2R` |
+| %gridid / %nwarpid / %lanemask_eq / %clusterid.x / %envreg0 / getctarank | ~2.7 | — | cached (SR not re-read) |
+
+### Precision modifiers are free
+`.ftz`, `.sat`, `.ftz.sat`, `.relu` on FMA emit distinct SASS (`FFMA.FTZ`, `FFMA.SAT`, `HFMA2.RELU`) but all cost the same cycles. Use them freely.
+
+### FP edge-case ops — emulation gaps
+- `testp.{finite,subnormal,number,notanumber,infinite}.f32` → emulated via **`LOP3.LUT + FADD.FTZ`** (no native `FCHK`)
+- `copysign.f32` → `LOP3.LUT` bit-trick
+- `cos.approx.ftz / sin.approx.ftz` → `MUFU.SIN/COS` + `FMUL.RZ` range reduction (longer than ex2/rsqrt)
+
+### Pair-contention u-matrix (confirmed)
+- u ≈ 1.0 (same pipe): **LOP3 + PRMT = 1.08**, **IMAD + FFMA = 0.93**
+- u ≈ 1.4-1.6 (mostly independent, some SMSP friction): LOP3 + IMAD = 1.61, IMAD + MUFU = 1.45, LOP3 + FFMA = 1.36
+- u = 0.55 for FFMA + MUFU.EX2 (MUFU stretches kernel wall-time; not a pipe sharing issue)
+
+## 19. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
