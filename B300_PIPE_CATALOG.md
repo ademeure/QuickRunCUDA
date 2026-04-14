@@ -644,7 +644,75 @@ Below: every SASS opcode listed in NVIDIA's Blackwell SASS reference (sm_100/103
 | **FP64** `add.f64` / `mul.f64` / `fma.rn.f64` | DADD / DMUL / DFMA | **fp64** (1.6/SM/cy) |
 | `mma.sync.*.f64` | DMMA | fp64 tensor |
 
-## 11. Methodological notes
+## 11. Deep-dive: `redux.sync.*` — what's real, what's not
+
+`redux.sync` is the warp-wide reduction intrinsic. Findings from full mask / partial mask / type sweeps:
+
+**Supported type/op matrix on B300 (anything else → ptxas error):**
+
+| op | .u32 | .s32 | .f32 | .f32.NaN | .b32 | .u64/.s64 | .f16/.f16x2/.bf16/.bf16x2 | .f64 |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `.min` / `.max` | ✓ | ✓ | ✓ | ✓ | — | ✗ | ✗ | ✗ |
+| `.add` | ✓ | ✓ | ✗ | — | ✗ | ✗ | ✗ | ✗ |
+| `.and` / `.or` / `.xor` | — | — | — | — | ✓ | ✗ | ✗ | ✗ |
+| `.mul` | ✗ | ✗ | ✗ | — | ✗ | ✗ | ✗ | ✗ |
+
+No 64-bit, no FP16/BF16, no FP64, no `mul` redux. FP32 sum reduce is not hardware-assisted — you must compose with `shfl.sync` tree-reduce. FP32 min/max IS assisted.
+
+**Throughput and pipe (measured, all types):**
+
+| PTX | SASS | Pipe | PTX-ops/SM/cy |
+|---|---|---|---:|
+| `redux.sync.min.u32` | `CREDUX.MIN` + `IMAD.U32` (intrinsic codegen) | alu + fmaheavy | 1.92 |
+| `redux.sync.min.s32` | `CREDUX.MIN.S32` + IMAD | alu + fmaheavy | 1.92 |
+| `redux.sync.min.f32` | `CREDUX.MIN.F32` + IMAD | alu + fmaheavy | 1.92 |
+| `redux.sync.min.NaN.f32` | `CREDUX.MIN.F32.NAN` + IMAD | alu + fmaheavy | 1.92 |
+| `redux.sync.max.*` | `CREDUX.MAX.*` + IMAD | alu + fmaheavy | 1.92 |
+| `redux.sync.add.u32` / `.s32` | `REDUX.SUM` | **adu** | **0.50** |
+| `redux.sync.and.b32` | `REDUX.AND` | adu | 0.50 |
+| `redux.sync.or.b32` | `REDUX.OR` | adu | 0.50 |
+| `redux.sync.xor.b32` | `REDUX.XOR` | adu | 0.50 |
+
+**Min/max is ~4× faster than add/and/or/xor.** Two separate hardware paths.
+
+**Mask-width independence (measured):** running `redux.sync.min.u32` with masks 0xFFFFFFFF / 0x0000FFFF / 0x55555555 / 0x0000000F / 0x00000001 all take the **same wall time** (1.14–1.15 ms, pipe_alu=1.90–1.92). The hardware doesn't speed up for fewer active lanes — the cost is a fixed instruction latency.
+
+**Why 2 SASS per CREDUX?** `IMAD.U32` is not kernel-side bookkeeping — it's emitted by the compiler as part of the CREDUX result-delivery pattern (probably to broadcast the reduced value from the uniform side back to each participating lane). You cannot eliminate it, so the effective PTX-op rate is bounded by **the slower of** pipe_alu (for CREDUX) and pipe_fmaheavy (for IMAD) — both saturate near 1.92.
+
+## 12. Deep-dive: what can hit the 64 thread-ops/SM/cy `pipe_alu` ceiling (and does it co-issue with anything else)
+
+The pipe_alu budget is **2.00 warp-instructions / SM / cycle** = 64 thread-ops/SM/cy per pipe slot. This budget is shared among **every** alu-resident opcode. The full membership, organized:
+
+**Integer & bitwise (always alu):** `IADD3`, `IADD32I`, `VIADD`, `VIADDMNMX`, `IABS`, `IMNMX` (→VIMNMX3), `VIMNMX`, `VIMNMX3`, `ISCADD`, `ISETP`, `LOP`, `LOP3`, `LOP32I`, `SHL`, `SHR`, `SHF.*` (all forms: L/R, WRAP/CLAMP, U32/S32, HI variants), `PRMT`, `SEL`, `SGXT`, `BMSK`, `LEA`, `MOV` (typically), `MOV32I`, `VABSDIFF`, `VABSDIFF4`.
+
+**FP min/max/compare/select (alu, not fma):** `FMNMX`, `FMNMX.NAN`, `FMNMX3`, `FSEL`, `FSET`, `FSETP`, `HMNMX2`, `HMNMX2.NAN`, `HMNMX2.BF16`, `VHMNMX`, `HSET2`, `HSETP2`, `DSETP` (slow — FP64 compare).
+
+**CVT on alu:** `F2FP.*.UNPACK_B` (all narrow→f16/bf16), `F2FP.*.PACK_AB_MERGE_C` (all wide→narrow), `F2FP.F16.F32.PACK`, `F2FP.BF16.F32.PACK`, `I2FP.F32.{S32,U32}`, `I2I.*.SAT`, `F2IP.U8.F32.NTZ`, `I2IP`, `FRND` (usually).
+
+**Warp reductions that land on alu:** `CREDUX.MIN`, `CREDUX.MAX`, `.S32`, `.F32`, `.F32.NAN` (coupled with intrinsic `IMAD.U32` on fmaheavy).
+
+**Predicate / vote / misc on alu:** `VOTE.{ANY,ALL,UNI}` (non-uniform), `PLOP3`, `PSETP`, `P2R`, `R2P`, `ELECT` (sometimes), `FCHK`.
+
+**Implication:** any kernel that mixes N of these per loop iter will saturate at **2 total warp-inst / SM / cy for all alu ops combined**, i.e. 64 thread-ops/SM/cy split across whatever types you use. You cannot exceed that cap by picking "different alu instructions" — they all draw from the same single pipe.
+
+Confirmed by mixing CREDUX.MIN + FMNMX: total sm_inst = 2.19, pipe_alu = 2.00 (CREDUX+FMNMX share it 50/50). No dual-issue among alu-resident ops.
+
+**Contrast** with pipe_fma which is actually two sub-units (heavy + lite): `fma.rn.f32` scalar dual-issues to **4.00 warp-inst/SM/cy = 128 FFMA/SM/cy**. This only works for scalar (non-packed) FP32 ops. pipe_alu has no such trick — it's a single 2.00/cy pipe.
+
+## 13. Deep-dive: predication / divergence / active-mask effects on throughput
+
+**Per-thread predication (`@p instr`): zero effect on pipe rate.** Measured: `fma.rn.f32` unpredicated = 0.570 ms; same op wrapped in `@p` with only 16/32 lanes active = 0.575 ms; with only 1/32 lanes active = 0.574 ms. The hardware **issues the warp-instruction regardless of how many lanes are live** — pipe time is the same.
+
+**Warp-mask on `shfl.sync` / `redux.sync`: zero effect on rate.** Measured across full, half, quarter, 4-lane, and 1-lane masks — all identical.
+
+**Implications:**
+- You cannot "save" pipe throughput by divergence or partial predication. If 1 lane is active the pipe still takes the same instruction slot.
+- What predication / divergence *does* save: register-read-port traffic, write-back to masked-off lanes (possibly), and semantic correctness. Not throughput.
+- Warp specialization via `elect.sync` → single-lane work doesn't free up pipe slots for the rest of the warp. The warp-inst still consumes its cycle.
+
+**Consequence for warp-specialization designs:** if you have 31/32 lanes doing ALU work and 1 lane doing something else, both workloads still compete for the same pipe slot per cycle. You only save power and register-port contention, not dispatch.
+
+## 14. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
