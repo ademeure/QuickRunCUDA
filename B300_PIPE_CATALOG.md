@@ -1003,7 +1003,66 @@ To saturate the pipe from a single warp, ILP ≥ latency / (lanes × inst-per-cy
 
 Hardware ALU only implements `.rn` and `.rz`; `.rm/.rp` fall back to the XU pipe. Same asymmetry for `cvt.rni.s32.f32` (xu) vs `cvt.rzi` (xu) — float→int is always on xu regardless of rounding.
 
-## 17. Methodological notes
+## 17. Additional findings (research-loop batch 2)
+
+### Memory hierarchy latency (pointer-chase, single lane)
+| Working set | ns/load | cycles |
+|---:|---:|---:|
+| 1–4 KB | 2.9–3.4 | **6–7 (L1 hit)** |
+| 16 KB | 5.4 | 10 |
+| 64 KB | 13 | 25 |
+| 128 KB | 22 | **43 (L2 hit)** |
+| 256 KB | 26 | 50 |
+| 1 MB | 83 | 159 |
+| 32 MB | 1904 | 3656 |
+| 128 MB | 7475 | **14351 (DRAM / TLB)** |
+
+### Sync / barrier costs
+| PTX | SASS | ns/sync | cy |
+|---|---|---:|---:|
+| `bar.sync 0` (`__syncthreads`) | `BAR.SYNC.DEFER` | **17.9** | **34** |
+| `membar.cta + bar.sync` | `MEMBAR.SC.CTA + BAR.SYNC.DEFER` | 18.0 | 35 |
+| `bar.warp.sync -1` / `0xFF` | DCE'd (warp mask compile-time known) | 3.4 | 6 |
+| `barrier.sync.aligned 0` | same as bar.sync | 17.9 | 34 |
+
+### LDG cache hints (32 MB working set, fits in L2)
+| Hint | GB/s | L2 sectors vs baseline |
+|---|---:|---:|
+| default / `.ca` / `.cg` / `.nc` | **540** | 1.00× |
+| `.cs` (streaming) | 466 | +21% L2 traffic |
+| `.lu` (last-use) | 522 | +21% L2 traffic |
+| `.volatile` | 496 | 1.00× (just overhead) |
+
+### Occupancy / ILP
+- FFMA latency in dep chain: **4.53 cycles**
+- Half-throughput ILP: 4 (matches latency)
+- Saturation: ILP ≥ 8 gets 89% of peak; ILP=16 → 94%.
+- Block size 32-512 all equivalent. `__launch_bounds__(_, MIN_BLOCKS)` has no effect for register-light kernels.
+
+### Division cost hierarchy
+| PTX | SASS | cycles/op |
+|---|---|---:|
+| `f32 a/b` (default `div.full.f32`) | MUFU.RCP + FMUL + FADD | ~4 |
+| `f32 div.approx.f32` | MUFU (only) | ~1 |
+| **`f32 div.rn.f32` (IEEE-correct)** | 47 FFMA + LOP3 (Newton-Raphson) | **~120** |
+| `f32 sqrt.rn.f32` | 16 FMUL + 16 FFMA (N-R) | ~8 |
+| **`f64 a/b`** | 66 DFMA (N-R) | **~1200** |
+| `u32 a%b` (runtime b) | IMAD.HI.U32 reciprocal chain | ~12 |
+
+**`div.rn` is 30× slower than `div.full`.** Use `__fdividef` / `__fdiv_ru` when correct rounding isn't needed.
+
+### Triple-pipe dispatch cap
+Combining pipe_uniform + pipe_alu + pipe_fma work shows **total sm_inst still caps at 4.00/SM/cy** — pipe_uniform consumes SMSP issue slots despite being "separate" datapath. Independent EXECUTION unit, shared DISPATCH budget.
+
+### Compiler-emission gaps (Blackwell ISA opcodes NOT emitted by CUDA 13.0 nvcc)
+Listed in Blackwell SASS table but never observed in my measurements:
+- `UFFMA`, `UFADD`, `UFMUL`, `UFMNMX`, `UFRND`, `UFSEL`, `UFSET`, `UFSETP`
+- `UF2F`, `UF2FP`, `UF2I`, `UF2IP`, `UI2F`, `UI2FP`, `UI2I`, `UI2IP`
+- `FFMA32I`, `IADD32I`, `IMUL32I`, `LOP32I`, `ISCADD32I`
+- `FADD2`, `FMUL2`, `FMNMX3` (only emitted for specific chained-min pattern)
+- Tensor memory: `LDT`, `STT`, `UTC*`, `UBLK*` (need tcgen05/TMA setup not tested)
+
+## 18. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
