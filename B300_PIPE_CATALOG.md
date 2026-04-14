@@ -1307,7 +1307,62 @@ FFMA reference (same methodology): **4 cy** — matches pipeline depth.
 - **.f16x2 / .bf16x2 packing gives NO element-rate improvement** on XU — packed SASS serializes elements through single-lane-wide XU
 - Fast-math (`-use_fast_math`) is on by default in this harness
 
-## 24. Methodological notes
+## 24. Latency reference — clock64-bracketed (authoritative)
+
+### Memory hierarchy (pointer-chase dep chain)
+| Level | cy | B300 spec |
+|---|---:|---|
+| LDS (shared) | **33** | 228 KB/SM |
+| L1 (global) | **43** | 228 KB/SM unified with shared |
+| L2 | **300** | 126 MB chip-wide |
+| DRAM | **3000** | HBM3E, 8 TB/s peak |
+
+### Compute latency per SASS (chained)
+| Op | cy | Pipe |
+|---|---:|---|
+| FFMA / FMUL / FADD / FFMA2 / HFMA2 / HADD2 / HMUL2 / HFMA2.BF16/.RELU | **4** | pipe_fma |
+| HMNMX2 / FMNMX / FSEL / ISETP / IMAD (lo) / LEA / PRMT / LOP3 / SHF / VIMNMX / VABSDIFF | **4** | pipe_alu or fmaH |
+| IMAD.HI.U32 (half-rate) | **13** | fmaheavy |
+| MUFU.EX2 | **14** | xu |
+| MUFU.RSQ / .SQRT / .LG2 .ftz.f32 | **18** | xu |
+| MUFU.SIN / .COS | **24** | xu |
+| MUFU.RSQ / .SQRT / .LG2 non-ftz | **40** | xu + scaling FMUL |
+| MUFU.RCP non-ftz | 42 | xu + NR FFMAs |
+| BREV vector | **18** | xu |
+| POPC vector | **24** | xu |
+| FLO / BFIND vector | **32** | xu |
+| UBREV / UFLO (uniform pipe) | 4 / 12 | uniform (way faster) |
+| ISETP+SELP (2 SASS) | 8 | alu chain |
+| HSETP2+SELP | 10 | alu chain |
+| DFMA FP64 | ~300 | fp64 throttled |
+
+### Fence / barrier
+| Op | cy | Scope |
+|---|---:|---|
+| `bar.warp.sync -1` | 1 | DCE'd static mask |
+| `fence.acquire.cluster` | 4 | CCTL.IVALL only |
+| `membar.cta` / `fence.sc.cta` | **8** | CTA-local |
+| `bar.sync 0` single-thread | 14 | block barrier base |
+| nanosleep min | ~34 | |
+| `membar.gl` / `fence.sc.gpu` | **544** | **68× CTA cost** |
+| `membar.sys` | **5956** | **750× CTA — CPU coherent** |
+
+### Newton-Raphson emulated FP (approximate chain cost)
+| Op | SASS path | cycles |
+|---|---|---:|
+| rcp.rn.f32 | MUFU.RCP + 3 FFMA + slowpath CALL | ~185 |
+| sqrt.rn.f32 | MUFU + 7 FFMA NR | ~138 |
+| div.rn.f32 | FCHK + 5 FFMA + rounding variants + CALL | ~1200 |
+
+### Atomic peak rates (pipe_lsu bank-clean)
+| Op | scalar atoms/SM/cy |
+|---|---:|
+| ATOMS.ADD/MIN/MAX/AND/OR/XOR/EXCH/INC/DEC | 32 |
+| ATOMS.CAS | 16 (half rate, both success+fail) |
+| Hot-spot same-addr warp-coalesce | ≈1 atom per warp (12× slower than unique) |
+| Bank-conflict degradation | linear with conflict factor (up to 59× worst case) |
+
+## 25. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
