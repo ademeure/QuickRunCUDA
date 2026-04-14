@@ -1460,7 +1460,39 @@ FFMA reference (same methodology): **4 cy** — matches pipeline depth.
 
 Compiler-reachable uniform ops: UIADD3, UIMAD, UMOV, UISETP, ULOP3.LUT.
 
-## 29. Methodological notes
+## 29. Warp-reduce & barrier reality check
+
+### Warp reduction: HW vs software
+| Method | GOps/s | vs HW |
+|---|---:|---:|
+| redux.sync.min.u32 (HW CREDUX) | 6998 | 1.00 |
+| shfl-tree min | 982 | **7× slower** |
+| redux.sync.add.u32 (HW REDUX) | 3169 | 1.00 |
+| shfl-tree add | 986 | **3.2× slower** |
+
+Always prefer `redux.sync` over shuffle-tree. Min/max benefits most (fast CREDUX path).
+
+### `redux.sync` latency
+- CREDUX min/max (u32/s32/f32/f32.NaN): **18 cy**
+- REDUX add/or/and/xor.b32: **44 cy** (2.4× slower — same alu/adu split)
+
+### Block barrier cost under stagger (512 threads, 1 block/SM)
+| Pattern | cy/barrier | Penalty |
+|---|---:|---:|
+| All threads aligned arrival | **47** | 1.0× base cost |
+| Half-warp stagger (small extra work) | 47 | absorbed |
+| Severe: 1 thread + 200 FMAs, others wait | **1455** | **31×** |
+| warp.sync only | 8 | fraction |
+
+Block barriers scale with the critical-path thread's delay. Balance work or use async arrival.
+
+### LDS bandwidth scaling with warps
+Linear scaling up to 16 warps, single-op dep-chain loads (limited by 33 cy LDS latency × 4 B / warp):
+- 1 warp: 6 GB/s/SM
+- 16 warps: 93 GB/s/SM (38% of 128 B/cy peak)
+- Need vec-4 + ILP ≥ 8 + full occupancy to reach 128 B/cy peak
+
+## 30. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
