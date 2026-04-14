@@ -1276,7 +1276,38 @@ L2 peak BW ≈ 20 TB/s for shared working set. L1 hit BW ≈ 35 TB/s. DRAM BW (c
 - "L2-resident 31 TB/s" was a correct measurement but the **working set was ~9 MB** (block windows overlapping), well inside L2 — so it's L2 BW, not DRAM.
 - "MUFU.EX2 ≈ 14.5 cy" from `bench_latency.cu` was clean (single op, no range-reduction). The 83-cy number in `bench_mufu_lat.cu` was inflated by my own range-reduction FFMA chain.
 
-## 23. Methodological notes
+## 23. Clean MUFU ex2 / tanh sweep (no range reduction, clock64-bracketed)
+
+### Latency (1 thread, chained self-op, clock64)
+| PTX | SASS | cy/op |
+|---|---|---:|
+| ex2.approx.f32 / ftz.f32 | MUFU.EX2 | **14** |
+| ex2.approx.f16 | MUFU.EX2.F16 | 14 |
+| ex2.approx.f16x2 | MUFU.EX2.F16 | 18 (vec2 = +4 cy) |
+| ex2.approx.ftz.bf16 | MUFU.EX2.BF16 | 14 |
+| ex2.approx.ftz.bf16x2 | MUFU.EX2.BF16 | 18 |
+| tanh.approx.f32 | MUFU.TANH | **18** |
+| tanh.approx.f16 | MUFU.TANH.F16 | 18 |
+| tanh.approx.f16x2 | 2× MUFU.TANH.F16 per SASS | 18 (per PTX op) |
+| tanh.approx.bf16 | MUFU.TANH.BF16 | 18 |
+| tanh.approx.bf16x2 | 2× MUFU.TANH.BF16 per SASS | 18 |
+
+FFMA reference (same methodology): **4 cy** — matches pipeline depth.
+
+### Throughput (full grid, 8 independent chains per thread)
+| op | GOps/s chip | ratio |
+|---|---:|---:|
+| ex2.approx.{f32,f16,bf16} | **8850** | 1.00× |
+| ex2.approx.{f16x2,bf16x2} | 4500 | 0.51× (vec2 half inst rate) |
+| tanh.approx.{f32,f16,bf16} | 4500 | 0.51× (tanh = 2 XU slots) |
+| tanh.approx.{f16x2,bf16x2} | 1310 | 0.15× (compound 0.5 × 0.5) |
+
+### Key observations
+- **ex2 is the cheapest transcendental**; tanh is exactly 2× more expensive at SASS level
+- **.f16x2 / .bf16x2 packing gives NO element-rate improvement** on XU — packed SASS serializes elements through single-lane-wide XU
+- Fast-math (`-use_fast_math`) is on by default in this harness
+
+## 24. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
