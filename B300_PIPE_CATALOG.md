@@ -777,7 +777,44 @@ Confirmed by mixing CREDUX.MIN + FMNMX: total sm_inst = 2.19, pipe_alu = 2.00 (C
 
 **Consequence for warp-specialization designs:** if you have 31/32 lanes doing ALU work and 1 lane doing something else, both workloads still compete for the same pipe slot per cycle. You only save power and register-port contention, not dispatch.
 
-## 14. Methodological notes
+## 14. Extended op catalog (measured, bench_misc_ops.cu)
+
+Additional ops verified, with SASS emitted and pipe assignment:
+
+| PTX | SASS | Pipe | Rate | Notes |
+|---|---|---|---:|---|
+| `fma.rn.f32` w/ immediate | `FFMA` (not FFMA32I) | fma dual | 128/SM/cy | compiler folds imms into regular FFMA |
+| `fma.rn.ftz.f32` | `FFMA.FTZ` | fma dual | 128/SM/cy | FTZ modifier is free |
+| `add.u32` / `mul.u32` / `xor.b32` with immediate | DCE'd in isolation | — | — | compiler folds idempotent/constant ops |
+| `mad.lo.u32` with power-of-2 mul | **`LEA`** (62) + `IMAD` (69) | alu + fmaheavy | 128/SM/cy combined | compiler emits LEA for shift+add |
+| `min.f32 %0,%0,%1; min.f32 %0,%0,%2;` | **`FMNMX3`** (3-input min, fused) | **alu** | 2.00 = 64 SASS/SM/cy, **128 logical mins/SM/cy** | Blackwell has 3-input FP min/max! |
+| `ld.global.ca/.cg/.lu` | `LDG.E.{CA,CG,LU}` | lsu | DRAM-bound | cache-hint variants |
+| `st.global.wb` | `STG.E.STRONG.SM` | lsu | bandwidth-bound | write-back |
+| `st.global.cs` | `STG.E.EF` | lsu | bandwidth-bound | streaming/evict-first |
+| `atom.shared.min.u32` | `ATOMS.MIN` | **lsu** | 1.00 = 32 SASS/SM/cy | |
+| `atom.shared.exch.b32` | `ATOMS.EXCH` | lsu | 1.00 | |
+| `atom.shared.cas.b32` | `ATOMS.CAS` | lsu | **0.50** | half rate — CAS is more expensive |
+| `testp.normal.f32` | `ISETP.GE + ISETP.EQ + SEL` (3 SASS) | alu | ~0.67 logical tests/cy | |
+| `bfind.u32` | `FLO.U32` | **xu** | 0.50 = 16/SM/cy | |
+| `bfind.shiftamt.u32` | `FLO.U32.SH` | xu | 0.50 | shift-amount variant |
+| `nanosleep.u32` | `NANOSLEEP` | **adu** | 0.25 = 8/SM/cy | slow, blocks the warp |
+| `cp.async.ca.shared.global` | `LDGSTS.E` | **lsu** | 0.49 | async g→s memcpy |
+| `cp.async.commit_group` | `LDGDEPBAR` | lsu | 0.50 | fence-ish |
+| `prefetch.global.L1` | `CCTL.E.PF1` | lsu | **very slow** (255 ms for 128) | serialized against memory system |
+| `prefetch.global.L2` | `CCTL.E.PF2` | lsu | very slow | |
+| `vabsdiff.s32.s32.s32` | `PRMT + SHF.R.S32.HI` (compiler path) | alu | 2 SASS/op → 32 logical/SM/cy | |
+| `mov.u32 %%ctaid.x` | S2R (cached by compiler — emitted once) | — | effectively free | |
+| `mov.u32 %%nctaid.x` | `LDCU` via uniform pipe | **uniform** | 0.25 | read from constant bank as u-reg |
+
+**FMNMX3 discovered:** the compiler fuses two chained `min.f32` into one `FMNMX3` on pipe_alu. At 64 SASS/SM/cy, effective throughput = **128 FP32 min-ops/SM/cy** — same bandwidth multiplier as IADD3 provides for integer add.
+
+**ATOMS family speed hierarchy:** `.min/.max/.add/.exch` at 1.00/SM/cy (32 SASS); `.cas` at 0.50 (half rate). Global-memory `ATOMG` is further DRAM-bound.
+
+**Prefetch is very expensive.** 255 ms for 128 `CCTL.E.PF1` instructions per thread — 2× slower than streaming STG. Only use prefetch when profiled as a win.
+
+**Immediate-variant SASS (FFMA32I, IADD32I, IMUL32I, LOP32I, ISCADD32I, etc.) exist in the Blackwell opcode table but NOT emitted** by the current nvcc codegen — it uses regular ops with immediate operands. These may be reserved for future compiler paths or higher opt levels.
+
+## 15. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
