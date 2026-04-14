@@ -866,7 +866,144 @@ To saturate pipe_fma with FFMA, you need **ILP ≥ 4 independent chains per warp
 
 **DCE-disclaimer:** `LOP3 xor %0,%0,const`, `min.f32 %0,%0,%0`, and `shfl.sync %0,%0,1,…` under uniform warp state all measured <1 cy = DCE'd or optimized away. Real latencies for LOP3/FMNMX/SHFL are expected ≈4 cy (same pipe family) but I don't have a clean kernel for those three.
 
-## 16. Methodological notes
+## 16. Research log — further measurements this session
+
+### Global atomics (per-lane unique addresses)
+| PTX | SASS | pipe_lsu | Notes |
+|---|---|---:|---|
+| `atom.global.add.u32` | `REDG.E.ADD.STRONG.GPU` | 0.03 | REDG family, not ATOMG! |
+| `atom.global.min/max.u32` | `REDG.E.{MIN,MAX}.STRONG.GPU` | 0.03 | same family |
+| **`atom.global.add.f32`** | **`REDG.E.ADD.F32.FTZ.RN.STRONG.GPU`** | 0.03 | **native FP32 atomic on global** (unlike shared which is emulated!) |
+| `red.global.add.u32` | `REDG.E.ADD.STRONG.GPU` | 0.03 | same SASS as atom (return absorbed by LSU) |
+| `atom.global.exch.b32` | `ATOMG.E.EXCH.STRONG.GPU` | 0.03 | different family |
+| `atom.global.cas.b32` | `ATOMG.E.CAS.STRONG.GPU` | 0.015 | half-rate; 16× L2 sectors vs REDG |
+| `.cta` scope | `REDG.*.STRONG.SM` | 0.03 | SM-local variant |
+| `.sys` scope | `REDG.*.STRONG.SYS` | 0.03 | CPU-coherent |
+| `.relaxed.gpu` | same as default | 0.03 | no weaker SASS emitted |
+| `.acq_rel.gpu` | REDG + `MEMBAR.ALL.GPU` | — | +45% due to MEMBAR insertion |
+
+### Shared atomics (bank-clean, per-lane unique bank)
+| SASS | pipe_lsu | atoms/SM/cy | chip /s |
+|---|---:|---:|---:|
+| `ATOMS.{MIN,MAX,ADD,AND,OR,XOR,EXCH,INC,DEC}` | 1.00 | **32** | 9.1 TAtoms/s |
+| `ATOMS.CAS` | 0.50 | 16 | 4.5 TAtoms/s (half, swap-independent) |
+| 8-way bank conflict (stride-32 accidental) | 0.125 | 4 | 1.14 TAtoms/s |
+
+### Tensor core
+| PTX (wmma.mma.sync) | SASS | TFLOPS / TOPS | pipe_tensor |
+|---|---|---:|---:|
+| 16×16×16 FP16→FP32 | `HMMA.16816.F32` | **838 TFLOPS** | 72% active, 0.36 issue |
+| 16×16×16 BF16→FP32 | `HMMA.16816.F32.BF16` | 838 TFLOPS | 72% |
+| 16×16×8 TF32→FP32 | `HMMA.1684.F32.TF32` | 420 TFLOPS | 72% (exactly ½ FP16) |
+| 16×16×16 INT8→INT32 | `IMMA.16816.S8.S8` | 143 TOPS | 100% / 0.06 issue |
+
+### Uniform datapath (finally forced to emit)
+Running warp-uniform compute chains (derived from `blockIdx.x` + `seed`) forces the compiler to use the uniform datapath. Solo peak: `pipe_uniform = 1.90` warp-inst/SM/cy, **concurrent** with pipe_alu/fma at no cost.
+| Chain pattern | SASS emitted | pipe_uniform |
+|---|---|---:|
+| uniform IADD/IMAD chain | `UIMAD`, `UIADD3`, `UMOV`, `UISETP.GE.AND` | 1.90 |
+| uniform LOP3 chain | `ULOP3.LUT`, `UMOV`, `UIADD3` | 1.81 |
+| uniform FMUL/FADD chain | **regular FFMA.FTZ** (compiler didn't use UFFMA/UFADD) | — |
+| `cvta.to.global / .shared` | `UIADD3` + `ULOP3.LUT` | — |
+
+**Compiler-emission gap:** Blackwell SASS opcode table lists UFFMA/UFADD/UFMUL/UFMNMX/UFRND/UFSEL/UFSETP/UF2F/UF2FP/UF2I/UI2F/UI2FP/UI2I etc., but my current nvcc (CUDA 13.0) does not emit them for scalar FP computations — it prefers vector FFMA. These opcodes may activate in a future compiler release.
+
+### Cluster / CGA barriers
+| PTX | SASS | ms | Note |
+|---|---|---:|---|
+| `barrier.cluster.arrive` + `.wait` | `UCGABAR` + `MEMBAR.ALL.GPU` + `ERRBAR` + `CGAERRBAR` | 0.20 | strict, includes GPU fence |
+| `barrier.cluster.arrive.relaxed` | `UCGABAR` + `CCTL.IVALL` | 0.057 | 4× faster, no MEMBAR |
+
+### mbarrier (Hopper/Blackwell async barrier)
+| PTX | SASS | pipe_adu |
+|---|---|---:|
+| `mbarrier.arrive.shared.b64` | `SYNCS.ARRIVE.TRANS64.A1T0` | — (crashed without paired wait) |
+| `mbarrier.arrive_drop.shared.b64` | `SYNCS.ARRIVE.TRANS64.OPTOUT.A1T0` | — |
+| `mbarrier.test_wait.shared.b64` | `SYNCS.PHASECHK.TRANS64` + `SEL` | 0.42 |
+| `mbarrier.inval.shared.b64` | `SYNCS.CCTL.IV` | 0.07 |
+| `cp.async.commit_group` + `wait_all` | `LDGDEPBAR` + `DEPBAR.LE` | — on pipe_lsu instead of adu |
+
+**SYNCS is a new Blackwell opcode family** for async transaction barriers. Lives on pipe_adu.
+
+### Address space queries and conversions
+| PTX | SASS | Pipe | Note |
+|---|---|---|---|
+| `isspacep.shared` | `QSPC.E.S` | alu | dedicated opcode |
+| `isspacep.local` | `QSPC.E.L` | alu | dedicated opcode |
+| `isspacep.global` | LOP3 + ISETP (emulated) | alu | no dedicated QSPC.G |
+| `cvta.to.global.u64` | `UIADD3` + `ULOP3.LUT` | **uniform** | address-space conv goes through uniform pipe |
+| `cvta.to.shared.u64` | `LDC` + arithmetic | uniform/alu | often constant-folded |
+
+### Vector memory loads (throughput, not latency)
+| PTX | SASS | GB/s chip-wide |
+|---|---|---:|
+| `ld.global.v4.u32` (128-bit) | `LDG.E.128` or similar | **4540** (DRAM-limited) |
+| `ld.global.nc.v4.u32` (read-only cache) | `LDG.E.CONSTANT.128` | 4540 (same, random pattern defeats cache) |
+| `ld.global.u32` (32-bit scalar) | `LDG.E` | 1135 (= 4540 / 4) |
+| `ld.shared.v4.u32` (128-bit) | `LDS.128` | **36,210** (= 128 B/SM/cycle peak) |
+
+### ldmatrix / stmatrix (dual-pipe LDSM, LSU-only STSM)
+| PTX | SASS | pipe_lsu | pipe_uniform |
+|---|---|---:|---:|
+| `ldmatrix.sync.x1.shared.b16` | `LDSM.16.M88` | 0.15 | 0.15 |
+| `ldmatrix.sync.x2.shared.b16` | `LDSM.16.M88` | 0.14 | 0.14 |
+| `ldmatrix.sync.x4.shared.b16` | `LDSM.16.M88.4` | 0.11 | 0.11 |
+| `ldmatrix.sync.x4.trans.shared.b16` | `LDSM.16.M88.4.T` | 0.11 | 0.11 |
+| `stmatrix.sync.x1.shared.b16` | `STSM.16.M88` | 0.49 | 0.06 |
+| `stmatrix.sync.x4.shared.b16` | `STSM.16.M88.4` | 0.12 | 0.02 |
+
+**LDSM uniquely dual-issues to both pipe_lsu AND pipe_uniform at the same rate** — it consumes 1 slot on each pipe per warp-inst. STSM only occupies pipe_lsu.
+
+### Round-trip latency (single warp, chained self-op)
+| Op | Latency (cycles) |
+|---|---:|
+| FFMA / FMUL / FADD / HFMA2 / IMAD / PRMT / F2FP.unpack | **4** |
+| F2FP.pack (with MERGE_C read-port) | **8** |
+| u64 add (IADD3 + IMAD.X) | 6.3 |
+| MUFU.EX2 | 14.5 |
+| redux.sync.min | 18 |
+| MUFU.RSQ | 40 |
+| MUFU.RCP | 42 |
+| DFMA (FP64) | **302** |
+
+To saturate the pipe from a single warp, ILP ≥ latency / (lanes × inst-per-cy-per-SMSP). FFMA needs ILP=4, MUFU.EX2 ≥ 14, DFMA ≥ 300+ (infeasible — fp64 is latency-bound per warp).
+
+### Fences
+| PTX | SASS | ms | Scope |
+|---|---|---:|---|
+| `membar.cta` / `fence.acq_rel.cta` | `MEMBAR.ALL.CTA` | 0.012 | CTA-local |
+| `fence.acquire.cluster` | `CCTL.IVALL` only | 0.023 | cluster L1 invalidate |
+| `membar.gl` / `fence.sc.gpu` | `MEMBAR.SC.GPU` + `ERRBAR` | 0.156 | full GPU |
+| `membar.sys` / `fence.sc.sys` | `MEMBAR.SC.SYS` + `ERRBAR` | very slow | system-coherent |
+
+### Predication / divergence / masks summary
+- `@p instr` with any lane-mask: **zero effect** on pipe time (warp-inst takes same slot regardless of how many lanes active).
+- `redux.sync.*` and `shfl.sync.*` rates are **mask-width independent** — 1 lane participating costs the same as 32 lanes.
+- Warp specialization (`elect.sync` + 1-lane work) does NOT free pipe slots for the other 31 lanes.
+
+### redux.sync type/op matrix (supported on B300)
+| op | `.u32` | `.s32` | `.f32` (+NaN) | `.b32` | `.u64/s64` | `.f16/bf16` | `.f64` |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `.min` / `.max` | ✓ | ✓ | ✓ | — | ✗ | ✗ | ✗ |
+| `.add` | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| `.and` / `.or` / `.xor` | — | — | — | ✓ | ✗ | ✗ | ✗ |
+| `.mul` | ✗ | ✗ | ✗ | — | ✗ | ✗ | ✗ |
+
+**Min/max at 1.92 PTX-ops/SM/cy via `CREDUX.*` on pipe_alu + intrinsic `IMAD.U32` on pipe_fmaheavy.**  
+**Add/and/or/xor at 0.50 PTX-ops/SM/cy via `REDUX.*` on pipe_adu — 4× slower than min/max.**  
+**No FP32 sum reduce in hardware — must compose via shfl trees.**
+
+### CVT rounding-mode asymmetry
+| PTX | SASS | Pipe | Rate |
+|---|---|---|---:|
+| `cvt.rn.f32.s32` (round-nearest) | `I2FP.F32.S32` | alu | 64 SASS/SM/cy |
+| `cvt.rz.f32.s32` (round-to-zero) | `I2FP.F32.S32.RZ` | alu | 64 |
+| `cvt.rm.f32.s32` (round-down) | `I2F.RM` | **xu** | **16 (4× slower)** |
+| `cvt.rp.f32.s32` (round-up) | `I2F.RP` | xu | 16 (4× slower) |
+
+Hardware ALU only implements `.rn` and `.rz`; `.rm/.rp` fall back to the XU pipe. Same asymmetry for `cvt.rni.s32.f32` (xu) vs `cvt.rzi` (xu) — float→int is always on xu regardless of rounding.
+
+## 17. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
