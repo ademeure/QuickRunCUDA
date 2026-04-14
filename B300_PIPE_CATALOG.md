@@ -816,17 +816,22 @@ Additional ops verified, with SASS emitted and pipe assignment:
 
 ## 15. Deep-dive: atomics (corrected numbers) + latency
 
-### Atomics on pipe_lsu — real throughput
+### Atomics on pipe_lsu — real throughput (bank-conflict-clean)
 
-Earlier I wrote "32 SASS/SM/cy" for `ATOMS.*`. **That was too high.** At full TLP (512 × 592 = 303k threads, per-lane distinct addresses, `-s 16KiB` shared memory) the ATOMS family caps at:
+**Critical methodology note:** my first atomics test used stride-8 (32-byte) addressing, which causes 8-way bank conflicts (lanes {0,4,8,12,16,20,24,28} all hit bank 0). That degraded measurements by **8×**. Re-running with stride-4 (per-lane unique bank, `smem[tid + k*BLOCK_SIZE]`) gives real numbers:
 
 | SASS | pipe_lsu rate | scalar atoms/SM/cy | chip-wide atoms/s |
 |---|---:|---:|---:|
-| `ATOMS.MIN/MAX/ADD/AND/OR/XOR/EXCH/INC/DEC` | 0.125 | **4** | 1.14 TAtoms/s |
-| `ATOMS.CAS` | 0.0625 | **2** | 0.57 TAtoms/s (half) |
-| `red.shared.add` (no-return) | 0.125 | 4 | same — compiler emits `ATOMS.ADD` even for PTX `red` |
+| `ATOMS.{MIN,MAX,ADD,AND,OR,XOR,EXCH,INC,DEC}` | **1.00** | **32** | **9.1 TAtoms/s** |
+| `ATOMS.CAS` | **0.50** | **16** | **4.55 TAtoms/s** (still half) |
+| `red.shared.add` (no-return) | 1.00 | 32 | same SASS as atom.add |
 
-That's **1 atom warp-inst every 8 cycles** on LSU (CAS: every 16). No amount of added TLP closes the gap — the atomic-unit throughput is fixed.
+That's **1 atom warp-inst every cycle** on LSU (CAS: every 2 cycles). l1tex__data_bank_conflicts.sum = 0 confirmed. Bank-conflict penalty scales linearly — under 8-way conflict the same ATOMS.ADD drops to pipe_lsu=0.125.
+
+**CAS is unconditionally half-rate.** Verified (bank-clean, both paths):
+- Always-succeeds compare: 2.189 ms / pipe_lsu = 0.50
+- Always-fails compare: 2.189 ms / pipe_lsu = 0.50 (identical)
+- atom.add baseline: 1.096 ms / pipe_lsu = 1.00
 
 **CAS is half-rate irrespective of compare outcome.** Verified with explicit always-succeed (compare matches memory) vs always-fail (compare never matches) kernels: both take exactly 2.189 ms vs atom.add 1.096 ms. Compare-match does not affect performance.
 
