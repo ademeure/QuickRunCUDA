@@ -1153,7 +1153,36 @@ Listed in Blackwell SASS table but never observed in my measurements:
 ### Divergent 4-way switch — the only reconvergence-barrier case
 Compiler prefers ISETP+SEL predication over BSSY/BSYNC for simple 2-way branches. Only when SEL is infeasible (4+ divergent targets, unknown control flow) does `BSSY` + `BSYNC.RECONVERGENT` emit.
 
-## 20. Methodological notes
+## 20. Additional findings (research-loop batch 5)
+
+### DRAM bandwidth by access pattern (B300 HBM3E ≈ 8 TB/s peak)
+- **Sequential stride-1 coalesced (v4 128-bit): 7420 GB/s = 92% of HBM peak**
+- Stride-2 (half lanes): 2400 GB/s (3× slower)
+- Stride-4: 1031 GB/s
+- Stride-8 (per-lane cacheline): 523 GB/s (14× slower)
+- Stride-16: 632 GB/s
+- L2-resident (per-block): 31 TB/s (4× DRAM)
+
+### nanosleep reality
+- Minimum achievable sleep ≈ **34 ns** (32 cycles loop overhead)
+- Requested N ≥ 500 ns → actually sleeps **2.2–3.5× longer** (scheduler tick quantization)
+
+### Warp specialization doesn't win for same-pipe work
+Baseline (all 32 lanes FFMA): 0.083 ms. Only lane 0 doing FFMA (via `@p` or `elect.sync`): **slower** (0.10-0.18 ms) — predication doesn't save pipe time, just reduces useful work per warp-inst. Specialization only helps when the specialized lane targets a DIFFERENT pipe (e.g., TMA).
+
+### IMUL variants & new opcodes
+- `mul.lo.u32` → `IMAD` (native, 64/SM/cy)
+- **`mul.hi.u32`** → `IMAD.HI.U32` (32/SM/cy, **half rate**)
+- `mul.hi.s32` → `IMAD.HI` (same rate, signed variant)
+- `mul.wide.u32` → single `IMAD` (handles 64-bit result natively)
+- **`max.u16`** → **`VIMNMX.U16`** (dedicated half-word min/max)
+- `mul.wide.u16` emulated via LOP3 + IMAD
+
+### Cluster atomics (CGA)
+- `atom.shared::cluster.add` → **`ATOM.E.ADD.STRONG.GPU`** (generic atomic, not ATOMS) — because address may map to a peer block's SMEM requiring generic routing
+- `mapa.shared::cluster` address mapping doesn't emit visible SASS (folded into atom addressing)
+
+## 21. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
