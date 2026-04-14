@@ -1362,7 +1362,62 @@ FFMA reference (same methodology): **4 cy** — matches pipeline depth.
 | Hot-spot same-addr warp-coalesce | ≈1 atom per warp (12× slower than unique) |
 | Bank-conflict degradation | linear with conflict factor (up to 59× worst case) |
 
-## 25. Methodological notes
+## 25. Final compact throughput table (all values at saturation, pipe-verified)
+
+### FP throughput (chip-wide, 148 SMs × 1.92 GHz)
+| Op | GFLOPS | notes |
+|---|---:|---|
+| **FP32 FFMA scalar** | 69k (= 2× 8850×4 SMSPs) | 128 FFMAs/SM/cy dual-issue H+L |
+| **FP32 FFMA2 vec2** | 69k | 64 FFMA2/SM/cy × 2 FMAs |
+| **FP16 / BF16 HFMA2 (non-tensor)** | 35k | 64 HFMA2/SM/cy × 2 FMAs |
+| FP16 / BF16 min/max (HMNMX2) | non-FLOPS | 128 ops/SM/cy on pipe_alu |
+| **FP16 HMMA (tensor core)** | **838k** | HMMA.16816.F32 (~12× scalar) |
+| **BF16 HMMA (tensor core)** | 838k | same as FP16 |
+| **TF32 HMMA (tensor core)** | 420k | half FP16 |
+| FP64 DFMA scalar | 475 | pipe_fp64 throttled (1.6/SM/cy) |
+
+### Memory bandwidth
+| Source | BW (TB/s) |
+|---|---:|
+| L1 cache hit (small WS) | **35** |
+| L2 cache hit (fits 126 MB) | **20** |
+| DRAM coalesced sequential (small WS with overlap) | **7.4** |
+| DRAM 1 GB workset sequential read | **3.3** |
+| DRAM 1 GB workset write | 3.1 |
+| Shared memory v4 (128-bit) | 36 (= 128 B/SM/cy) |
+
+### MUFU throughput (pipe_xu @ 0.5 issue/cy = 16 ops/SM/cy chip)
+- ex2.approx.{f32,f16,bf16}: 8.9 TGOps/s (fastest)
+- rsqrt/sqrt/lg2/sin/cos/rcp.approx: 4.5 TGOps/s (half of ex2)
+- tanh.approx.{f32,f16,bf16}: 4.5 TGOps/s (2 XU slots per SASS)
+- .f16x2/.bf16x2 packed MUFU: 4.5 TGOps/s (same elements/cy as scalar)
+
+### Atomic throughput (bank-clean)
+- ATOMS.ADD/MIN/MAX/AND/OR/XOR/EXCH/INC/DEC: **9.1 TAtoms/s chip** (32 atoms/SM/cy)
+- ATOMS.CAS: 4.5 TAtoms/s (exactly half)
+- REDG global add: ~0.28 TAtoms/s per warp (bandwidth-bound)
+- Hot-spot warp-coalesce: ~300 GAtoms/s (12× unique)
+
+### Division ladder
+| Op | GOps/s | Penalty vs FMUL |
+|---|---:|---:|
+| FFMA / FMUL | 32600 | 1.00× |
+| div.full.ftz (runtime divisor) | 8924 | 3.7× |
+| div.approx.ftz w/ compile-time divisor | 33500 | 1.0× (folded to FMUL) |
+| sqrt.approx.ftz | 4500 | 7.2× |
+| rcp.rn (precise, NR) | 1030 | **32×** |
+| sqrt.rn (precise, NR) | 2620 | 12× |
+| **div.rn (precise, NR)** | **101** | **330×** |
+
+### ISA feature summary
+- **SMSP dispatch cap:** 4.00 warp-inst/SM/cy (= 128 thread-ops/SM/cy). FFMA scalar reaches 3.87 (97%).
+- **Pipe count (independent ExecUnits):** alu + fmaH + fmaL + xu + lsu + adu + uniform + tensor + fp64 + cbu + tex + ipa (12+). But dispatch ceiling applies to all.
+- **Uniform datapath** runs parallel to vector for warp-invariant work; compiler auto-emits when beneficial.
+- **Warp-coalesce atomics** hardware feature for commutative ops (ADD/MIN/MAX/AND/OR/XOR); 12× speedup when all 32 lanes target same addr.
+- **Fast-math (`-use_fast_math`) is on by default** in this harness.
+- **126 MB L2** (authoritative), **228 KB L1 per SM**.
+
+## 26. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
