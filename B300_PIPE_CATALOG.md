@@ -7345,6 +7345,36 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# cudaStreamQuery + cudaEventQuery polling cost
+
+| Call | µs/call |
+|------|--------:|
+| `cudaStreamQuery` (idle stream) | 1.26 |
+| `cudaStreamQuery` (in tight polling loop, cached) | **0.14** |
+| `cudaEventQuery` (completed event) | 1.24 |
+
+**Polling cost is very low** when the runtime has a cached "not ready" state — 0.14 µs/call = 7 MHz polling rate. First query after a transition takes 1.26 µs.
+
+For GPU-side flags signaling the host: polling via `cudaStreamQuery` or `cudaEventQuery` is cheap enough to do at kHz without overhead. No need for interrupt-driven `cudaEventSynchronize(blocking)` unless you have other work for the CPU.
+
+
+# cudaLaunchKernelEx vs classic launch + Programmatic Stream Serialization
+
+| Variant | µs/launch |
+|---------|----------:|
+| Classic `<<<>>>` | 2.05 |
+| `cudaLaunchKernelEx` (no attributes) | 2.06 |
+| `cudaLaunchKernelEx` (cluster=2) | 2.05 |
+| `cudaLaunchKernelEx` (priority=-5) | 2.06 |
+| **`cudaLaunchKernelEx` + `cudaLaunchAttributeProgrammaticStreamSerialization`** | **1.47 (28 % faster)** |
+
+**Programmatic Stream Serialization (PSS)** with `programmaticStreamSerializationAllowed = 1` saves ~0.6 µs/launch. The driver gets to reorder / parallelize launch-preparation work while the stream preserves execution order.
+
+**Attribute configuration on `cudaLaunchKernelEx`** itself adds negligible overhead (< 10 ns beyond classic launch). The cluster / priority attributes don't slow things down — they're purely scheduling hints processed at launch time.
+
+**Practical**: if you launch many small kernels in sequence, add PSS for a free ~28 % speedup. For throughput-driven workloads, use cudaGraph (0.52 µs/launch) which is still 3× faster than PSS.
+
+
 # Persistent kernel occupancy — 32 CTAs/SM wins for memory-bound
 
 Direct comparison on a 1 GB u128 streaming read, 512 threads per CTA:
