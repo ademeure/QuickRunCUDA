@@ -6314,3 +6314,32 @@ For the warp-issue path:
 - True divergent branch: 2× serialized + reconverge (~2× slower for 2-way)
 - 32-way: full serialization (~10×)
 
+
+---
+
+# INT8 Compute Path (Critical for B300)
+
+Since `tcgen05.mma kind::i8` is **not supported on sm_103a** (verified earlier), B300 INT8 workloads must use either dp4a SIMD or convert to FP8.
+
+## dp4a / dp2a / imad throughput (per-warp, 8 indep chains)
+
+| Op | cy/op | Chip TOPS | Effective use |
+|----|-------|-----------|---------------|
+| **dp4a.{s32,u32,u32.s32}** (4×INT8 dot) | 5.25 | **54.5** | INT8 inference fallback |
+| dp2a.{lo,hi}.s32 (2×INT16) | 5.25 | 25.4 | INT16 dot |
+| mad.lo.s32 (IMAD) | 3.5 | 18.1 | scalar 32×32+32 |
+| mad.wide.s32 (32×32→64) | 3.5 | 18.1 | free 64-bit accum |
+
+**Comparison for INT8 inference on B300**:
+
+| Path | TOPS | Notes |
+|------|------|-------|
+| **tcgen05.mma kind::i8** | ❌ N/A | Not supported on sm_103a |
+| **dp4a SIMD** | 54 | Slowest "modern" INT8 path |
+| **mma.sync m16n8k32 (FP8)** | 82 | 1.5× faster than dp4a |
+| **tcgen05.mma kind::f8f6f4** | **4651** | **85× faster than dp4a** |
+
+**Critical practical guidance**: For INT8 inference on B300, **convert to FP8 immediately** and use tcgen05.mma. The dp4a path is 85× slower than the tensor-core FP8 path. Any INT8 workload not converted to FP8 leaves 99% of B300's compute throughput on the floor.
+
+**FP8/INT8 equivalence trick**: Map your INT8 weights/activations into E4M3 or E5M2 FP8 format with a global scaling factor. The accuracy is similar for inference, but throughput is **85× higher** via tensor cores.
+
