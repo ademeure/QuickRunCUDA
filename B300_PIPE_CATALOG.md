@@ -3306,7 +3306,27 @@ Local atomic contention gets a 2.4× throughput boost from cache-line merging at
 
 Both remote modes hit the same ~1.13 TB/s ceiling — thread-scaling helps but NVLink / peer atomic packet rate is the ultimate bound. Remote is **39% of local atomic throughput**. The 1.13 TB/s "CL-traffic" exceeds the 900 GB/s link cap because atomics use sub-CL packets; actual NVLink bytes are ~560 GB/s, well within peak.
 
-**Single-address atomic throughput (all SMs, all threads hit A[0] with atomicAdd, 10,000 atoms/thread)**:
+### Axis-separated atomic throughput — HW coalescing matters hugely
+
+**Measured with 1,000 serial atoms per thread, both LOCAL.** Semantic Matom/s = `threads × atoms_per_thread / wall_time`. HW ops counts coalesced thread-atomics as 1 op per warp-instruction (when 32 threads target same 32B block).
+
+| SMs | warps/SM | thd/warp | threads | unique addrs (Matom/s) | contended A[0] (Matom/s) | notes |
+|---:|---:|---:|---:|---:|---:|---|
+| 1   | 1  | 1  | 1       | 3       | 3       | single thread baseline |
+| 1   | 1  | 32 | 32      | 77      | — | 1 warp-inst coalesces unique (32 different CLs) |
+| 1   | 32 | 1  | 32      | 82      | — | 32 warp-insts, each 1 CL |
+| 1   | 32 | 32 | 1,024   | 944     | — | full 1 SM |
+| 32  | 32 | 32 | 32,768  | 30,369  | — | |
+| 148 | 1  | 1  | 148     | 384     | 382     | 1 thd/SM; same contend vs unique (no coalesce possible) |
+| 148 | 32 | 1  | 4,736   | 12,051  | **1,537** | 32 warps × 1 thd/warp — NO coalescing, contend bottlenecks |
+| 148 | 1  | 32 | 4,736   | —       | **12,175** | 1 warp × 32 thd — warp coalesces 32:1, 8× higher semantic rate |
+| 148 | 32 | 32 | 151,552 | 137,649 | 49,173  | contend: 49,173/32 = 1,537 HW ops (matches 1-thd-per-warp case) |
+
+**HW atomic rate on A[0] = ~1,537 MHW-ops/s regardless of thread count** (L2 atomic unit on one CL). Semantic count is inflated by warp-coalescing factor (up to 32×). For unique addresses, no coalescing → thread count directly drives throughput (up to L2 aggregate 137 Gops/s = ~4.4 TB/s CL-traffic at 148 SMs).
+
+**Unique atomic peak = 137.6 Gatomic/s LOCAL** (at 151,552 threads, each hitting its own CL). This exceeds my earlier "22.7 Gatomic/s" claim — that was with 256 atoms/thread serial chain, and `atomicAdd` with return value forced serialization. With fire-and-forget REDG + no chain, we hit full L2 parallel-unit throughput.
+
+### Single-address atomic throughput (all SMs, all threads hit A[0] with atomicAdd, 10,000 atoms/thread)
 
 | config | threads | Matomic/s LOCAL | Matomic/s REMOTE | LOCAL payload BW | REMOTE payload BW |
 |---|---:|---:|---:|---:|---:|
