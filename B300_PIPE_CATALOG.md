@@ -4607,3 +4607,17 @@ Per-thread register count vs FFMA throughput (148×256 threads × 8+chain FFMA):
 3. **>200 regs**: triggers LMEM spills, catastrophic drop (28%).
 
 Design: aim for ≤32 regs/thread when possible. Use `__launch_bounds__` to cap register allocation. Above that, trade off more regs for less re-computation selectively. Avoid >200 regs (real spills).
+
+### Warps-per-SM × memory BW scaling (cache-defeat read, 148 SMs)
+
+| warps/SM | L1 BW (GB/s) | DRAM BW | warps_active % |
+|---:|---:|---:|---:|
+| 1  | 36.70 | 36.77 | 6.25% |
+| 2  | 74.14 | 74.20 | 6.25% |
+| 4  | 145.72 | 145.79 | 6.25% |
+| 8  | 293.80 | 293.86 | 12.03% |
+| 16 | 591.26 | 591.32 | 23.37% |
+
+Perfect linear scaling 1→16 warps/SM. Each warp adds ~36 GB/s to the chip total — per-warp DRAM bw is constant, indicating DRAM is not saturated and latency-hiding is the bottleneck. At 16 warps/SM (23% warps_active), we're still below peak BW 6 TB/s (measured earlier). Need even more warps or larger loads to approach peak.
+
+**Rule of thumb**: memory-latency-hiding scales linearly with warps/SM until DRAM saturates. For small reads per thread, you need many warps resident. Each warp keeps ~1 load in flight when pipeline is un-ILP'd.
