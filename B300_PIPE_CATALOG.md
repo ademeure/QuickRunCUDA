@@ -7240,6 +7240,46 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# Warp vote / reduce primitives throughput
+
+Single warp, 1000 iterations, full mask `0xFFFFFFFF`:
+
+| PTX / intrinsic | cy/iter |
+|-----------------|--------:|
+| `__activemask()` | **23** (fastest — no sync, just reads lane mask) |
+| `__ballot_sync` | 29 |
+| `__reduce_max_sync` | 29 |
+| `__any_sync` | 34 |
+| `__all_sync` | 34 |
+| `__match_all_sync` | 45 |
+| `__reduce_add_sync` | 54 |
+| `__match_any_sync` | 56 |
+
+**Findings:**
+1. **`__activemask` is read-only** (no lane sync needed) — 23 cy.
+2. **`__ballot_sync` (29 cy)** is cheaper than `__any_sync` / `__all_sync` (34 cy) even though they're semantically similar. Prefer ballot + `ballot != 0` over any when you only need a boolean.
+3. **`__reduce_max_sync` = 29 cy** (same as ballot) — single reduction is cheap.
+4. **`__reduce_add_sync` and `__match_any_sync` are 2× slower** (54-56 cy) — more complex cross-lane logic.
+5. **`__match_all_sync` between add/any** at 45 cy.
+
+Practical for reductions: prefer `__reduce_*_sync` (29-56 cy) over manual shuffle trees (5 shuffles × 6 cy + 4 FADDs = ~55 cy) — about the same or slightly faster with cleaner code.
+
+
+# __sincosf is NOT faster than separate sin + cos on B300
+
+| Form | cy/iter |
+|------|--------:|
+| separate `sin.approx.f32` + `cos.approx.f32` | 129.26 |
+| `__sincosf(x, &s, &c)` (CUDA math intrinsic) | 129.13 |
+| `__sinf(x)` + `__cosf(x)` (separate intrinsics) | 129.13 |
+
+All three emit the same SASS — **2 separate MUFU ops, 1 sin + 1 cos**. No HW fusion for sincos on B300.
+
+Per MUFU op (from earlier MUFU sweep): 0.5 warp-inst/cy/SM = 2 cy per warp-inst per SMSP. For 1024 threads doing 1 sin-cos pair: 32 warps × 2 MUFU insts × 2 cy = 128 cy per iter — matches measurement.
+
+**Design implication**: on B300, using `__sincosf` is a portability win (clear intent) but NOT a performance win. Don't expect to save anything vs separate `sinf`/`cosf`. To actually save time, reduce MUFU call count (e.g. use polynomial approximation for kernels where MUFU count dominates).
+
+
 # Local memory (register-spill) cost vs register
 
 | Access pattern | cy/FMA |
