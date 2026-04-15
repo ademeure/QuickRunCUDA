@@ -6835,3 +6835,27 @@ L2 hit latency in this test: ~316 cy (matches our earlier 28-91 cy at smaller WS
 
 **Cluster launch overhead is identical to single-CTA launch (~5.7 μs).** No additional cost for cluster setup. So clusters are essentially free at the launch level — use freely when you need cross-CTA communication.
 
+
+## tcgen05 SASS Encoding (full picture)
+
+| PTX | SASS |
+|-----|------|
+| tcgen05.mma | `UTCQMMA gdesc[URx], gdesc[URy], tmem[URz], ...` |
+| tcgen05.mma cta_group::2 | `UTCQMMA.2CTA ...` |
+| tcgen05.alloc | `UTCATOMSWS.FIND_AND_SET.ALIGN UP0, UR5, UR5` |
+| tcgen05.relinquish_alloc_permit | `UTCATOMSWS.AND URZ, UR5` |
+| tcgen05.commit.mbarrier::arrive | `UTCBAR [UR4], URZ` |
+
+All UTC* instructions use **uniform register operands (UR0..)** and **uniform predicates (UP0..)** — they execute on the SM's uniform datapath, not per-lane. This is the secret to their efficiency: one issue per warp, not per lane.
+
+The pattern `DEPBAR.LE SB0, 0x36` before UTCATOMSWS is a **dependency barrier** that waits on scoreboard slot 0 to drop below threshold 54 — ensures previous async ops complete before the alloc atomic.
+
+
+## Globaltimer Precision (verified)
+
+Back-to-back `mov.u64 %0, %%globaltimer` reads:
+- Min increment: **32 ns** (same as initial finding)
+- 8+ consecutive reads in same window all show identical values
+- Tick rate: **31.25 MHz** (1 / 32 ns)
+- Hardware-fixed; doesn't change with SM clock
+
