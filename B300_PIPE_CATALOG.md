@@ -6165,3 +6165,27 @@ Range: 74-137 cy, mean 109 cy. The 8 "fast" SMs are scattered across GPCs (0, 4,
 
 For predictable L2 behavior, consider using `cudaFuncSetAttribute` with `cudaLimitPersistingL2CacheSize` to pin specific data, or use TMA with cluster-aware tile distribution.
 
+
+## L2 partition affinity via atomic (true L1 bypass)
+
+Same address atom.add 0 from each SM (after pre-warm from CTA 0):
+
+| GPC | Mean latency (cy) | Min | Max |
+|-----|-------------------|-----|-----|
+| 2 | **115** ← fastest | 110 | 126 |
+| 8 | 114 | 40* | 135 |
+| 4 | 119 | 106 | 138 |
+| 9 | 124 | 117 | 134 |
+| 0 | 128 | 106 | 143 |
+| 1 | 127 | 118 | 143 |
+| 7 | 127 | 106 | 149 |
+| 5 | 137 | 118 | 149 |
+| 3 | **143** ← slowest | 126 | 152 |
+| 6 | 143 | 125 | 153 |
+
+*GPC 8 min=40 is CTA 0 itself (warming SM has hot L1).
+
+**B300 L2 access latency varies 25% across GPCs** — GPC 2/8 are closest to the L2 slice holding our test address; GPC 3/6 are farthest. The exact slice/SM mapping depends on physical address.
+
+Per-warp atomic latency from any SM averages ~125 cy = 65 ns. For latency-critical primitives (locks, queues), this 25% variation across GPCs may matter. Use `%smid` to pin work to fast GPCs when possible.
+
