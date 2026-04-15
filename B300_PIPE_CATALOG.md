@@ -6905,3 +6905,28 @@ Critical for kernel design — can compute overlap with memory loads?
 
 When the compute DEPENDS on the load (worst case), only 30 cy of penalty (5%) — the warp scheduler handles single-warp dep chains efficiently.
 
+
+---
+
+# Predicated Execution Cost (FREE)
+
+| Pattern | cy/inst |
+|---------|---------|
+| Unpredicated FFMA | 2.875 |
+| `@P=TRUE` FFMA | 2.875 (same!) |
+| `@P=FALSE` FFMA | 0 (compiler DCE'd it since no effect) |
+| `@P=lane<16` FFMA (divergent) | 2.879 (same!) |
+
+**Predicated execution is completely FREE on B300.** The hardware always issues the instruction (single dispatch slot), but the predicate only gates the per-lane write-back. Cost is independent of:
+- Predicate value
+- Whether predicate diverges across lanes
+- Number of lanes that pass
+
+This confirms why the compiler aggressively predicates 2-way `if` branches — it's strictly faster than branching, no hidden cost.
+
+**Practical guidance**:
+- Use `@P` patterns freely (e.g., `select` operations)
+- Compiler-emitted `selp` (select on predicate) is the fastest way to combine two values based on a condition
+- 2-way branches → predicated; only 3+ way branches actually serialize warps
+- For lane-conditional updates (e.g., "only even lanes write"), predicated stores are perfect — no overhead
+
