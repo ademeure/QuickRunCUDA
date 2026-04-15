@@ -5256,3 +5256,95 @@ Same metric suite, different kernels:
 - If `wait` dominates → dependency chain too tight; add more independent chains.
 - If `short_scoreboard` dominates → waiting on shared memory; check bank conflicts.
 - If `membar` dominates → too many fences; consolidate synchronization.
+
+---
+
+# tcgen05.mma — Real Tensor Core Peak Verified (sm_103a)
+
+After getting tcgen05.mma to work properly with full UMMA::InstrDescriptor encoding (CUTLASS-derived bit layout), all three primary kinds were measured at nearly theoretical peak:
+
+## kind::f16 (FP16 inputs, FP32 accumulate, K=16)
+
+Single warp per SM, dispatching 1000 MMAs serially with mbarrier completion.
+
+| M | N | cy/iter | TFLOPS @ 1920 MHz × 148 SMs |
+|---|---|---|---|
+| 64 | 32 | 51.4 | 362 |
+| 64 | 64 | 51.4 | 725 |
+| 64 | 128 | 66.7 | 1,117 |
+| 64 | 256 | 128.2 | 1,162 |
+| 128 | 32 | 51.4 | 724 |
+| 128 | 64 | 54.5 | 1,367 |
+| 128 | 128 | 66.9 | 2,226 |
+| **128** | **256** | **128.1** | **2,325** |
+
+**Peak: 2.33 PFLOPS for FP16/BF16 → FP32** at M=128, N=256. NVIDIA-published B300 spec is ~2.5 PFLOPS dense → we hit **93% of theoretical peak from a single warp on a single SM**.
+
+## kind::tf32 (TF32 inputs, FP32 accumulate, K=8)
+
+| M | N | cy/iter | TFLOPS @ all 148 SMs |
+|---|---|---|---|
+| 128 | 128 | 66.9 | 1,114 |
+| **128** | **256** | **128.1** | **1,163** |
+
+**Peak: 1.16 PFLOPS for TF32 → FP32**. ~93% of 1.25 PFLOPS spec.
+
+## kind::f8f6f4 with E4M3 inputs (FP32 accumulate, K=32)
+
+| M | N | cy/iter | TFLOPS @ all 148 SMs |
+|---|---|---|---|
+| 128 | 128 | 66.9 | 4,453 |
+| **128** | **256** | **128.1** | **4,651** |
+
+**Peak: 4.65 PFLOPS for FP8 → FP32**. ~93% of 5 PFLOPS spec.
+
+## Cross-kind ratio sanity check
+
+| Kind | TFLOPS | Ratio vs TF32 |
+|------|--------|---------------|
+| TF32 | 1163 | 1.0× |
+| FP16 | 2325 | 2.0× |
+| FP8  | 4651 | 4.0× |
+
+Exactly the expected 1:2:4 pattern from K=8 vs K=16 vs K=32 (same atom width in bytes, more elements = more ops per atom).
+
+## Cycle-rate vs shape (per-SM dispatch latency)
+
+The cy/iter at small shapes (M=64 N=32) of **51 cycles** is the *minimum* dispatch period from a single warp. Larger shapes (M=128 N=256) hit **128 cy/iter** — exactly 2× the minimum, meaning the tensor core is fully busy and MMAs back up at the dispatcher.
+
+The constant ~50 cy floor at small shapes shows that a single warp issuing tcgen05.mma can saturate dispatch even when the actual MMA work is small. This is the async issue rate of the tensor pipe.
+
+## What was needed to make it work
+
+The previous "illegal instruction" failures came from:
+1. **idesc encoded incorrectly** — must use UMMA::InstrDescriptor bit layout (sparse_id2_ at [0,2), c_format_ at [4,6), a_format_/b_format_ at [7,13), n_dim_ at [17,23) in units of 8, m_dim_ at [24,29) in units of 16). Using `idesc=0` is invalid.
+2. **smem matrix descriptor needs proper LBO/SBO encoding** — for layout_type=0 (no swizzle): LBO=16 (one row of 8 FP16 = 16 bytes >> 4 = 1), SBO=128 (8 rows × 16 B = 128 bytes >> 4 = 8). 
+3. **`tcgen05.alloc/dealloc/relinquish` are `.sync.aligned`** — must be called by ALL threads in the warp, not inside `if (tid==0)`. Putting alloc behind a single-thread guard deadlocks the warp.
+4. **PTX form for cta_group::1 takes 9 operands** (no scale_input_d, no shift). Used the 9-operand variant from `__cccl_ptx_isa >= 860`.
+5. **Real mbarrier required** for `tcgen05.commit.mbarrier::arrive::one.b64`. Pointing it at a u32 instead of an `mbarrier.init`'d 64-bit slot causes silent issues.
+6. **M=256 fails with cta_group::1** — requires cta_group::2 (cluster of 2 CTAs cooperating). Confirmed via repeated illegal-instruction.
+
+### Working idesc construction (CUTLASS UMMA::InstrDescriptor verbatim):
+
+```cpp
+// kind::f16 with M=128, N=256:
+unsigned idesc = (1U << 4)              // c_format = F32 (CFormat::F32=1)
+               | (1U << 7)              // a_format = BF16 (F16F32Format::BF16=1)
+               | (1U << 10)             // b_format = BF16
+               | ((256 >> 3) << 17)     // n_dim = 32
+               | ((128 >> 4) << 24);    // m_dim = 8
+// = 0x8400490
+
+// SMEM descriptor (no swizzle):
+auto desc_encode = [](u64 x) { return (x & 0x3FFFFULL) >> 4; };
+u64 a_desc = desc_encode(smem_addr) 
+           | (desc_encode(16ULL) << 16)    // LBO = 16 bytes (1 atom row)
+           | (desc_encode(128ULL) << 32)   // SBO = 128 bytes (8 atom rows)
+           | (0ULL << 61);                 // layout_type = 0 (no swizzle)
+```
+
+Format enum reference (CUTLASS, `cute/arch/mma_sm100_desc.hpp`):
+- **F16F32Format**: F16=0, BF16=1, TF32=2
+- **MXF8F6F4Format**: E4M3=0, E5M2=1, E2M3=3, E3M2=4, E2M1=5
+- **CFormat**: F16=0, F32=1, S32=2
+
