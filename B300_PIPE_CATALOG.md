@@ -7240,6 +7240,42 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# GPU-side atomic on host-pinned memory — works and is cheap
+
+| Target | cy/atom (single thread, chained 100 atomicAdds) |
+|--------|------------------------------------------------:|
+| Device memory (`cudaMalloc`) | 14.9 |
+| Host-pinned mapped (`cudaHostAlloc` + `cudaHostGetDevicePointer`) | 11.4 |
+
+**GPU atomicAdd on pinned memory works**, and the chained throughput is essentially the same as device-memory atomics (~12-15 cy/atom). CPU successfully sees the result after kernel completion (`h_counter = 100` after 100 atomic adds).
+
+Why the speed? The L2 atomic unit forwards / merges identical-address requests on both sides — the throughput-limiting factor for chained atomics is same regardless of whether the backing storage is HBM or host-pinned. Latency per op is higher for pinned (PCIe round-trip ~1 µs for a blocking observation), but the chain test measures throughput, not latency.
+
+**Practical**:
+- For GPU→CPU notification / completion flags, use a pinned atomic counter — it's coherent and the CPU can poll without syncing the full kernel.
+- For bulk data: still use HBM + copy. Pinned atomics are for control signalling, not bulk data.
+
+
+# cudaGraphExecUpdate — 77× faster than rebuild
+
+For a graph with 10 kernel nodes:
+
+| Operation | µs |
+|-----------|---:|
+| `cudaGraphLaunch` (existing exec) | 10.24 |
+| **`cudaGraphExecUpdate` (modify in-place)** | **0.145** |
+| `cudaGraphInstantiate` (full rebuild) | 11.28 |
+
+**Graph update is 77× faster than rebuild** (0.145 vs 11.28 µs). If kernel shapes / pointers change between iterations but the graph topology stays the same, update rather than rebuild.
+
+Practical workflow:
+1. Build graph once with placeholder arg values.
+2. Each iteration: call `cudaGraphExecUpdate` with a "template" graph containing the new values (capture via stream capture or node-by-node).
+3. Launch the updated exec — same overhead as before.
+
+For **dynamic shapes** where the graph topology changes, rebuild is the only option — accept the 11 µs cost.
+
+
 # Kernel parameter passing — size is free (up to 4 KB)
 
 All launches ~2 µs regardless of parameter size:
