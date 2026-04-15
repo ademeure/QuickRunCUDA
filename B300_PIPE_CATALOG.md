@@ -7240,6 +7240,68 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# CAS spinlock under contention (atomicCAS acquire)
+
+Each CTA's warp-0 repeatedly acquires a single global lock (atomicCAS 0→1), increments a counter, releases (atomicExch 0). 100 lock cycles per CTA, varying CTA count:
+
+| CTAs | CTA0 cy/acq | per-acq chip-wide | practical µs |
+|-----:|------------:|------------------:|-------------:|
+| 1   | 1 579       | 1 579 | 0.78 |
+| 2   | 2 399       | 1 200 | 1.18 |
+| 8   | 6 851       | 856 | 3.37 |
+| 32  | 19 563      | 611 | 9.63 |
+| **148** | **85 033** | **574** | **41.8** |
+| 296 | 152 698     | 516 | 75.1 |
+| 1 000 | 1 190 698 | 1 191 | 586 |
+| 2 000 | 1 539 158 | 770 | 758 |
+
+Interpretation:
+- **Global lock acquire rate = ~5.75 cy per grant chip-wide** at 148 CTAs contention (each CTA waits ~85 K cycles, but 148 grants happen in that window).
+- **CTA0's wall-clock wait = 42 µs per acquire at 148 CTAs.** For a latency-sensitive lock, this is way too much.
+- Past 148 CTAs, CTA0's wait grows linearly with total contention — predictable queuing.
+- Chip-wide peak grant rate ≈ **354 M acquires/sec** at 148-contender contention.
+
+**Design**: single global locks on B300 scale OK to ~32 contenders, then saturate the L2 atomic unit. Above 32 contenders, switch to lock-free or hierarchical lock schemes. Use `mbarrier` for known-count coordination (barrier.arrive gives you the producer-consumer pattern at 24 cy per arrive vs 1500+ cy for a CAS lock).
+
+
+# Concurrent kernel execution (different streams)
+
+Two independent kernels launched on separate non-blocking streams, each doing the same fixed per-thread FFMA workload. 512 threads/CTA, varying CTA count each:
+
+| g (each kernel) | total CTAs | solo ms | pair ms | speedup |
+|----------------:|-----------:|--------:|--------:|--------:|
+| 1   | 2   | 13.05 | 13.05 | **2.00× (perfect concurrent)** |
+| 8   | 16  | 13.05 | 13.05 | 2.00× |
+| 32  | 64  | 13.05 | 13.06 | 2.00× |
+| **74**  | **148** | **13.05** | **13.05** | **2.00×** |
+| 128 | 256 | 13.05 | 22.89 | **1.14× (mostly serial)** |
+| 148 | 296 | 13.05 | 22.90 | 1.14× |
+
+**Sharp cutoff at 148 total CTAs** (= 1 CTA per SM). When the two kernels combined request ≤ 148 blocks, they run in parallel on distinct SMs at 2× speedup. Above 148, the second kernel waits (roughly 1.14× instead of 2.00×).
+
+**Interpretation**: CUDA scheduler prefers **spreading CTAs across SMs first** — it gives each SM one CTA before packing multiple per SM, even when occupancy would allow more. So kernel A gets all 148 SMs at 1 CTA/SM; kernel B queues behind.
+
+**Practical rules**:
+1. For **concurrent kernels**, each kernel should use at most `ceil(148 / N_kernels)` CTAs.
+2. If you want to overlap pre-processing kernels with main compute, size the pre-processing to ≤ 74 CTAs (plus 74 for main) — both run at 2× chip speed.
+3. Kernels that each launch 148+ blocks will serialize even on separate streams. For overlap, break into smaller kernels.
+4. Larger CTAs (more threads per CTA) don't change this — the scheduler is CTA-count-aware, not thread-count-aware.
+
+
+# CUtensorMap descriptor creation (cuTensorMapEncodeTiled)
+
+Host-side cost of `cuTensorMapEncodeTiled` for a 2D float tensor with 32×32 box and no swizzle:
+
+| Call pattern | µs / call |
+|--------------|----------:|
+| Same descriptor repeatedly encoded | **0.025** (25 ns!) |
+| Varying globalDim per call | 0.023 |
+
+**CUtensorMap creation is essentially free (~25 ns).** The struct is only 128 bytes; the API call just fills the descriptor. Create fresh TMA descriptors per-kernel with negligible cost.
+
+Practical implication: no need to cache tensor maps — build them inline when launching a TMA-bearing kernel.
+
+
 # cudaEvent / cudaStream API overhead (host-side)
 
 Host wall-clock measurements (1000-iter avg per row):
