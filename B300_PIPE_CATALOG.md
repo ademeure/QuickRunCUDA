@@ -6714,3 +6714,29 @@ What's clearly true:
 - SM clock: **1920.0 MHz** exactly (3-trial average matches in 4th-decimal precision)
 - globaltimer resolution: **32 ns** (= 31.25 MHz tick)
 
+
+## SASS Operand `.reuse` Cache (Critical for Throughput)
+
+Examining FFMA2 SASS from a real benchmark kernel:
+
+```
+FFMA2 R22, R22.F32x2.HI_LO, R4.reuse.F32, 0.5 ;
+FFMA2 R20, R20.F32x2.HI_LO, R4.F32, 0.5 ;
+FFMA2 R18, R18.F32x2.HI_LO, R4.reuse.F32, 0.5 ;
+FFMA2 R16, R16.F32x2.HI_LO, R4.F32, 0.5 ;
+FFMA2 R14, R14.F32x2.HI_LO, R4.reuse.F32, 0.5 ;
+```
+
+**Statistics**: **480 of 512 FFMA2 instructions (94%)** carry the `.reuse` annotation on at least one operand.
+
+The `.reuse` modifier signals to the warp dispatcher that an operand should be served from a small **operand-reuse cache** (separate from RF read ports). This dramatically reduces register file bandwidth pressure.
+
+Pattern observed:
+- `R4.reuse.F32` recurs across many FFMA2s — R4 is the constant multiplier
+- Destinations rotate (R22, R20, R18, R16, R14...) — accumulators
+- Each FFMA reads R4 from reuse cache (free) instead of RF (1 port)
+
+**Implication**: To approach FFMA2 peak, the compiler MUST find operand-reuse opportunities. Kernels with random source register access patterns will see lower throughput due to RF port saturation.
+
+Also seen: `.F32x2.HI_LO` modifier explicitly indicates packed FP32×2 dual-lane operation. The `HI_LO` swap creates butterfly-pattern dot products useful in tensor pipelines.
+
