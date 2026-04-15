@@ -4715,3 +4715,14 @@ At this test config, wider stores give progressively higher BW. WIDTH=8 (STG.E.E
 Typical pattern: issue cp.async for tile N+1 while computing on tile N, then wait for N+1 before using.
 
 For **bulk** TMA (cp.async.bulk), see earlier catalog section — much higher BW but needs mbarrier setup.
+
+### setmaxnreg (dynamic register allocation)
+
+`setmaxnreg.inc/dec.sync.aligned.u32 N` (sm_100+) redistributes registers between warpgroups. Minimal verification:
+
+- `setmaxnreg.inc 192` compiles + executes, adds ~13 cy overhead vs baseline for the inc itself
+- `setmaxnreg.dec 32` works, releases registers back to the pool
+
+Real benefit only visible in producer/consumer warpgroup kernels where a producer wg can `dec` down to 32 regs while consumer wg `inc`'s up to 240. Not measured here — requires multi-warpgroup kernel with register-pressured consumer path.
+
+See NVIDIA's tcgen05.mma async-producer-consumer template for canonical usage.
