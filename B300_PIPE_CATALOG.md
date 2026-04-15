@@ -4255,3 +4255,13 @@ Both lanes see IDENTICAL 19K cy/atom — 9× slower than pure local. Causes:
 2. Remote atomic unit saturation spills latency to the local lanes too (both lanes wait for the warp reconvergence)
 
 **Design rule**: don't mix LOCAL + REMOTE atomics in the same warp. Dedicate whole warps (or CTAs) to one or the other.
+
+### LOCAL/REMOTE mixing granularity (refined)
+
+| granularity of split | remote cy/atom | local cy/atom |
+|---|---:|---:|
+| CTA-dedicated (half CTAs each) | 19,083 | **2,029** (pure-local speed) |
+| Warp-dedicated (half warps each) | 19,056 | 5,945 (3× slower than CTA-ded) |
+| Thread-mix (within warp) | 18,755 | **18,755** (9× slower local) |
+
+**Dedicate at CTA granularity** to keep local atomics fast. Warp-level mixing shares SM resources (L1 atomic queue, LSU), so local warps wait for remote warps on same SM. Thread-level mixing causes warp divergence → full 9× penalty.
