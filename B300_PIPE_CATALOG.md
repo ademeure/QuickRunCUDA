@@ -5833,3 +5833,59 @@ Below 2KB the cost is dominated by the ~60 cy per-transfer overhead. At 8KB, TMA
 
 **TMA is the fastest path for global→smem** at large block sizes. cp.async.ca is best for small per-thread loads.
 
+
+---
+
+# L2 Partition Architecture (multi-CTA test)
+
+Each block has its OWN working set (`block_data[block_id * WS]`). Cycle/load measured by block 0:
+
+## Per-block 32 MB working set
+
+| Blocks | Total WS | cy/load | Tier |
+|--------|----------|---------|------|
+| 1 | 32 MB | 95 | L2 hit |
+| 2 | 64 MB | 96 | **L2 hit** (other CTA shares L2) |
+| 4 | 128 MB | 144 | L2 miss starts |
+| 8 | 256 MB | 203 | DRAM |
+
+## Per-block 64 MB working set
+
+| Blocks | Total WS | cy/load | Tier |
+|--------|----------|---------|------|
+| 1 | 64 MB | 96 | L2 hit (matches earlier) |
+| 2 | 128 MB | 146 | partial miss |
+| 3 | 192 MB | 176 | DRAM-bound |
+
+**B300 L2 architecture**:
+- Total chip L2 = 126 MB (NVIDIA spec)
+- Split into **~2 partitions of 63 MB** each
+- Each SM has affinity to ONE partition
+- A single CTA sees ~64 MB max regardless of how big the L2 is
+- Multi-CTA across both partitions: full 126 MB usable
+- 4 CTAs with 32 MB each (128 MB total) just barely overflows partition capacity
+
+**Design rule**: Don't expect a single CTA to fit >64 MB in L2. Split work so different CTAs target different L2 partitions for combined 126 MB visibility.
+
+## TMA store (smem→global) throughput
+
+Per-store cost includes the WB to L2 (and possibly HBM):
+
+| Bytes | cy/store (1 SM) | GB/s/SM |
+|-------|------------------|---------|
+| 128 | 9.6 | 25.6 |
+| 512 | 19.6 | 50.0 |
+| 2048 | 67.6 | 58.1 |
+| **8192** | **259.6** | **60.6** |
+| 32768 | 1027.6 | 61.2 |
+
+TMA store saturates at ~60 GB/s/SM (vs TMA load at 166 GB/s/SM — load is **2.7× faster than store**).
+
+Multi-SM TMA store at 8KB:
+- 1 block: 60 GB/s/SM
+- 16 blocks: 60 GB/s/SM (= 960 GB/s chip)
+- 64 blocks: 12 GB/s/SM (= 770 GB/s chip — **saturated!**)
+- 148 blocks: 5 GB/s/SM (heavily contested = 740 GB/s chip)
+
+**Chip-wide TMA store BW saturates at ~770 GB/s** when many SMs write simultaneously. This is far below HBM peak (~8 TB/s) — likely L2 write coalescing limit when all writes go to same address. With unique addresses per SM, throughput should be much higher.
+
