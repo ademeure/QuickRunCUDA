@@ -7345,6 +7345,75 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# Driver + runtime versions + P2P topology (observed)
+
+Driver/runtime version query:
+```
+cudaDriverGetVersion  = 13000   (CUDA 13.0 driver — matches nvidia-smi driver 580.126.09)
+cudaRuntimeGetVersion = 13020   (runtime built against CUDA 13.2 headers)
+```
+
+Runtime can be newer than driver's CUDA version (minor compat allowed), as here — runtime 13.2 on top of driver 13.0.
+
+Multi-GPU topology (2× B300 SXM6 AC on same host):
+```
+dev 0: NVIDIA B300 SXM6 AC (PCI 0000:04:00)
+dev 1: NVIDIA B300 SXM6 AC (PCI 0000:05:00)
+P2P: canAccess=1, PerfRank=0, NativeAtomic=1, AccessSupported=1
+```
+
+**Key**: `NativeAtomic = 1` between peers — cross-GPU atomics work via NVLink. Combined with `hostNativeAtomicSupported = 0` (from cudaDeviceProp), this means:
+- GPU ↔ GPU atomics: native (via NVLink, 820 GB/s peer BW)
+- CPU ↔ GPU atomics: not native (PCIe coherence only, software-mediated)
+
+`PerfRank = 0` = highest tier (NVLink), consistent with the NV18 switch fabric seen in `nvidia-smi topo -m`.
+
+
+# cuda::atomic_ref vs legacy atomicAdd
+
+| Variant | cy/atom |
+|---------|--------:|
+| **`atomicAdd` (CUDA intrinsic)** | **9.8** |
+| `cuda::atomic_ref<>::fetch_add(…, memory_order_relaxed)` device-scope | 14.1 (+44 %) |
+| `… block_scope` relaxed | 14.1 |
+| `… system_scope` relaxed | 14.0 (same as block / device — no cost diff for relaxed) |
+| **`… fetch_add(…, memory_order_acq_rel)` device-scope** | **1 420 (144× slower!)** |
+
+**Findings**:
+1. **Legacy `atomicAdd` is 30 % faster** than `cuda::atomic_ref` with relaxed order. The atomic_ref path adds template/wrapping overhead.
+2. **`acq_rel` memory order is 144× slower** than relaxed — emits pre- and post-fences (≈ 700 cy each for GPU scope).
+3. **thread_scope has NO effect on relaxed-order atomic**. The hardware handles all scopes identically when no fence is implied.
+
+**Practical**:
+- Use `atomicAdd` directly when you don't need ordering. It's the fastest.
+- Use `atomic_ref` with `memory_order_relaxed` when C++ semantics help readability. Marginal cost.
+- Use `memory_order_acq_rel` or `seq_cst` only for sync-critical ops. The 144× penalty makes them useless in hot loops.
+
+
+# Reduction pattern: warp-reduce first → 29× speedup over naive
+
+64 M-element reduction, 1024 × 256 threads:
+
+| Pattern | Time (ms) | GElem/s |
+|---------|----------:|--------:|
+| **Naive** (1 `atomicAdd` per thread) | **1.476** | 45.5 |
+| Warp-reduce (`__reduce_add_sync`) + 1 atom per warp | 0.051 | **1 312** |
+| Block-reduce (warp + `__syncthreads` + warp) + 1 atom per block | 0.049 | 1 360 |
+
+**Findings**:
+- **Warp-reduce is 29× faster than naive** — cuts global atomic traffic by 32× (one atom per warp vs one per thread).
+- **Block-reduce adds only 4 %** over warp-reduce — the warp-reduce already consolidated 32:1.
+- At 256-thread blocks (8 warps), block-reduce is 1/256 vs naive. But global atom contention isn't the bottleneck once you're below ~10 atoms/iter.
+
+**Pattern template for any sum/max/min reduction:**
+```cuda
+unsigned local = 0;
+for (int i = tid; i < n; i += stride) local += in[i];
+local = __reduce_add_sync(0xFFFFFFFF, local);  // warp-level
+if ((threadIdx.x & 31) == 0) atomicAdd(out, local);
+```
+
+
 # Green contexts — in-process SM partitioning (CUDA 12.4+)
 
 B300 supports green contexts (`cuGreenCtxCreate`) — partition the 148 SMs across multiple streams **within the same process**, distinct from MIG (process-level partitioning).
