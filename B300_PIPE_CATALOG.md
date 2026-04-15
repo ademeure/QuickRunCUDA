@@ -6639,3 +6639,21 @@ For applications targeting H100→B300 migration: **cluster sync is the new "fas
 
 **Atomic scope qualifier is FREE.** Any of cta/cluster/gpu/sys gives same 34 cy when L2-coherent. The cost is in the memory ordering qualifier (.acq_rel = 31× slower) — never in the scope.
 
+
+## Cluster Size Limit on B300
+
+| Cluster size | Result |
+|--------------|--------|
+| 2 | ✅ OK |
+| 4 | ✅ OK |
+| 8 | ✅ OK |
+| 16 | ❌ "cluster misconfiguration" |
+| 32 | ❌ "cluster misconfiguration" |
+
+**B300 default cluster max = 8 CTAs** (same as H100). To use cluster sizes 9-16, set `cudaFuncAttributeNonPortableClusterSizeAllowed` on the kernel — but that requires opt-in.
+
+Practical guidance:
+- Design cluster algorithms for clusters of 2/4/8
+- Cluster of 8 = max DSMEM bandwidth = 8× shared smem (1 MB+ effective per cluster)
+- Multicast TMA peaks at cluster of 8 (= 8× source BW savings)
+
