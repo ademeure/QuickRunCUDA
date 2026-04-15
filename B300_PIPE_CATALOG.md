@@ -3194,6 +3194,20 @@ Each batch = 8 serial atomic adds (or .cg loads) with true data dependency betwe
 
 Both show strong **bimodal distributions** matching the L2 side-aware finding: ~250 cy for same-L2-side hits, ~600 cy for wrong-L2-side hits. Remarkably, the same ~250 cy L2-side variance survives the cross-GPU traversal — REMOTE .cg loads split cleanly between ~2700 cy and ~2950 cy buckets. The round-trip over NVLink adds roughly +2,400 cy on top of the local-memory baseline, regardless of which side of the remote L2 hits.
 
+**Remote atomic latency by address stride** — L2-side bimodality persists across all strides tested (64 B to 1 MB per atomic):
+
+| stride | min | p25 | median | p75-max |
+|---|---:|---:|---:|---:|
+| 64 B    | 3,066 | 3,192 | 3,328 | 3,479-3,651 |
+| 256 B   | 3,059 | 3,203 | 3,342 | 3,475-3,634 |
+| 1 KB    | 3,039 | 3,208 | 3,384 | 3,486-3,634 |
+| 4 KB    | 3,030 | 3,211 | 3,359 | 3,491-3,633 |
+| 16 KB   | 3,049 | 3,199 | 3,354 | 3,484-3,613 |
+| 64 KB   | 3,028 | 3,200 | 3,362 | 3,497-3,635 |
+| 1 MB    | 3,069 | 3,279 | 3,471 | 3,604-4,264 (widens, probably TLB/page effect) |
+
+Bimodal peaks at ~3,100 cy and ~3,400 cy in all cases — ~300 cy spread reflects the peer-GPU L2 side-aware variance (smaller than the ~400 cy local variance, since NVLink round-trip dominates and only peer-side choice matters).
+
 Cache-hint sensitivity on REMOTE pointer chase is minimal:
 - `ld.global.cg` (cache-global): median 2,917 cy
 - `ld.global.ca` (cache-all): median 2,953 cy
