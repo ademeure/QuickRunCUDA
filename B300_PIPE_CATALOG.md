@@ -3306,6 +3306,24 @@ Local atomic contention gets a 2.4× throughput boost from cache-line merging at
 
 Both remote modes hit the same ~1.13 TB/s ceiling — thread-scaling helps but NVLink / peer atomic packet rate is the ultimate bound. Remote is **39% of local atomic throughput**. The 1.13 TB/s "CL-traffic" exceeds the 900 GB/s link cap because atomics use sub-CL packets; actual NVLink bytes are ~560 GB/s, well within peak.
 
+**Single-address atomic throughput (all SMs, all threads hit A[0] with atomicAdd, 10,000 atoms/thread)**:
+
+| config | threads | Matomic/s LOCAL | Matomic/s REMOTE | LOCAL payload BW | REMOTE payload BW |
+|---|---:|---:|---:|---:|---:|
+| 1 thd/warp × 32 warps × 148 SMs, **u32** | 4,736 | 1,544 | 519 | 6.2 GB/s | 2.1 GB/s |
+| 1 thd/warp × 32 warps × 148 SMs, **u64** | 4,736 | 1,544 | 519 | 12.4 GB/s | 4.2 GB/s |
+| 1024 thd/SM × 148 SMs, **u32** | 151,552 | 49,414 | 16,608 | **197.7 GB/s** | **66.4 GB/s** |
+| 1024 thd/SM × 148 SMs, **u64** | 151,552 | 49,415 | 16,609 | **395.3 GB/s** | **132.9 GB/s** |
+
+**Key findings:**
+- **u32 and u64 hit the IDENTICAL Matomic/s rate** — the L2 atomic unit processes both widths at the same cycle cost. u64 just moves 2× the payload per op.
+- **LOCAL all-contended peak**: 49.4 Gatomic/s (same as unique-address peak at max threads → L2 atomic unit is the bottleneck either way).
+- **REMOTE all-contended peak**: 16.6 Gatomic/s (3× slower than local; limited by NVLink atomic packet rate).
+- **Perfect 32× scaling** 4,736 → 151,552 threads (both LOCAL and REMOTE) — no saturation from few-thread to full-chip parallelism.
+- u64 contended on 1 CL payload BW: **395 GB/s LOCAL** / **133 GB/s REMOTE**.
+
+With 151,552 threads all hammering one u64 atomic location, LOCAL delivers 395 GB/s of effective counter-update bandwidth, REMOTE 133 GB/s.
+
 Local atomics can saturate the on-chip L2 atomic path well above NVLink's 900 GB/s because they don't traverse NVLink at all. The bottleneck is L2 atomic unit capacity (~3 TB/s fire-and-forget saturation).
 
 **REMOTE atomic with fire-and-forget + max parallelism (148 × 1024 thd × 256 REDG):** **8,842 Matom/s = 1,132 GB/s** CL-traffic — ~4× higher than the 32-thread-per-SM number (292 GB/s). Earlier atomic figures were thread-count-limited, not NVLink-limited. REDG (fire-and-forget) sends a single small packet per op (no response), so NVLink packet BW is the ceiling, not CL-traffic. Actual NVLink packet bytes ~560 GB/s.
