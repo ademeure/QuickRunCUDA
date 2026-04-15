@@ -5496,3 +5496,43 @@ Sweet spot: **x16** at 57 B/cy/warp = ~109 GB/s/warp at 1.92 GHz. Per SM (4 warp
 
 Beyond x16, throughput drops — the load is too wide and stalls register write-port.
 
+
+---
+
+# Integer Intrinsic Throughput (per warp on 1 SMSP)
+
+8 independent chains, no dep — measures pipe throughput.
+
+| Op | cy/inst | inst/ns @1.92 | Pipe |
+|----|---------|---------------|------|
+| prmt | 3.25 | 0.59 | ALU (fast) |
+| shf.l | 3.25 | 0.59 | ALU |
+| dp4a | 3.25 | 0.59 | ALU |
+| bfe | 5.25 | 0.36 | ALU |
+| popc | 8.25 | 0.23 | MUFU/slow ALU |
+| brev | 8.50 | 0.22 | MUFU/slow ALU |
+| bfind | 9.88 | 0.19 | slow |
+| clz | 14.88 | 0.12 | slow |
+| shfl.sync.bfly | 6.00 | 0.32 | XU (warp shuffle) |
+
+**Fast ALU pipe** (3.25 cy/inst): prmt, shf.l, dp4a — likely sharing pipe_alu with iadd3.
+**Slow path** (8-15 cy): popc/brev/clz/bfind run through what looks like a MUFU-like serial unit.
+
+# Fence / Membar Cost (per execution, 1 warp)
+
+| Operation | cy/op |
+|-----------|-------|
+| baseline (no-op) | 0 |
+| **membar.cta** | **27** |
+| **fence.acq_rel.cta** | **29** |
+| **fence.proxy.async.shared::cta** | **36** |
+| **fence.proxy.async.global** | **36** |
+| fence.proxy.async (full) | 179 |
+| fence.acq_rel.gpu | 292 |
+| membar.gl | 292 |
+
+**Diagnostic rules**:
+- CTA-scoped fences are cheap (~27-36 cy). Use them whenever possible.
+- The full `fence.proxy.async` (no scope qualifier — defaults to system) is **5× more expensive** than the scoped variants. Always specify a scope.
+- GPU-scoped fences (acq_rel.gpu, membar.gl) are **10× more expensive** than CTA-scoped — only use when crossing CTA boundaries.
+
