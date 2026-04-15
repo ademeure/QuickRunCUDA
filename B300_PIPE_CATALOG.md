@@ -6994,80 +6994,27 @@ For peak smem throughput, use:
 - Plain ld.shared.u32 only for scalar reads
 
 
-## Multi-warp FFMA throughput (occupancy effect)
+## Scalar + packed FMA occupancy (DUPLICATE — authoritative data at "Packed FMA variants peak")
 
-| Warps/CTA | FFMA/cy/SM | % of theoretical 128 |
-|-----------|------------|---------------------|
-| 1 | 10.2 | 8% |
-| 2 | 20.4 | 16% |
-| 4 | 40.9 | 32% |
-| 8 | 63.9 | 50% |
-| 16 | 77.1 | 60% |
-| 32 (max CTA size) | **85.1** | **67%** |
+**These clock64-based occupancy sweeps REPLICATE (with some error) the ncu-validated table earlier in this catalog:**
+- `fma.rn.f32` (FFMA scalar) → **71.8 TFLOPS** at 98.8 %SOL (dual-issues on heavy+lite sub-pipes)
+- `fma.rn.f32x2` (FFMA2 packed) → **72.3 TFLOPS**
+- `fma.rn.f16x2` (HFMA2) → **72.3 TFLOPS**
+- `fma.rn.bf16x2` (BFMA2) → **72.3 TFLOPS**
+- `fma.rn.f64` (DFMA) → **0.95 TFLOPS** (1/76× of FFMA)
 
-Single-CTA scaling plateaus at 32 warps (max thread block size = 1024 threads).
+All packed variants saturate the same FMA pipe at ~72 TFLOPS. FFMA scalar hits the same peak via dual-issue across two sub-pipes.
 
-**Chip-wide FFMA peak**: 85 × 148 × 1.92 GHz × 2 FLOP/FMA = **~48 TFLOPS scalar FP32**
+Occupancy effect (single-warp to 32-warp) via clock64 timing, FFMA scalar with self-dependency chain (`fma.rn.f32 %0, %0, %0, 1.5`):
 
-This compares to:
-- tcgen05.mma FP16: 2,325 TFLOPS (49× more)
-- tcgen05.mma FP8: 4,651 TFLOPS (97× more)
+| Warps/CTA | FFMA/cy/SM | % of ~128 theoretical |
+|----------:|-----------:|----------------------:|
+| 1  | 10 | 8 % |
+| 4  | 41 | 32 % |
+| 16 | 77 | 60 % |
+| **32** | **85** | **67 %** (self-dep saturates at ~2.6 inst/cy/SMSP) |
 
-**Conclusion**: Scalar FFMA peaks at ~67% of theoretical hardware max even with full SM occupancy (32 warps in 1 CTA). Tensor core (UTCQMMA) hits ~93% of its theoretical peak. The MMA path is 1.4× more efficient at hardware utilization in addition to being orders of magnitude faster.
-
-For real workloads needing scalar compute (not GEMM), expect 30-50 TFLOPS chip-wide for FFMA — a fraction of tensor core peak. AI workloads should always use tensor cores when possible.
-
-
-## FFMA2 Multi-warp Peak
-
-| Warps/CTA | FFMA/cy/SM (FFMA2 counted as 2 FFMAs) |
-|-----------|----------------------------------------|
-| 1 | 19.7 |
-| 2 | 39.3 |
-| 4 | 78.6 |
-| 8 | 107.5 |
-| 16 | 123.8 |
-| **32** | **126.3** |
-
-**Chip-wide FFMA2 peak**: 126.3 × 148 SMs × 1.92 GHz × 2 FLOP/FMA = **71.6 TFLOPS scalar FP32-equivalent**
-
-This **exactly matches NVIDIA's published B300 FP32 peak of 70 TFLOPS**. So FFMA2 reaches advertised peak with 32 warps × 1 CTA × 8 chains.
-
-Comparison:
-| Path | Chip TFLOPS |
-|------|-------------|
-| Scalar FFMA (32 warps) | 48 |
-| **FFMA2 (32 warps)** | **71.6 (matches spec)** |
-| tcgen05.mma FP16 | 2,325 |
-| tcgen05.mma FP8 | 4,651 |
-
-So **FFMA2 = 1.5× scalar FFMA chip-wide** at peak. Use FFMA2 wherever data is naturally paired (e.g., complex arithmetic, vec2 operations). Combined with the 2:1 FFMA2:IADD3 free-issue rule, FFMA2 + IADD3 mix is the fastest scalar-pipe pattern.
-
-
-## HFMA2 (FP16) Multi-warp Peak
-
-| Warps/CTA | HFMA/cy/SM | Chip TFLOPS |
-|-----------|------------|-------------|
-| 1 | 19.7 | 11.2 |
-| 4 | 78.6 | 44.7 |
-| 8 | 99.7 | 56.7 |
-| 16 | 125.8 | 71.5 |
-| **32** | **125.8** | **71.5** |
-
-**HFMA2 chip-wide peak = 71.5 TFLOPS** — SAME as FFMA2 (71.6 TFLOPS).
-
-Both FFMA2 (FP32×2) and HFMA2 (FP16×2) hit the same dispatch ceiling per SM. The HFMA2 doesn't deliver "2× the FP16 throughput" at chip level — it delivers 2× the data per instruction, but the instruction issue rate is the same.
-
-**Implication**: For scalar FP work on B300:
-- FP32: 71.6 TFLOPS via FFMA2
-- FP16: 71.5 TFLOPS via HFMA2 (same!)
-- BF16 via fma.rn.bf16x2: presumably also ~71 TFLOPS (we'd need to test)
-
-For real AI throughput, you MUST use tensor cores:
-- FP16 via tcgen05.mma: 2,325 TFLOPS (32× HFMA2)
-- FP8 via tcgen05.mma: 4,651 TFLOPS (65× HFMA2)
-
-The HFMA2/FFMA2 path is for "exotic" non-GEMM kernels (FFTs, special functions). For matmul, never use HFMA2.
+Clock-based number (67 %) is lower than ncu SOL (99 %) because the self-dependency prevents the second dual-issue slot. Use the earlier "Packed FMA variants peak" table as the authoritative number.
 
 
 ---
@@ -7088,58 +7035,60 @@ The HFMA2/FFMA2 path is for "exotic" non-GEMM kernels (FFTs, special functions).
 
 L2 atomic unit handles up to 32 simultaneously-contending CTAs at the same 51 cy. Beyond that (148 CTAs), slows to 132 cy = 2.6× — still surprisingly good given 100% contention.
 
-## 148 CTAs varying ADDRESS spread
+## 148 CTAs varying ADDRESS spread (corrected — peak badness at N=2, not N=4)
 
-| Distinct addresses | cy/atom | Notes |
-|--------------------|---------|-------|
-| 1 | 132 | all-same, L2 serializes well |
-| **4 (same cacheline!)** | **1301 (10× WORSE)** | **CACHE LINE THRASHING** |
-| 16 (1 cache line) | 540 | thrashing eases |
-| 64 (4 cache lines) | 373 | improves |
-| 256 (16 cache lines) | 255 | converges |
-| 1024 | 258 | flat |
-| 4096 | 260 | flat |
+Rerun (148 CTAs × 32 threads, 1000 atomicAdd-per-thread, varying distinct destination addresses):
 
-**🚨 Catastrophic finding**: Atomics on 4 addresses within the same 32B cacheline are **10× SLOWER** than atomics on a single address! This is L2 cache line ping-ponging — the 4 atomic sites force the cache line to bounce between L2 slices.
+| Distinct addresses | cy/atom | × 1-addr | Notes |
+|-------------------:|--------:|---------:|-------|
+| 1 | **126** | 1.0× | all-same → L2 atomic-unit merges identical requests, very fast |
+| **2** | **2537** | **20× WORSE** | worst case — 2 hot targets serialize without merging benefit |
+| 4 | 1246 | 10× | still bad |
+| 8 | 549 | 4.4× | |
+| 16 | 564 | 4.5× | |
+| 32 | 593 | 4.7× | |
+| 64 | 373 | 3.0× | 4 cachelines — starts to parallelize across L2 slices |
+| 256 | 258 | 2.0× | 16 cachelines — flat asymptote |
 
-**Design rules for histograms / reductions on B300**:
-1. **Best**: single global counter (132 cy, 36 atoms/cy chip)
-2. **WORST**: small counter array (4-8 counters in same cacheline) — avoid!
-3. **Good**: spread counters across cachelines (≥16 distinct lines, 64+ counters): 255 cy
-4. **Inflection**: beyond ~256 counters across distinct cachelines, no further improvement
+**Correct interpretation** (previous "cacheline ping-pong" claim was a guess, not validated):
+- **1-addr is anomalously fast** because the L2 atomic unit merges identical-address requests from many SMs into one pipeline slot. This is a hardware combining trick specific to same-address atomics.
+- **N≥2 loses that merging**, so throughput falls to ~1 atomic per L2-atomic-unit cycle across all distinct addresses.
+- **The N=2 anomaly (20× worse than N=1, and worse than N=4)** needs more investigation — possibly both addresses hash to the same L2 slice and compete for a single merging lane.
+- Beyond N=64, spreading across more cachelines (and thus more L2 slices) recovers parallelism — asymptote ~258 cy/atom, which is closer to uncontended L2 atomic throughput.
 
-For per-warp privatization (typical histogram pattern), use:
-- `counter[blockIdx.x * 32 + warpIdx + base]` to give each warp a UNIQUE cacheline
-- NEVER pack multiple counters into one cacheline if they're hot atomics
+**Histogram / reduction design**:
+1. Single global counter is surprisingly optimal if you need ONE number (merging wins).
+2. **Small counter arrays (N=2–32)** are the WORST case — pick either N=1 or N≥256.
+3. Per-warp / per-SM privatization (unique cacheline per warp) beats sharing.
 
 
-## Atomic Ordering × Scope (Asymmetric Cost!)
+## Atomic Ordering × Scope (cluster-launched contended — throughput numbers)
 
-Tested in cluster-launched context, single-warp:
+**Context**: cluster of 2 CTAs × 32 threads, each lane hits `&p[threadIdx.x]` (32 addresses total, 2-way cross-CTA contention per address). `cy/atom` is throughput from one warp's perspective — NOT single-op latency.
 
-| Op | cy/atom | × relaxed |
-|----|---------|-----------|
-| atom.add (relaxed baseline) | 34 | 1.0× |
-| **atom.release.cta** | **36** | **1.06× (basically FREE!)** |
-| atom.release.cluster | 892 | 26× |
-| atom.release.gpu | 892 | 26× |
-| atom.acquire.cta | **797** | 23× |
-| atom.acquire.cluster | 799 | 24× |
-| atom.acquire.gpu | 800 | 24× |
-| atom.acq_rel.cta | 810 | 24× |
-| **atom.acq_rel.cluster** | **1646** | **48×** |
+| Op | cy/atom | × relaxed | SASS fence emitted |
+|----|---------|-----------|--------------------|
+| atom.add (relaxed) | 34 | 1.0× | none |
+| **atom.release.cta** | **36** | 1.06× | (none — release is write-side, and the atomic's own write IS the release) |
+| atom.acquire.cta | 734 | 21× | **MEMBAR.ALL.CTA before ATOM** |
+| atom.acquire.gpu | 800 | 23× | MEMBAR.ALL.CTA + MEMBAR.ALL.GPU |
+| atom.release.cluster | 892 | 26× | MEMBAR for cross-CTA scope |
+| atom.acq_rel.cta | 810 | 24× | same MEMBAR as acquire |
+| **atom.acq_rel.cluster** | **1646** | 48× | heaviest membar combo |
 
-**Key asymmetry**:
-- **`release.cta` is FREE** (just needs intra-CTA fence-out which is implicit in CTA execution)
-- **All `acquire.*` are expensive** (must drain all preceding loads, even within CTA)
-- **`release.{cluster,gpu}`** suddenly expensive (needs cross-CTA coherence)
+SASS (MODE=1 = `atom.acquire.cta`):
+```
+MEMBAR.ALL.CTA ;
+ATOM.E.ADD.STRONG.SM PT, RZ, desc[UR6][R2.64], R11 ;
+```
 
-**Lock-free queue design**:
-- **Producer** publishes via `atom.release.cta.add.u32` head pointer: ~36 cy ← cheap!
-- **Consumer** reads tail via `ld.acquire.cta.u32`: ~800 cy (expensive)
-- Better consumer pattern: spin on `ld.relaxed` + `__threadfence_block()` in loop (cheaper if data is hot)
+Why acquire costs ~700 cy but release doesn't: the MEMBAR.ALL.CTA before the ATOM must drain all in-flight memory ops. With 32 lanes contending × 2 CTAs, there's always a queue to drain. Release.cta doesn't need a pre-MEMBAR because the atomic store itself IS the release fence.
 
-For cross-cluster queues: minimize ordered ops. Use mbarrier (which has built-in release semantics for free, ~24 cy).
+**Single-thread uncontended numbers differ wildly**: a separate 1-thread chained-atomic test reported `relaxed`=684 cy, `acquire.gpu`=710 cy (+4%), `release.gpu`=1434 cy (+110%). Under no contention the MEMBAR drains nothing, but the chain latency dominates. So acquire is the opposite of expensive there.
+
+**Practical**:
+- Single-producer single-consumer queue in a CTA: release atomics are free, acquire atomics cost ~700 cy under contention. Use `ld.acquire.cta` for reads instead — emits a lighter MEMBAR post-LDG.
+- Cross-cluster / cross-GPU: use mbarrier (24 cy, built-in release) instead of explicit `.cluster`/`.gpu` scope atomics.
 
 
 ## Load/Store Ordering Cost — REFINED with CTA scope
@@ -7168,7 +7117,21 @@ This corrects our earlier "ld.acquire = 3× slower" finding — that was for `.g
 For cross-CTA: must pay the 3-14× tax. Use mbarrier (24 cy with built-in release) instead of explicit ordered atomics whenever possible.
 
 
-## HBM3e Peak Bandwidth (Verified)
+## HBM / TMA / in-flight — CORRECTION (prior numbers were L2-hit, not cold HBM)
+
+⚠ **Earlier in this firing I published 5.16 TB/s (ld.global) and 6.83 TB/s (TMA) as "HBM peak". Both were wrong — the working sets fit in L2.** See the earlier "DRAM bandwidth by access pattern" section for the real, validated numbers:
+
+- **HBM coalesced read peak = 7.4 TB/s = 92 % of 8 TB/s spec** (v4 loads, 512 MB buffer, random-init, stride-1).
+- Stride-8 per-thread cacheline: 523 GB/s (14× slower).
+- Per-block stride-1 (L2-hit): 31.3 TB/s — this is what my bad test accidentally measured.
+
+Why the recent test was wrong: the kernel used `offset & 0xFFFFFF` = 256 MB range, then re-traversed it 1000× across 4736 blocks (~38 full sweeps of 256 MB). After first iteration, all L2 hits. The TMA variant had similar reuse + wrapped addresses to within a 256 MB backing buffer → L2 feeder, not HBM feeder.
+
+The single-warp "64 in-flight loads, 19.7 GB/s, 33× speedup" number (below) measures **L1 latency hiding**, not HBM — 264 KB working set fits in L1. The 33× speedup is L1/LSU queue depth, not memory-latency hiding. For actual HBM latency hiding at the chip level: earlier "ILP vs warps-per-SM" table shows `warps × ILP ≥ 16` saturates HBM.
+
+Below, the original incorrect sections are kept verbatim for audit reasons but **do not use these numbers**.
+
+## HBM3e Peak Bandwidth (WRONG — measures L2)
 
 Cold DRAM reads (4 GB working set, no L2 reuse), 32 CTAs/SM × 148 SMs:
 
@@ -7196,7 +7159,7 @@ Practical guidance:
 - L2 working set ≤64 MB: enjoy 3× the BW (17 TB/s)
 
 
-## TMA (cp.async.bulk) HBM Peak
+## TMA (cp.async.bulk) HBM Peak (WRONG — measures L2 after first wrap)
 
 Each block does 50× 8KB TMA loads (400 KB per CTA):
 
@@ -7219,7 +7182,9 @@ This is significantly better than `ld.global` cold reads (5.16 TB/s = 64%). TMA'
 - For random scatter-gather: ld.global, expect ~5 TB/s
 
 
-## Single-Warp In-Flight Memory Loads (Latency Hiding Capacity)
+## Single-Warp In-Flight Memory Loads (L1/LSU queue depth — NOT HBM)
+
+⚠ The numbers below measure **L1/LSU in-flight queue depth**, not HBM latency hiding. Working set = 264 KB fits in L1/L2. For HBM latency hiding, see the earlier "ILP vs warps-per-SM equivalence" section.
 
 Issue N independent loads, then sync/use all (typical pipelined load pattern):
 
@@ -7242,4 +7207,57 @@ Issue N independent loads, then sync/use all (typical pipelined load pattern):
 This means: ONE warp doing pipelined loads is enough to hit ~20 GB/s. To hit HBM peak (8 TB/s), need 400+ warps active doing deep-ILP loads.
 
 **Practical takeaway**: For memory-bound kernels, depth (ILP per warp) matters more than width (warp count) up to ~16 chains. Beyond that, both help.
+
+
+---
+
+# cudaGraph launch latency vs direct launches
+
+Host C++ harness (`/tmp/bench_graph.cu`), empty and tiny (32-thread clock-read) kernels, N launches in sequence:
+
+| Workload | N | Direct (µs/launch) | Graph (µs/launch) | Graph/direct |
+|----------|---|--------------------|-------------------|--------------|
+| empty   | 10   | 2.21 | 1.05 | 2.1× faster |
+| empty   | 100  | 2.04 | 0.56 | **3.7× faster** |
+| empty   | 1000 | 2.03 | 0.52 | **3.9× faster** |
+| tiny    | 1000 | 2.05 | 0.82 | 2.5× faster |
+
+**Direct launch floor** matches the earlier "~2 µs kernel launch overhead" finding — each `<<<...>>>` pays ~2 µs on the host side.
+
+**cudaGraph amortization**: the first-time instantiation is expensive but the launch itself is ~0.52 µs at large N — **4× faster** than direct launches for empty kernels. For tiny kernels the gap narrows (device-side launch dominates).
+
+**When cudaGraph wins**:
+- Training loops with many small kernels per step (optimizer, small matmuls, elementwise)
+- Inference serving with fixed execution plan
+- Each ~1.5 µs saved per launch × 1000 launches = 1.5 ms/iter
+
+**When cudaGraph is overhead**:
+- A handful of large kernels (where launch overhead is already <1% of runtime)
+- Dynamic shape workloads (graph re-capture / update cost)
+
+Capture mode used: `cudaStreamBeginCapture(s, cudaStreamCaptureModeGlobal)`, builds graph implicitly from a sequence of kernel launches on the stream.
+
+
+# Host pinned (zero-copy) memory access from GPU
+
+Host C++ harness (`/tmp/bench_pinned.cu`), 1 GiB working set read from 148 blocks × 128 threads:
+
+| Source | BW (GB/s) | vs HBM | Notes |
+|--------|----------:|-------:|-------|
+| Device HBM (cudaMalloc) | 677 | 1× | 148×128 threads, not saturated — real HBM peak is 7.4 TB/s with more occupancy |
+| **Host pinned zero-copy (cudaHostAlloc Mapped)** | **54** | 0.08× (12× slower) | via PCIe Gen5, `cudaHostGetDevicePointer` |
+| cudaMemcpyAsync H2D (same host pinned buffer) | 58 | 0.09× | same PCIe link, slightly better (copy engine) |
+
+**PCIe Gen5 x16 peak: ~64 GB/s.** Measured 54–58 GB/s → **85–90 % of PCIe peak** for both zero-copy kernel reads and explicit cudaMemcpy.
+
+Pointer-chase latency through pinned memory (single warp, random-shuffled indirection, 100 hops):
+
+- **1 916 cy/hop ≈ 1.00 µs/hop** at 1.92 GHz
+- Compare to local HBM load chain (≈300 cy ≈ 156 ns) → **PCIe pointer-chase is ~6.4× slower than HBM**, ~6.4× slower than HBM and ~25× slower than L2 hit.
+
+**Practical guidance**:
+- Never use zero-copy pinned reads for bandwidth-bound work — 54 GB/s is tiny vs 7.4 TB/s HBM.
+- Zero-copy is only sensible for **small, pointer-chased, write-combining** patterns where the DMA path is overkill (e.g., doorbell registers, rare control updates).
+- For bulk H2D: use `cudaMemcpyAsync` with pinned memory and overlap with compute (gets 58 GB/s cleanly).
+- For back-and-forth (not just push): **multi-GPU NVLink (820 GB/s measured)** is 15× the PCIe-to-host link, so if you can stage data on another B300 you skip the host entirely.
 
