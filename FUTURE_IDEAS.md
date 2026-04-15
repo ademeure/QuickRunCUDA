@@ -1,0 +1,83 @@
+# B300 Characterization — Future Test Ideas & Gap Analysis
+
+Living document of untested / under-tested angles. Use this as a starting point when the loop fires and we want a new measurement.
+
+## HIGH-VALUE GAPS (not yet tested or weakly covered)
+
+### Compute / tensor
+- **tcgen05.mma peak TFLOPS** — the big one. Requires real descriptors (A/B matrices in smem), TMEM accumulator, proper commit/wait. Expected ~5 PFLOPS FP8, ~2.5 PFLOPS FP16, ~10 PFLOPS FP4 with scaling. Existing `bench_tcgen05_mma.cu` only tests the runtime path, not peak.
+- **FP8 block-scaled MX format** (`kind::mxf8f6f4`, `kind::mxf4`) — catalog notes "rejected by nvcc 13.2 ptxas" as of April 2026. Retry periodically.
+- **FP6/FP4 dense MMA** — catalog has F2FP conversion TFLOPs but not the MMA-path peak for native narrow-format.
+- **IMMA (integer MMA)** peak — only HMMA/BMMA tested.
+- **BMMA/xor-popc** peak — popcount-style MMA for binary nets.
+- **Integer scalar IMAD / IMUL throughput** — no peak measurement; assume same as FFMA but verify.
+- **Sub-warp MMA patterns** — wgmma was rejected, tcgen05 is replacement. Small shapes vs large shapes.
+
+### Memory hierarchy
+- **TMEM read/write throughput** at various layouts (partial catalog coverage) — validate with ncu.
+- **TMEM concurrent access from multiple warpgroups** — contention?
+- **Shared memory bank conflicts** by stride pattern — LDS/STS.
+- **ldmatrix / stmatrix throughput** with various shapes (`x1`, `x2`, `x4`).
+- **L1 instruction cache pressure** — what happens with huge kernels?
+- **Constant memory latency + BW**.
+- **Texture / tex.1d / tex.2d path** — still exists on B300?
+- **`ld.global.nc.*` (non-coherent)** — does it help at all vs `.cg`?
+- **`ld.global.L1::evict_normal/first/last`** eviction hints — do they matter?
+
+### Multi-GPU (continuing thread)
+- **cp.async.bulk (TMA) cross-GPU** — does it work with P2P remote memory? If yes, huge bulk-path for comms.
+- **cp.async (non-bulk) cross-GPU**.
+- **Cluster launch cross-GPU** — likely rejected, confirm semantic.
+- **MBARRIER on remote-mapped memory** — can a producer on GPU 0 arrive on a barrier that GPU 1 waits on?
+- **Host pinned memory access (zero-copy)** from GPU — PCIe latency path.
+- **Multiple writers, single reader** ping-pong — realistic sync primitive.
+- **Clock skew** between GPU 0 and GPU 1 (via globaltimer).
+- **NVLink queue depth saturation** — how many outstanding requests until link backpressure?
+- **Single-SM NVLink saturation** — how many warps/SM needed to saturate 1 GPU's outbound link?
+
+### Fences & sync
+- **Fence cost matrix**: sc vs acq_rel × cta/gpu/sys × with/without writes × LOCAL/REMOTE.
+- **fence.proxy.*** generic↔async conversion cost.
+- **fence.mbarrier_init** overhead.
+- **System-level release-acquire pattern** (atomic + fence + read).
+- **Barrier cost per warp count** (e.g., `bar.sync 0, N` for subsets).
+
+### Warp / SM
+- **Warp scheduler stalls under load** via ncu (`sm_warp_issue_stalled_*`).
+- **Instruction issue rate per SMSP** — when does ILP help?
+- **Register bank conflicts** (same-bank operand reads).
+- **Predicated execution cost** — `@P0 INST` vs unpredicated.
+- **Branch divergence** cost vs warp convergence cost — see below (tested).
+
+### Primitives / intrinsics
+- **`__shfl_sync` throughput** at various masks.
+- **`__ballot_sync` / `__any_sync` / `__all_sync`**.
+- **CREDUX / warp-wide reduce** variants.
+- **`__nanosleep` HW quantum** — partial (64 ns steps).
+- **`setmaxnreg.aligned`** (dynamic register balancing, sm_100+).
+
+### Misc
+- **CUDA graph launch overhead** vs individual launches.
+- **Stream priority scheduling**.
+- **Driver overhead** for small kernels (persistent vs launch).
+- **Power / clock throttling** under sustained load — does clock drop from 1920 MHz?
+- **SM scheduling placement** — CTA N always lands on SM N?
+
+## CURRENT SESSION TESTED (done in this or earlier cycles)
+
+- Multi-GPU atomic/fence/BW comprehensive (write 718 GB/s, read 820 GB/s, atomic 1.5-2.9 TB/s local)
+- ncu validation of L1/L2/HBM peaks
+- LOCAL/REMOTE mixing granularity
+- Deep NVLink pipelining (28.7× speedup with 32 chains/thread)
+- Atomic op types & data widths (all similar cost)
+- Clock64 overhead (36 cy) + __nanosleep quantization (64 ns steps)
+- Branch divergence (true vs predicated)
+
+## DESIGN RULES DISCOVERED
+
+1. **Coalesce atomic addresses** within a warp → 32× fewer HW packets → up to 32× throughput.
+2. **Dedicate CTAs** (not warps) to LOCAL or REMOTE atomic patterns.
+3. **~32 SMs saturate NVLink** — reserve the other 116 for compute.
+4. **fence more than once per ~50 µs** of cross-GPU work is wasteful (REMOTE fence caps at ~50 µs).
+5. **REMOTE atomic contention merging** saves NVLink packets, giving HIGHER semantic throughput than unique.
+6. **Deep pipelining (N_CHAINS=32)** hides cross-GPU latency ~29×.
