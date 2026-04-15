@@ -4404,3 +4404,20 @@ ncu `smsp__inst_executed.sum.per_second` (inst/ns chip-wide), 148×256 threads �
 Versus FFMA at 34,355 inst/ns: MUFU ops are **47× to 240× slower** than FFMA. rsqrt is the "cheapest" MUFU; log/sin/cos are heavier due to internal Newton-Raphson polish steps.
 
 Design: precompute MUFU results where possible; don't put MUFU in a tight inner loop unless throughput target is very relaxed.
+
+### Constant memory broadcast vs global / shared load (1 warp × 1000 loads)
+
+| pattern | cy/load | notes |
+|---|---:|---|
+| `cmem[0]` (uniform broadcast) | **2.00** | all lanes same addr — served from per-warp cmem cache |
+| `cmem[lane]` | 2.22 | compiler may fold using per-warp broadcast path |
+| `cmem[i & 255]` (runtime index) | 50.73 | divergent broadcast — slower cmem fallback |
+| `A[i & 255]` (global L1-cached) | 86.25 | typical cached LDG |
+| `smem[lane]` | 87.03 | includes warm-up sync overhead in test |
+
+**Key insight**: constant memory broadcast is **43× faster than cached global loads**. Use `__constant__` for:
+- Kernel parameters / config (always broadcast)
+- Tiny lookup tables accessed with the same index across a warp
+- Per-kernel constants (1920 values fit in 64 KB cmem pool)
+
+When lanes diverge in their cmem index, cost rises to ~50 cy — still faster than global but not as dramatic a win.
