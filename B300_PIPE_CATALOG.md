@@ -4744,3 +4744,14 @@ See NVIDIA's tcgen05.mma async-producer-consumer template for canonical usage.
 For global atomic we saw the opposite: min/max 29 cy, add 56 cy. Shared atomic (ATOMS) uses the LDS/SMEM path with different internal mechanics than the L2-based global atomic REDUX.
 
 Design: in shared memory, `atomicAdd` is always the cheapest atomic. For accumulators prefer it over conditional min/max if the use case allows.
+
+### LOP3 (arbitrary 3-input boolean) throughput
+
+`lop3.b32 d, a, b, c, imm8` — computes any truth table of 3 inputs in 1 instruction. Tested with XOR-XOR pattern (imm8=0x96) chained across 8 independent accumulators:
+
+- pipe_alu: **99.76%** of peak
+- Instruction rate: 565 inst/ns chip-wide (matches IADD3 peak)
+
+LOP3 runs at full ALU pipe rate — essentially a "free" boolean operation. The compiler uses it heavily for packed bit manipulation (e.g., `(a & b) | c` → single LOP3). You can construct many bit patterns with `lop3` that would take 2-3 traditional instructions.
+
+**Design rule**: for any sequence of 2-3 bitwise ops, the compiler already folds to LOP3. No manual intervention needed unless you want a specific truth table that the compiler doesn't see.
