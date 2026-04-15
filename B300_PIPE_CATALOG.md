@@ -6803,3 +6803,24 @@ Probed `%nsmid`, `%nwarpid`, etc:
 | %envreg0 | 0x40632c8 | Environment (purpose unclear) |
 | %cluster_nctaid.x | cluster width | Set per launch |
 
+
+## L1/L2 Cache Granularity Probe
+
+Stride sweep (4096 loads after warm-up):
+
+| Stride | cy/load | Tier (inferred) |
+|--------|---------|-----------------|
+| 4B | 56 | L1 hit (warps coalesce to 128B requests) |
+| 8B | 56 | L1 hit (same coalescing) |
+| 16B | 56 | L1 hit |
+| 32B | 56 | L1 hit (still within coalescing) |
+| **64B** | **304** | L1 miss → L2 hit (5.4× jump!) |
+| 128B | 316 | L2 hit |
+| 256B-1024B | 316 | L2 hit (no further degradation) |
+
+**Sharp break at 64B stride** — beyond this, per-thread loads stop benefiting from warp-level coalescing. Each lane needs its own cacheline transaction.
+
+This indirectly tells us: **the warp-level memory access "footprint" per `ld.global.u32` is 128 B** — when 32 lanes × 4 B fits within a 128 B aligned region, fast (56 cy). When stride exceeds this, the loads spill into separate cachelines (304 cy = L2 hit).
+
+L2 hit latency in this test: ~316 cy (matches our earlier 28-91 cy at smaller WS, and 144-199 at large WS).
+
