@@ -4077,3 +4077,20 @@ HW groups atomic requests within a warp-instruction into **32B packets**. Thread
 **Peak LOCAL atomicAdd = 372 Gatomic/s at stride=4B** (8:1 coalesce benefit). My earlier "137 Gatom/s" figure used stride=256B (no coalescing) — valid as a "minimum" rate but NOT the peak. Peak semantic rate with tight packing is 2.7× higher.
 
 **Design note**: for summing counters, tightly pack them. `atomicAdd(&counters[tid])` (stride 4B → coalesced) is 2.7× faster than `atomicAdd(&counters[tid*64])` (stride 256B → uncoalesced). For min/max/xor/and/or/cas this coalescing may NOT apply (add-only semantics allows HW to sum before committing).
+
+### Clean consecutive atomic op × width × full chip (148×1024 threads, coalesced)
+
+Each thread hits its own `sizeof(T)` slot at consecutive addresses → warp writes 128B (u32) or 256B (u64) contiguous. HW coalesces into 4-packets (u32) or 8-packets (u64) per warp-instruction.
+
+| op | u32 Matom/s | u32 TB/s | u64 Matom/s | u64 TB/s |
+|---|---:|---:|---:|---:|
+| atomicAdd  | 375,129 | **1.50** | 364,308 | **2.91** |
+| atomicMin  | 375,129 | 1.50 | 363,434 | 2.91 |
+| atomicMax  | 376,060 | 1.50 | 364,308 | 2.91 |
+| atomicXor  | 372,364 | 1.49 | 365,186 | 2.92 |
+| atomicOr   | 373,281 | 1.49 | 362,565 | 2.90 |
+| atomicAnd  | 373,281 | 1.49 | 361,699 | 2.89 |
+| atomicExch | 371,451 | 1.49 | 360,838 | 2.89 |
+| atomicCAS  | 362,565 | 1.45 | **267,760** | **2.14** (-26%) |
+
+**Peak LOCAL atomic payload BW**: **u32: 1.5 TB/s**, **u64: 2.9 TB/s**. All atomic ops (add/min/max/xor/or/and/exch) coalesce uniformly when threads hit consecutive addresses in same warp. Only **atomicCAS u64 is slower** — CAS requires per-thread old-value comparison before swap, limiting the coalesce factor. u32 CAS still matches others (~1.45 TB/s).
