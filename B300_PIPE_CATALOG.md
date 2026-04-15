@@ -6296,3 +6296,21 @@ Interesting findings:
 - Activations: tanh.approx is reasonably cheap (11 cy) for direct use
 - For division, use `1.0f / x` only if `x` is constant; otherwise prefer `__fdividef(a, b)` (= div.approx, 5.5 cy), which is *3× FASTER than rcp(b) × a*
 
+
+## Branch Divergence Patterns (re-test with reconvergence)
+
+| Pattern | cy/iter | Notes |
+|---------|---------|-------|
+| No divergence | 28 | Baseline |
+| **2-way `if` (compiler-predicated)** | **23 (faster!)** | Compiler emits `select`, no real branch |
+| 2-way + `__syncwarp()` | 23 | sync is no-op when no real divergence |
+| 32-way lookup table | 153 (5.5×) | Local array indexed by lane |
+| 4-way switch | 162 (5.8×) | Same — compiler emits jump table |
+
+**Key insight**: **simple 2-way `if` branches are faster than no-branch** because the compiler turns them into predicated `selp` (single instruction). True divergence appears only when the compiler can't predicate (table lookup, function pointer, `switch` with many cases).
+
+For the warp-issue path:
+- Predicated branch: 1 inst per lane (cheap)
+- True divergent branch: 2× serialized + reconverge (~2× slower for 2-way)
+- 32-way: full serialization (~10×)
+
