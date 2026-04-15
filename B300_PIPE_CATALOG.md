@@ -4621,3 +4621,18 @@ Design: aim for ≤32 regs/thread when possible. Use `__launch_bounds__` to cap 
 Perfect linear scaling 1→16 warps/SM. Each warp adds ~36 GB/s to the chip total — per-warp DRAM bw is constant, indicating DRAM is not saturated and latency-hiding is the bottleneck. At 16 warps/SM (23% warps_active), we're still below peak BW 6 TB/s (measured earlier). Need even more warps or larger loads to approach peak.
 
 **Rule of thumb**: memory-latency-hiding scales linearly with warps/SM until DRAM saturates. For small reads per thread, you need many warps resident. Each warp keeps ~1 load in flight when pipeline is un-ILP'd.
+
+### ILP vs warps-per-SM equivalence for memory latency hiding
+
+Single warp × N-way ILP (N outstanding loads per thread):
+
+| ILP | DRAM BW (GB/s chip) | per-warp |
+|---:|---:|---:|
+| 1 | 37.89 | 0.256 GB/s |
+| 2 | 77.66 | 0.525 |
+| 4 | 151.66 | 1.025 |
+| 8 | 294.96 | 1.994 |
+
+Compare to earlier warps/SM sweep (8 warps × 1 ILP = 294 GB/s). **ILP and warps are interchangeable for latency hiding** — you can have 8 warps × 1 ILP OR 1 warp × 8 ILP and get the same chip-wide BW.
+
+**Rule of thumb for memory-bound kernels**: target `warps × ILP ≥ 16` to approach HBM saturation. Choose between them based on register budget (ILP needs more registers) vs occupancy constraints.
