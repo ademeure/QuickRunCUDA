@@ -4446,3 +4446,24 @@ SASS verified: inner loop has `LDC R5, c[0x3][R5]` per iter — real runtime-ind
 - Always subtract loop overhead (~5-10 cy/iter for ISETP+BRA+IADD).
 - Cross-check with `ncu --metrics sm__pipe_*_cycles_active.avg.pct_of_peak_sustained_active`.
 - If `pipe_*_cycles_active` < 90%, test isn't saturating the target pipe — either increase chains or check for DCE.
+
+### Bit manipulation throughput (XOR-chained to defeat DCE)
+
+148×256 threads × 8 chains × 64 unroll × 100 outer, ncu metrics:
+
+| op | ncu inst/ns | pipe_alu % |
+|---|---:|---:|
+| POPC (`__popc`) | 421 | 24.9% |
+| FFS (`__ffs` / find first set) | 353 | 12.6% |
+| BREV (`__brev` / bit reverse) | 546 | 36.5% |
+| CLZ (`__clz` / count leading zeros) | 558 | 49.4% |
+| shift+mask (`(x >> n) & mask`) | 840 | **99.9%** |
+
+**Relative throughput** (vs IADD at ~96% pipe_alu):
+- shift+mask: essentially IADD peak
+- CLZ: ~half of IADD throughput
+- BREV: ~37% alu
+- POPC: ~25% alu → about 1/4 of peak — compiler emits multi-step SASS
+- FFS: ~13% alu → slowest bit op (split across pipes)
+
+Use `__brev` or `__clz` over `__popc` when either works. For multi-bit extract, prefer `(x >> n) & mask` (LOP3-foldable) over explicit `__ubfe`.
