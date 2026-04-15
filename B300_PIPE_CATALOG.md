@@ -4240,3 +4240,18 @@ Foreground: serial-chain atomicAdd (1 SM × 1 thread × 32 batches × 8 atoms). 
 | BG: 148 SMs writing cross-GPU | **3,229 (+9%)** | 2,730 | 609K |
 
 **Finding**: NVLink saturation inflates atomic latency by only **~8-9% on median**, but tail latency (max) grows dramatically (600K+ cy). Both read-BG and write-BG produce similar effect — atomics use both directions, so traffic either way competes with their req+resp path.
+
+### Mixed LOCAL + REMOTE atomics in same warp — avoid!
+
+Kernel splits warp: even lanes do REMOTE atomicAdd, odd lanes do LOCAL. Measure each lane's 100-atom chain.
+
+| config | LOCAL lane (cy/atom) | REMOTE lane (cy/atom) |
+|---|---:|---:|
+| All-LOCAL baseline (same warp struct) | 2,048 | (unused) |
+| Mixed even=remote, odd=local | **19,014** | **19,014** |
+
+Both lanes see IDENTICAL 19K cy/atom — 9× slower than pure local. Causes:
+1. Warp lockstep: `if (go_remote)` branch serializes the two paths within a warp
+2. Remote atomic unit saturation spills latency to the local lanes too (both lanes wait for the warp reconvergence)
+
+**Design rule**: don't mix LOCAL + REMOTE atomics in the same warp. Dedicate whole warps (or CTAs) to one or the other.
