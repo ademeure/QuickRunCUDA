@@ -6189,3 +6189,19 @@ Same address atom.add 0 from each SM (after pre-warm from CTA 0):
 
 Per-warp atomic latency from any SM averages ~125 cy = 65 ns. For latency-critical primitives (locks, queues), this 25% variation across GPCs may matter. Use `%smid` to pin work to fast GPCs when possible.
 
+
+## Smem Store Bank Conflict Sweep (128 threads, 4 warps)
+
+| Stride | cy/iter (128 stores) | Slowdown |
+|--------|----------------------|----------|
+| 1 (coalesced) | 33 | 1.0× |
+| 2 | 30 | 0.9× |
+| 4 | 30 | 0.9× |
+| 16 (16-way) | 64 | 1.9× |
+| **32 (full conflict)** | **127** | **3.8×** |
+| random | 33 | 1.0× |
+
+Confirms 32-bank smem architecture — strides 16 and 32 (multiples of bank count/2 and bank count) cause 1.9-3.8× slowdown. **Random patterns are AS FAST as coalesced** because random hashing distributes across all 32 banks.
+
+Per-warp store throughput: ~32 stores per 33 cy = 0.97 stores/cy/lane (essentially full LSU pipe).
+
