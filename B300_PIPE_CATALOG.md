@@ -7240,6 +7240,71 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# NVML polling costs — most metrics can be polled at kHz
+
+NVML queries from host (1000 samples averaged):
+
+| Query | µs/call | Notes |
+|-------|--------:|-------|
+| `nvmlDeviceGetClockInfo(MEM)` | **0.12** | cached — memory clock rarely changes |
+| `nvmlDeviceGetTemperature` | 0.62 | fast |
+| `nvmlDeviceGetUtilizationRates` | 1.41 | fast |
+| `nvmlDeviceGetPowerUsage` | 2.34 | medium |
+| `nvmlDeviceGetMemoryInfo` | 3.42 | medium |
+| `nvmlDeviceGetClockInfo(SM)` | 3.86 | actually reads HW |
+| **`nvmlDeviceGetViolationStatus`** | **553** | **VERY SLOW — avoid in hot paths** |
+
+**Practical**:
+- Poll clock/temp/util/power at **kHz rate** (all < 4 µs/call).
+- `ViolationStatus` is 100× slower; only sample occasionally.
+- `GetClockInfo(MEM)` returns cached value — reading every cycle is essentially free.
+
+
+# PTX uniform datapath (UIADD / UIMAD / ULOP3) — free co-issue with per-lane work
+
+`%blockIdx.x` is warp-uniform (same for all 32 lanes). When the compiler detects uniform-only dependencies, it emits **`UIADD3` / `UIMAD` / `ULOP3`** SASS on the uniform datapath — runs concurrent with per-lane scalar ALU.
+
+Test: 1024 threads × 1 CTA × 1000 iter × 4 IMADs per iter:
+
+| Dependency | cy/1000 iter | Notes |
+|-----------|--------------:|-------|
+| Uniform (blockIdx.x derived) | 48 942 | emits UIMAD on uniform pipe |
+| Per-lane (threadIdx.x derived) | 49 446 | emits IMAD on scalar pipe |
+| **Both in parallel chains** | **79 089** | 2× work in 1.6× time → ~25 % free co-issue savings |
+
+The uniform and scalar pipes can **issue in the same cycle**. Mix of uniform work (loop counters, stride increments, base-pointer math) and per-lane work (data manipulation) effectively runs 25 % faster than pure-scalar due to this parallelism.
+
+**Design rules** for SASS-optimized code:
+1. Keep uniform math uniform. Don't multiply `threadIdx.x` when a block-level value suffices.
+2. Use `__ldcs(&cmem[lane])` or `cg::invoke_one()` — these hint uniform where applicable.
+3. The uniform path is limited compared to scalar — use it for indexing arithmetic, not heavy compute.
+
+
+# Clock source comparison (%clock / %clock64 / %globaltimer)
+
+Single warp lane, 1 read each:
+
+| Source | Width | Back-to-back overhead | Semantics |
+|--------|------:|---------------------:|-----------|
+| `%clock` | u32 | **2 cy** | per-SM counter (wraps at 2^32 cy ≈ 2.1 s @ 2 GHz) |
+| `%clock64` | u64 | 2 cy | per-SM counter, wide |
+| `%globaltimer` | u64 (ns) | 0 ns (same tick) | chip-wide ns — 256 ns min resolution |
+
+**SM clock verified at 2 032.5 MHz** by measuring 100 K IMAD iterations:
+```
+clock64 delta   = 3 400 091 cy
+globaltimer     = 1 672 832 ns
+ratio           = 2.0325 cy/ns → 2 032.5 MHz
+```
+
+Matches max boost exactly (`nvidia-smi --query-gpu=clocks.max.sm`).
+
+**Practical**:
+- For intra-SM timing (benchmarking a warp's inner loop), use `%clock` or `%clock64` — 2 cy overhead, 1-cycle resolution.
+- For cross-SM or wall-clock timing, use `%globaltimer` — 256 ns resolution, chip-wide synchronized.
+- `%clock64` cost was earlier reported as 36 cy — that measurement was for a warp-wide `CS2R`-emitting form; single-lane `mov.u64 %clock64` is just 2 cy.
+
+
 # Cubin layout (ELF) — what's inside
 
 `output.cubin` is a standard ELF64 file with NVIDIA-specific processor flags. A minimal kernel produces ~37 sections. Key sections observed:
