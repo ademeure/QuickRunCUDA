@@ -5975,3 +5975,21 @@ Each iteration jumps 512 B (force L2 miss):
 | div.rn.f64 | 4939 | **AVOID** at all costs |
 | sqrt.rn.f64 | 1907 | **AVOID** |
 
+
+## FP64 FMA peak (severely cut on B300)
+
+| Chains in flight per warp | cy/FMA | Per-warp FMA/cy |
+|---------------------------|--------|------------------|
+| 4 | 124 | 0.26 |
+| 8 | 126 | 0.51 |
+| **16** | **127** | **1.0** |
+| 32 | 403 | 0.6 (register spilling) |
+| 64 | 424 | 0.6 (worse spill) |
+
+FP64 FMA per warp saturates at ~16 chains (= ~125 cy latency, fully pipelined). With multi-warp per SM and 148 SMs: practical chip-wide FP64 FMA peak ≈ **~5-10 TFLOPS effective**. NVIDIA's published B300 FP64 spec is 0.54 TFLOPS sparse / ~1 TFLOPS dense — we're close.
+
+**FP64 has been deliberately cut on Blackwell B300** to maximize transistor budget for AI compute. Use cases:
+- Single-FP64 ops in inner loops are OK (~125 cy/FMA latency)
+- Bulk FP64 GEMM is unsuitable — use FP32 with mixed-precision tricks
+- Scientific computing workloads should target H100/H200 (FP64 = 67 TFLOPS) not B300
+
