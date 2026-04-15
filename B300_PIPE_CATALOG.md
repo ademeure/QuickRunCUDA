@@ -3137,19 +3137,25 @@ Per-SM fence.sc.sys cost is **genuinely local** to each SM; there is no proporti
 - NVLink is full-duplex; 900 GB/s in each direction simultaneously, independently.
 - Both GPUs at 1920 MHz SM clock (max 2032 MHz), 3996 MHz HBM. All cycle values are at 1920 MHz.
 
-**Measured cross-GPU throughput (148 SMs × aw=32, coalesced, cache-defeat for reads):**
+**Measured cross-GPU throughput (148 SMs × aw=32, coalesced, cache-defeat for reads; steady state):**
 
-| | WIDTH=1 (32b) | WIDTH=4 (128b) | WIDTH=8 (256b) |
-|---|---:|---:|---:|
-| **WRITE** (W=64)  | 735 GB/s | 761 GB/s | 764 GB/s |
-| **WRITE** (W=512) | 759 GB/s | 767 GB/s | 766 GB/s |
-| **READ** (W=16)   | 816 GB/s | 835 GB/s | 834 GB/s |
-| **READ** (W=64)   | 810 GB/s | 789 GB/s | 809 GB/s |
+| | WIDTH=1 (32b) | WIDTH=2 (64b) | WIDTH=4 (128b) | WIDTH=8 (256b) |
+|---|---:|---:|---:|---:|
+| **WRITE** (W=128, 78-623 MB)  | (under-saturated) | (under-saturated) | (under-saturated) | 770 GB/s |
+| **WRITE** (W=256) | (under-saturated) | (under-saturated) | 768 GB/s | 771 GB/s |
+| **WRITE** (W=512) | (under-saturated) | 764 GB/s | 768 GB/s | 766 GB/s |
+| **WRITE** (W=1024, 620 MB-4.8 GB) | **763 GB/s** | **768 GB/s** | **767 GB/s** | **768 GB/s** |
+| **READ** (W=16-256, 9.7-620 MB/iter) | **810-821 GB/s** | — | **833-837 GB/s** | **784-834 GB/s** |
 
-- **Write efficiency: ~85% of 900 GB/s** (~760 GB/s sustained)
-- **Read efficiency: ~90% of 900 GB/s** (~810 GB/s sustained)
-- Width-invariance above W ≈ 32; wider writes help only at low W where issue-count matters.
-- Writes need ACK from peer L2 → slightly less efficient than reads which can stream.
+- **Write steady state ≈ 766 GB/s** = **85% of 900 GB/s NVLink5 peak**
+- **Read steady state ≈ 820 GB/s** = **91% of 900 GB/s peak**
+- **Methodology note on BW measurement**: cross-checked against CUDA event wall-time to verify. At W ≥ 16 no-fence, clock64-derived BW and event-wall-time agree within 10% (e.g. W=128 no-fence: clock64 = 196,478 cy/iter, wall = 207,821 cy/iter). At W=1 no-fence, the warp's STG instructions don't backpressure — 1,272 cy clock64 vs 2,381 cy wall (1.9× mismatch), so clock64 underestimates. With fence.sc.sys, agreement is tighter (1.04×) at all W. DCE is not an issue (STGs emit `STG.E.STRONG.SYS` in SASS; every iter writes to fresh unique addresses). At W ≥ 16 no-fence, clock64 is accurate because STG-queue backpressure stalls instruction issue at the NVLink drain rate. With fence, accurate at all W.
+- Reads saturate much faster (W=16 suffices) because each load directly pulls from remote
+- **Width-invariance in steady state**: at W ≥ 1024 for writes, all WIDTHs converge to ~767 GB/s. Wider stores help only below saturation by reducing instruction count.
+
+**Why asymmetric (reads > writes efficiency):**
+- Reads are pure full-duplex pulls — peer L2 streams data back at line rate
+- Writes need ACK from peer L2 → commit confirmation adds round-trip latency to each request
 
 **Bidirectional saturation**: running read/write in both directions simultaneously does NOT degrade either direction — the two links are electrically separate.
 
