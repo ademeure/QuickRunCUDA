@@ -7240,6 +7240,73 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# Local memory (register-spill) cost vs register
+
+| Access pattern | cy/FMA |
+|----------------|-------:|
+| Register chain (`fma` on x in reg) | 4 (FMA latency only) |
+| **Volatile array in local memory** (LDL + FMA + STL per iter) | **43** (~10× slower) |
+
+Each LDL/STL on B300 costs ~20 cy round-trip (close to L1 latency). **Spilling to local memory is an order-of-magnitude penalty**: the kernel runs at ~10× the register-only speed.
+
+Spill hurts doubly — it adds LSU pressure + breaks instruction-level parallelism at the reload. Always reduce live registers (via `-maxrregcount`, `__launch_bounds__`, or hand-sliced ILP) before hitting this cliff.
+
+
+# Shared memory bank conflicts (32 lanes, varying stride)
+
+Single warp, lane `k` reads `smem[k * STRIDE_DW + i]`, 1000 iters:
+
+| STRIDE_DW | Bank conflict degree | cy/load |
+|----------:|---------------------:|--------:|
+| 0 (broadcast, same addr) | 1 (broadcast) | 40 |
+| 1 (adjacent dwords) | 1 (no conflict) | 40 |
+| 2 | 2-way | 42 |
+| 4 | 4-way | 46 |
+| 8 | 8-way | 54 |
+| 16 | 16-way | 70 |
+| **32** | **32-way (worst)** | **102** |
+| 64 | 32-way (same — 32 banks total) | 102 |
+
+**Cost formula: ~ 40 + 2 × N_way** where N_way is the conflict degree. A 32-way conflict costs ~2.5× a conflict-free access — significant but not catastrophic.
+
+**Broadcast (all lanes same addr)** = same cost as stride-1 (no conflict). The HW replicates the single value across all 32 lanes in one access.
+
+**Design rules**:
+- `smem[lane * 32]` pattern = worst case (32-way). Add +1 padding (`smem[lane * 33]`) to eliminate.
+- Common 2:4 sparse and tensor-tile layouts use 128-bit swizzling precisely to avoid these patterns — the swizzle pattern is designed so that stride-32-ish access maps to different banks.
+
+
+# FP8 conversion paths (E4M3 / E5M2)
+
+PTX supports:
+- Pack: `cvt.rn.satfinite.{e4m3x2,e5m2x2}.f32 dst, src_lo, src_hi;` (takes 2 FP32, packs into u16)
+- Unpack: `cvt.rn.f16x2.{e4m3x2,e5m2x2} dst, src;` (takes u16, unpacks to 2 FP16)
+- No direct f16x2 → e4m3x2 — must go via FP32.
+
+A tight PACK+UNPACK roundtrip loop ran at **~16 inst/cy/SM** (same as MUFU rate). FP8 cvt shares a conversion pipe with other type-conversion ops. For bulk format conversion between FP8 and FP16/FP32, expect **~4.8 G conversions/s/SM = ~700 Gcvt/s chip-wide** steady throughput.
+
+**Practical**: for FP8 GEMM kernels, the tcgen05.mma consumes FP8 directly — you don't need scalar cvt in the inner loop. Cvt cost matters only for activation/weight staging (dequant/requant), which happens outside the inner loop.
+
+
+# cg::memcpy_async (cooperative_groups async copy)
+
+High-level C++ wrapper around `cp.async`. Test: 100× async copies of 2 KB from global to shared:
+
+| Variant | cy/op |
+|---------|------:|
+| `cg::memcpy_async(block, smem, gmem, 2 KB)` + `cg::wait(block)` | 721 |
+| Plain strided gmem→smem loop | 652 |
+
+For **small (2 KB)** transfers, cg::memcpy_async is **10 % slower** than a hand-rolled loop because the cp.async commit/wait overhead amortizes poorly. For **large** transfers (tens of KB), the async path wins because it overlaps load latency with compute.
+
+Use cg::memcpy_async when you:
+- Load ≥ 16 KB per CTA (amortizes the cp.async overhead)
+- Have concurrent compute work to overlap with the transfer
+- Need the cleaner C++ API over raw PTX
+
+For **one-shot small transfers**, the plain loop is simpler and slightly faster.
+
+
 # MUFU / transcendental throughput (32 warps, 8 chains, self-dep)
 
 | PTX op | inst/cy/SM | TOPS chip | × FMA |
