@@ -7345,6 +7345,50 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# NVDEC / NVENC media engines on B300 SXM6 AC
+
+From `nvidia-smi mig -lgip` profile totals and NVML query:
+
+| Resource | Count per full GPU |
+|----------|-------------------:|
+| **Decoders (NVDEC)** | **7** |
+| **Encoders (NVENC)** | **1** |
+| OFA (Optical Flow) | 1 |
+| JPEG decoders | 7 |
+| Video clocks | 1 717 / 1 860 MHz |
+
+**NVML query confirms media engines are present** (not video-disabled variant):
+- `nvmlDeviceGetEncoderCapacity(H264)` = 100 % available.
+- `nvmlDeviceGetEncoderUtilization` / `DecoderUtilization` = 0 % (idle baseline).
+
+**Implication**: B300 SXM6 AC has **heavy DEC, light ENC** — 7 decoders per full GPU, 1 encoder. Matches an AI-inference profile (many streams decoded for input pipelines, minimal output encoding).
+
+For a 7-slice MIG partition (1g.34gb × 7), each slice gets 1 DEC + 0 ENC + 1 JPEG (the "+me" variant swaps 1 ENC into the last slice).
+
+
+# cuMemAdvise / cudaMemAdvise hints for UM
+
+Using `cudaMemAdvise(ptr, bytes, advice, cudaMemLocation)` with CUDA 13 signature. Test: 1 GB managed buffer, read sequentially from GPU with 148×128 threads (under-occupied; not saturating HBM):
+
+| Phase | Time | BW |
+|-------|-----:|---:|
+| Cold (pages on host) | 130 ms | 8.3 GB/s (PCIe migration) |
+| After `SetPreferredLocation=GPU` + `cudaMemPrefetchAsync` | **1.69 ms** | **637 GB/s (HBM)** |
+| After `SetReadMostly` (pages already on GPU) | 1.68 ms | 638 GB/s (no additional benefit) |
+| After dense CPU touch (scattered) | 125 ms | 8.6 GB/s (pages migrated back) |
+
+**Findings:**
+
+1. **`SetPreferredLocation(GPU)` + `cudaMemPrefetchAsync` is the right way to pin UM pages on the GPU.** Gets HBM-rate access after one-time 100+ ms migration.
+2. **`SetReadMostly` alone doesn't add benefit** if pages are already on GPU and there's no CPU access. Useful when you need **replicated** copies for simultaneous CPU + GPU access.
+3. **CPU touch migrates pages back** — `concurrentManagedAccess=1` means coherent access, so a scattered CPU touch can pull pages home (125 ms for 1 GB dense touch).
+
+**Practical rules**:
+- Pre-stage UM with `Prefetch` before latency-critical kernels.
+- `SetAccessedBy` hints the driver that *both* CPU and GPU will read — useful to skip migration for shared-read patterns.
+- Avoid scattered CPU access to GPU-resident managed memory in hot paths (one touch per cacheline can trigger a migration).
+
+
 # cuFFT 1D C2C forward throughput
 
 Batched 1D FFT, batch = 1024:
