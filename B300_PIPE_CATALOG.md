@@ -6751,3 +6751,55 @@ The `tcgen05.shift.down` instruction shifts TMEM columns down by one position. U
 
 The bare `tcgen05.shift` (without `.down`) is rejected by ptxas — direction is mandatory.
 
+
+---
+
+# B300 Architectural Limits (verified via PTX special registers + concurrency tests)
+
+Probed `%nsmid`, `%nwarpid`, etc:
+
+| Property | Value | Source |
+|----------|-------|--------|
+| **SMs per chip** | **148** | `%nsmid = 148` |
+| **Max warps per SM** | **64** | `%nwarpid = 64` |
+| **Max CTAs per SM** | **32** | empirical (1-warp CTAs hang at 33+) |
+| Warps per warp scheduler (SMSP) | 16 | 64 / 4 SMSPs |
+| TMEM per SM | 512 cols × 32 lanes × 4B = 64 KB | per spec |
+| Smem per SM | ~228 KB usable | per Blackwell spec |
+| L1 cache per SM | 256 KB | (shared with smem pool) |
+| Registers per SM | ~64K dwords | (256KB at 4B each) |
+| Max registers per thread | 232 | per `setmaxnreg.inc` empirical |
+| Default cluster size max | 8 | (16+ requires opt-in) |
+
+## Occupancy by CTA size (concurrent CTAs per SM, hard limit)
+
+| CTA threads | Warps/CTA | Max CTAs/SM | Warps/SM used |
+|-------------|-----------|-------------|---------------|
+| 32 | 1 | **32** (CTA limit binds) | 32 (50% of 64-warp slots wasted) |
+| 64 | 2 | **32** (both bind) | 64 |
+| 128 | 4 | **16** (warp limit binds) | 64 |
+| 256 | 8 | **8** | 64 |
+| 512 | 16 | **4** | 64 |
+| 1024 (max) | 32 | **2** | 64 |
+
+**Formula**: `max_concurrent_CTAs_per_SM = min(32, floor(64 / warps_per_CTA))`
+
+**Practical guidance**:
+- For maximum SM utilization (64 warps), **avoid 1-warp CTAs** — they waste 50% of warp slots
+- 64-thread CTAs hit max occupancy with simple programming model
+- 128-thread CTAs are sweet spot for many kernels (16 active CTAs/SM, 64 warps total)
+
+## PTX Special Registers (B300 values)
+
+| Register | Value | Meaning |
+|----------|-------|---------|
+| %nsmid | 148 | Active SMs |
+| %nwarpid | 64 | Max warps/SM |
+| %warpid | 0..63 | Current warp ID (this thread's warp) |
+| %laneid | 0..31 | Lane within warp |
+| %clock_lo (32-bit) | wraps at 2^32 | Lower 32 bits of SM clock |
+| %clock64 | 64-bit | SM cycle counter, 1920 MHz |
+| %globaltimer (64-bit) | 32 ns granularity | Wall time in ns |
+| %envreg0 | 0x40632c8 | Environment (purpose unclear) |
+| %cluster_nctaid.x | cluster width | Set per launch |
+
