@@ -7017,3 +7017,29 @@ This compares to:
 
 For real workloads needing scalar compute (not GEMM), expect 30-50 TFLOPS chip-wide for FFMA — a fraction of tensor core peak. AI workloads should always use tensor cores when possible.
 
+
+## FFMA2 Multi-warp Peak
+
+| Warps/CTA | FFMA/cy/SM (FFMA2 counted as 2 FFMAs) |
+|-----------|----------------------------------------|
+| 1 | 19.7 |
+| 2 | 39.3 |
+| 4 | 78.6 |
+| 8 | 107.5 |
+| 16 | 123.8 |
+| **32** | **126.3** |
+
+**Chip-wide FFMA2 peak**: 126.3 × 148 SMs × 1.92 GHz × 2 FLOP/FMA = **71.6 TFLOPS scalar FP32-equivalent**
+
+This **exactly matches NVIDIA's published B300 FP32 peak of 70 TFLOPS**. So FFMA2 reaches advertised peak with 32 warps × 1 CTA × 8 chains.
+
+Comparison:
+| Path | Chip TFLOPS |
+|------|-------------|
+| Scalar FFMA (32 warps) | 48 |
+| **FFMA2 (32 warps)** | **71.6 (matches spec)** |
+| tcgen05.mma FP16 | 2,325 |
+| tcgen05.mma FP8 | 4,651 |
+
+So **FFMA2 = 1.5× scalar FFMA chip-wide** at peak. Use FFMA2 wherever data is naturally paired (e.g., complex arithmetic, vec2 operations). Combined with the 2:1 FFMA2:IADD3 free-issue rule, FFMA2 + IADD3 mix is the fastest scalar-pipe pattern.
+
