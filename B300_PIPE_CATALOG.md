@@ -6740,3 +6740,14 @@ Pattern observed:
 
 Also seen: `.F32x2.HI_LO` modifier explicitly indicates packed FP32×2 dual-lane operation. The `HI_LO` swap creates butterfly-pattern dot products useful in tensor pipelines.
 
+
+## tcgen05.shift cost
+
+| Op | cy/shift |
+|----|----------|
+| tcgen05.shift.cta_group::1.down | 51 |
+
+The `tcgen05.shift.down` instruction shifts TMEM columns down by one position. Useful for streaming reduction patterns. Throughput: ~37 M shifts/s/SM.
+
+The bare `tcgen05.shift` (without `.down`) is rejected by ptxas — direction is mandatory.
+
