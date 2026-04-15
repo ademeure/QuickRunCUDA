@@ -4023,3 +4023,20 @@ Writer warp does `atomicExch(A, i)`, reader warp (different warp, same CTA) poll
 The min ~1,335 cy is the lower bound for "time from write visible via cv-load to another warp". Matches roughly 1 L2 write commit + 1 L2 read path.
 
 For true cross-GPU polling, need separate kernels on both GPUs synchronized via shared atomic — complex to set up in single-process harness; skipped.
+
+### Pure fence.sc.sys REMOTE — caps at ~50 µs steady state (regardless of W)
+
+With clock placed AFTER writes and BEFORE fence, pure fence cost measures only the TAIL of NVLink drain:
+
+| W at 148 × aw=32 | data volume | pure-fence cy | pure-fence time |
+|---:|---:|---:|---:|
+| 1024 | 621 MB | 95,454 | **49.7 µs** |
+| 2048 | 1.24 GB | 96,351 | **50.2 µs** |
+
+**Pure fence saturates at ~50 µs** once W is large enough to fill the NVLink egress FIFO. The naive prediction (drain all 620 MB at 718 GB/s → 865 µs) is wrong because **most of the data drains concurrently with write issue** — STG.E.STRONG.SYS backpressures the warp at the NVLink rate, so by the time the fence starts, only the FIFO contents (~50 µs = ~35 MB worth) remain.
+
+**Fence completion model (revised)**:
+- LOCAL fence.sc.sys ≈ 9K cy (constant fabric coord)
+- REMOTE fence ≈ LOCAL + drain-of-in-flight-queue, capping at ~96K cy / 50 µs
+- Once W > ~100, warp is already throttled by NVLink; fence drains only the remainder
+- Sweet spot: don't fence more than once per ~50 µs of cross-GPU work
