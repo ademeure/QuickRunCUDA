@@ -7240,6 +7240,33 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# MUFU / transcendental throughput (32 warps, 8 chains, self-dep)
+
+| PTX op | inst/cy/SM | TOPS chip | × FMA |
+|--------|-----------:|----------:|------:|
+| `rcp.approx.f32` | 14.2 | 4.3 | 1/6.3 |
+| `rsqrt.approx.f32` | 16.0 | 4.8 | 1/5.6 |
+| `sqrt.approx.f32` | 16.0 | 4.8 | 1/5.6 |
+| `sin.approx.f32` | 15.9 | 4.8 | 1/5.6 |
+| `cos.approx.f32` | 15.9 | 4.8 | 1/5.6 |
+| `lg2.approx.f32` | 16.0 | 4.8 | 1/5.6 |
+| **`ex2.approx.f32`** | **27.0** | **8.1** | 1/3.3 (**~2× faster**) |
+| `tanh.approx.f32` | 16.0 | 4.8 | 1/5.6 |
+| `fma.rn.f32` (reference) | 89.9 | 27.0 | 1.0 |
+
+**Findings:**
+
+1. **Most MUFU ops run at ~16 inst/cy/SM = 0.5 warp-inst/cy/SM.** That's 1 warp-inst per 2 cycles per SMSP — the MUFU pipe is shared across the 4 SMSPs with half-rate issue.
+
+2. **`ex2` is special — 27 inst/cy/SM, 1.7× faster than other MUFU.** Possibly a dedicated or simpler pipe (exp2 can often be done in a few adds + lookup); worth knowing for softmax kernels (`ex2` is the native exp path in CUDA).
+
+3. **rcp at 14.2 inst/cy/SM** is the slowest — marginally more complex than `rsqrt`.
+
+4. **MUFU is the bottleneck for transcendental workloads**: 4.8 TOPS vs 72 TFLOPS FMA = **15× slower**. For softmax / GELU / sigmoid kernels, MUFU count often dominates runtime.
+
+5. **Design pattern for softmax**: use `ex2` (not generic `exp`); co-issue FMA for the rest of the math; the MUFU pipe is free when you're doing FMAs since they're separate pipes.
+
+
 # Dynamic parallelism — device-side kernel launch
 
 Launching a child kernel from inside a parent kernel using `<<<>>>` from device code:
