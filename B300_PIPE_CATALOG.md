@@ -4961,16 +4961,22 @@ Note: for full-chip int8 peak (~3.96 PTOPS dense on B300), use `tcgen05.mma.kind
 
 `vadd4`/`vabsdiff4`/`vmax4` (video SIMD intrinsics): compiler didn't emit on sm_103a — likely mapped to regular ops or not supported at this level. Use `__dp4a`/`__dp2a` or packed-int intrinsics instead.
 
-### HFMA2 (packed FP16 FMA) peak
+### HFMA2 (packed FP16 FMA) peak — CORRECTED with event timing
 
-`fma.rn.f16x2` raw PTX, 8-chain unrolled:
-- pipe_fma: **99.76%** of peak sustained
+Earlier ncu-only interpretation claimed HFMA2 = 2× FFMA FLOPS. **This was wrong.** Event-timed head-to-head at identical 148×256 threads × 100×64×8 chain:
 
-Same FMA-pipe utilization as FFMA (98.66%). Each HFMA2 instruction produces 2 FP16 results per lane per cycle. At 34.36 warp-inst/ns (FFMA rate):
-- **137.4 TFLOPS FP16** packed (HFMA2)
-- Compare to FFMA: 68.7 TFLOPS FP32
+| kernel | wall time | thread-inst/ns | FLOPs/inst | TFLOPS |
+|---|---:|---:|---:|---:|
+| FFMA | 222.2 µs | 34,921 | 2 | **69.8 FP32** |
+| HFMA2 (fma.rn.f16x2) | 432.2 µs | 17,953 | 4 | **71.8 FP16** |
 
-HFMA2 doubles FP throughput by packing 2 half-precision ops per instruction, at same pipe-cycle rate. For FP16 arithmetic workloads where full FP16 precision is fine, HFMA2 is 2× FFMA FLOPS.
+**HFMA2 issues at HALF the FFMA rate** (half the thread-inst/ns), but does 2× the FLOPs per inst → **net ~1× FLOPS throughput, same ~70 TFLOPS whether FP32 or FP16 packed.**
+
+Both occupy pipe_fma at ~99% — the pipe is busy the same fraction of time, but each HFMA2 takes 2× pipe cycles vs FFMA. The ncu `pipe_fma_cycles_active` metric reports pipe-busy percentage, NOT instruction-rate, so both reading 99% doesn't mean same inst rate.
+
+**Methodology note**: ncu `pipe_*_cycles_active` measures pipe-busy fraction. For per-instruction comparison, use inst-rate metrics directly (`smsp__sass_thread_inst_executed_op_*`) OR event-time to verify. This HFMA2 correction was caught by user requiring event-time verification.
+
+B300 has ~equal FP16 and FP32 scalar throughput via this path (~70 TFLOPS each). For higher FP16, need tensor cores (`HMMA.16816.F32`) at 577 TFLOPS.
 
 ### FP32 non-FMA ops + FMIN pipe analysis
 
