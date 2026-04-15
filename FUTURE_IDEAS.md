@@ -81,3 +81,32 @@ Living document of untested / under-tested angles. Use this as a starting point 
 4. **fence more than once per ~50 µs** of cross-GPU work is wasteful (REMOTE fence caps at ~50 µs).
 5. **REMOTE atomic contention merging** saves NVLink packets, giving HIGHER semantic throughput than unique.
 6. **Deep pipelining (N_CHAINS=32)** hides cross-GPU latency ~29×.
+
+## RECENT ADDITIONS (this cycle)
+
+Tested since FUTURE_IDEAS.md was first created:
+- [x] clock64 read overhead (36 cy) + globaltimer (32 cy)
+- [x] __nanosleep quantization (~64 ns steps, 40 ns floor)
+- [x] Branch divergence (true): 2-way = 2.2×, 4-way = 4.7×
+- [x] Clock/power/thermal: no throttling at 339 W (B300 has huge headroom)
+- [x] Shared memory bank conflicts: 32-way = 2.55× slowdown
+- [x] Warp primitives: shfl 41 cy, ballot 33, match_any 387 (9× slower)
+- [x] Integer IADD parallel with FFMA on pipe_alu (free)
+- [x] MUFU throughput: rsqrt 727, sqrt 623, sin/cos 284, log2 143 inst/ns
+- [x] Constant memory broadcast: 2 cy/load (43× faster than cached global)
+
+## STILL UNTESTED (high priority)
+
+- tcgen05.mma peak TFLOPS — REQUIRES full descriptor setup
+- FP6/FP4 native MMA peak
+- IMMA / BMMA integer tensor cores
+- TMA cross-GPU (P2P-mapped remote source)
+- Host pinned memory (zero-copy) latency from GPU
+- ldmatrix / stmatrix x1/x2/x4 throughput
+- `setmaxnreg.aligned` dynamic register balancing
+- `ld.global.L1::evict_*` hints
+- Cluster launch semantics + DSMEM
+- fence.proxy.* generic↔async conversion cost
+- popc/bfind/brev/prmt throughput
+- Cooperative kernel launch overhead
+- cudaGraph launch latency
