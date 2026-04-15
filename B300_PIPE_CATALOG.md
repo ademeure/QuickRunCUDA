@@ -6240,3 +6240,29 @@ Persistent kernels are **2.6× more efficient** for loops needing global synchro
 
 **Design rule**: For inner loops with global synchronization, use persistent kernels with atomic-counter grid sync. For fire-and-forget tasks with no inter-iteration deps, normal kernel launches are fine.
 
+
+---
+
+# Concurrent CTA Capacity per SM
+
+Tested via spinning-arrival pattern: each CTA increments a counter and spins until all CTAs have arrived. If too many CTAs requested, scheduler queues some, deadlocking the spin (extras can't run until concurrent ones finish).
+
+## Small CTAs (32 threads = 1 warp each)
+
+| CTAs/SM requested | Status |
+|-------------------|--------|
+| 32 (4736 total) | ✅ OK |
+| 33 (4884 total) | ❌ HANG |
+| 64+ | ❌ HANG |
+
+**B300 max concurrent CTAs per SM = 32** (matches Blackwell spec: 32 warps/SM × 1 warp/CTA).
+
+For 256-thread CTAs (8 warps each), max = 4 CTAs/SM (32 warps / 8 warps per CTA = 4).
+
+For 1024-thread CTAs (32 warps each), max = 1 CTA/SM.
+
+**Practical guidance**:
+- `gridDim` matters: launching > 32 × 148 = 4736 small-CTA blocks is wasted (extras queue, don't help latency)
+- For latency-critical kernels, target ~32 active warps per SM total (not 32 CTAs unless each is 1-warp)
+- For occupancy-bound kernels (memory-bound), more warps per SM helps until you hit the 32-warp limit
+
