@@ -7240,6 +7240,102 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# Cubin layout (ELF) — what's inside
+
+`output.cubin` is a standard ELF64 file with NVIDIA-specific processor flags. A minimal kernel produces ~37 sections. Key sections observed:
+
+| Section | Type | Purpose |
+|---------|------|---------|
+| `.text.kernel` | PROGBITS AX | The actual SASS code |
+| `.nv.shared.*` | NOBITS | Static smem layout |
+| `.nv.constant.0` | PROGBITS | Compile-time const data |
+| `.nv.constant.1` / `.nv.constant.2` | PROGBITS | Kernel param layout (c[0][...]) |
+| `.nv.capmerc.*` | LOPROC+0x16 | Mercury capability / SM constraints |
+| `.nv.merc.debug.*` | PROGBITS | Debug metadata |
+| `.nv.merc.nv.info` | LOPROC+0x83 | Kernel metadata (regs, max threads) |
+| `.nv.merc.rel.*` | LOPROC+0x82 | Relocations |
+| `.nv.merc.symtab` | LOPROC+0x85 | Kernel symbols |
+| `.nv.info` | LOPROC+0x70 | (standard per-function info) |
+| `.debug_frame` | PROGBITS | DWARF frame info |
+| `.debug_line` | PROGBITS | DWARF line info |
+| `.nv_debug_ptx_txt` | PROGBITS | PTX source |
+
+"Mercury" (merc) appears to be NVIDIA's internal codename for the newer metadata format on Blackwell. Tools like `cuobjdump --dump-sass` and `nvdisasm` parse these to print SASS with source interleaving.
+
+
+# Blackwell (sm_103a) SASS instruction inventory — observed in this session
+
+## `tcgen05.mma` family (unified tensor pipe)
+
+| SASS opcode | Description |
+|-------------|-------------|
+| **`UTCQMMA`** | Default tcgen05.mma — all `kind::*` variants map here |
+| `UTCQMMA.2CTA` | with `cta_group::2` modifier (cluster-span MMA) |
+| `UTCOMMA` | Alternative encoding for certain shapes |
+| `UTCOMMA.BLOCK16` | block-16 shape |
+| `UTCHMMA` | Hopper-style compatibility form |
+
+## `tcgen05` supporting ops
+
+| SASS | PTX | Purpose |
+|------|-----|---------|
+| **`UTCBAR`** / `UTCBAR.2CTA` | `tcgen05.commit` / `wait` | barrier after MMA |
+| `UTCATOMSWS.*` | `tcgen05.alloc` | TMEM allocation (atomic set-with-sync) |
+| **`UTCCP.T.S.*`** | `tcgen05.cp` | TMEM bulk copy (128dp128bit / 4dp256bit / 4x32dp128bit shapes) |
+| **`UTCSHIFT.DOWN`** | `tcgen05.shift.down` | TMEM column shift |
+
+## `TMA` family
+
+| SASS | PTX |
+|------|-----|
+| `UTMALDG.{1D,2D,3D,4D,5D}` | `cp.async.bulk.tensor.*.1/2/3/4/5D.global` |
+| `UTMALDG.2D.GATHER4` | TMA 2D gather |
+| **`UTMASTG.2D.SCATTER4`** | TMA 2D scatter store |
+| `UTMAPF.L2.*` | `cp.async.bulk.prefetch` |
+| `UTMACCTL.IV` | TMA control (invalidate?) |
+| `UTMACMDFLUSH` | TMA command flush |
+
+## `ldmatrix` variants (LDSM)
+
+| SASS | PTX |
+|------|-----|
+| `LDSM.16.M88.{1,2,4}` | `ldmatrix.{x1,x2,x4}.m8n8.shared.b16` |
+| `LDSM.16.MT88.*` | `ldmatrix.trans.*` |
+| **`LDSM.U4x16P64TO8.M816.4`** | **FP4-packed ldmatrix** (64→8 byte unpack) |
+| **`LDSM.U6x16P32TO8.M816.4`** | **FP6-packed ldmatrix** (32→8 byte unpack) |
+
+## Legacy tensor (still supported)
+
+| SASS | Rate on B300 |
+|------|--------------|
+| `HMMA.16816.F32` | legacy FP16→FP32 path |
+| `HMMA.16816.F32.BF16` | BF16→FP32 |
+| `HMMA.1684.F32.TF32` | TF32 legacy |
+| `IMMA.16832.S8.S8` | INT8 tensor (legacy only; NOT on tcgen05!) |
+| `DMMA.8x8x4` | FP64 tensor (throttled) |
+
+All of these go through the **old HMMA/IMMA/DMMA path** (1 SM = 1 tensor quad). `mma.sync` PTX emits these; use `tcgen05.mma` PTX for the fast path.
+
+## Register management
+
+| SASS | PTX |
+|------|-----|
+| **`USETMAXREG.TRY_ALLOC.CTAPOOL`** | `setmaxnreg.inc` (allocate from CTA register pool) |
+| `USETMAXREG.DEALLOC.CTAPOOL` | `setmaxnreg.dec` (return to pool) |
+
+Named "CTAPOOL" reveals a register-file partition shared within the CTA. Warp specialization = alloc high-reg for consumer, dealloc from producer.
+
+## Fences
+
+| SASS | PTX |
+|------|-----|
+| `FENCE.VIEW.ASYNC.G` | `fence.proxy.async.global` |
+| `FENCE.VIEW.ASYNC.S` | `fence.proxy.async.shared::cta` |
+| `FENCE.VIEW.ASYNC.T` | fence for TMEM/tensor proxy |
+| `MEMBAR.ALL.{CTA,GPU,SYS}` | fence.*.{cta,gpu,sys} |
+| `MEMBAR.SC.{CTA,GPU,SYS}` | fence.sc.{cta,gpu,sys} |
+
+
 # Divergent branch reconvergence cost
 
 Single warp, 1000 iters per pattern. Inside the branch: two dependent IMAD ops.
