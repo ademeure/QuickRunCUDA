@@ -5061,3 +5061,30 @@ Does mixing FFMA2 (half-rate scalar FMA) with ALU ops let us exceed 128 ops/clk/
 4. Net FP throughput unchanged: FFMA2 still delivers ~72 TFLOPS FP32. IADD is just the "free" companion.
 
 **Methodology correction**: my earlier "IADD free alongside FFMA" claim wasn't wrong in principle, but the test was broken by DCE (IADD chain eliminated). Proper test requires real data dependency through the IADD chain, SASS-verified to contain both op types.
+
+### FFMA2/HFMA2 + ALU ratio sweep: how much ALU is "free"?
+
+**FFMA2 (FP32×2) + IADD3 ratio** (event-timed head-to-head):
+
+| IADD3 : FFMA2 | wall | FP32 TFLOPS | IADD rate |
+|---:|---:|---:|---:|
+| 0 (FFMA2 only) | 432 µs | 71.8 | 0 |
+| 1 : 1 | 459 µs (+6%) | 67.6 (−5.8%) | 16.9 T-IADD/s |
+| 2 : 1 | 742 µs (+72%) | 41.8 | 20.9 T-IADD/s |
+| 4 : 1 | 1078 µs | 28.8 | 28.8 |
+| 8 : 1 | 2304 µs | 13.5 | 26.9 (saturated) |
+
+**Sweet spot: ~1 IADD per FFMA2** — lose only 6% FP32 FLOPS, gain 16.9 T-IADD/s (essentially free). More than 1:1 starts competing for issue slots and throttles both.
+
+**HFMA2 (FP16×2) + IADD3 ratio**:
+
+| IADD3 : HFMA2 | wall | FP16 TFLOPS | IADD rate |
+|---:|---:|---:|---:|
+| 0 (HFMA2 only) | 431 µs | 72.0 | 0 |
+| 1 : 1 | 563 µs (+31%) | 55.1 (−24%) | 13.8 T-IADD/s |
+| 2 : 1 | 784 µs | 39.6 | 19.8 |
+| 4 : 1 | 1004 µs | 30.9 | 30.9 |
+
+**HFMA2 is less tolerant of IADD companion than FFMA2** — at r=1, loses 24% FP16 (vs FFMA2's 5.8%). The half-precision FMA pipe has tighter issue coupling.
+
+**Design rule**: with scalar FFMA2, inserting ~1 IADD per FFMA2 is essentially free (within 6%). With HFMA2, the overhead is higher — budget for ~25% FP throughput loss per inserted ALU op.
