@@ -4299,3 +4299,22 @@ With compiler-inlined if/else, Blackwell automatically converts small 2-way bran
 Each extra path costs ~1 full path execution time (HW serializes paths within a warp). Compiler ALREADY handles 2-way if/else via SEL when paths are small enough to inline — you only pay the divergence cost when paths are genuinely distinct (function calls, loops with divergent trip counts, etc.).
 
 Design: use ternary `? :` where possible (compiler always predicates), reserve `__noinline__` for genuinely-separate-control-flow paths.
+
+### Clock / power / thermal behavior under sustained load
+
+Measured during ~10-second sustained FFMA + HMMA kernels:
+
+| state | clock | temp | power |
+|---|---|---|---|
+| Idle | 1920 MHz | 42°C | 194 W |
+| FFMA t=1s ramp | 1920 MHz | 45°C | 251 W |
+| FFMA t=2s peak | 1920 MHz | 45°C | **339 W** |
+| FFMA t=5s sustained | 1920 MHz | 46°C | 327 W |
+| After cooldown | 1920 MHz | 42°C | 194 W |
+
+- **No clock throttling observed** up to 339 W draw
+- Temperature rise ~4°C (plenty of thermal headroom)
+- Device stays pinned at 1920 MHz base clock — max application clock is 2032 MHz but boost was NOT engaged
+- B300 TDP (~1 kW) not approached
+
+If you want 2032 MHz (theoretical +5.8% FFMA → ~73 TFLOPS), lock clocks via `nvidia-smi -lgc 2032,2032` or QuickRunCUDA's `--clock-speed 2032`. Otherwise base 1920 MHz is what all measurements assume.
