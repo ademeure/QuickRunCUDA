@@ -6057,3 +6057,40 @@ Each doubling of CTA size adds ~7 cy to barrier cost. **128-thread CTAs hit the 
 
 **B300 __nanosleep quantum: 32 ns** (matches globaltimer resolution at 31.25 MHz). Minimum useful sleep = 32 ns. Request values < 32 ns effectively do nothing. Requests in 64-256 ns range round to 32-128 ns multiples.
 
+
+---
+
+# Warp Reduce / Shuffle / mbarrier costs
+
+## Warp shuffle & vote (per-op, 8 indep chains)
+
+| Op | cy/op |
+|----|-------|
+| **shfl.{idx,up,down,bfly}** | **6** (all the same!) |
+| match.any.b32 | 94 (slow!) |
+| match.all.b32 | 15.5 |
+
+All shfl variants take **exactly 6 cy** — the warp shuffle network treats broadcast/shift/butterfly equally. Choose based on convenience, not perf.
+
+## redux.* (warp-wide reduce, sm_80+) — operator matters!
+
+| Op | cy/op |
+|----|-------|
+| **redux.min/max.{u32,s32}** | **4.9** ← FASTEST |
+| redux.add.{u32,s32} | 14.8 |
+| redux.and/or/xor.b32 | 14.8 |
+
+**redux.min/max are 3× faster than redux.add/and/or/xor.** They use the comparison/sort network (single-cycle compare). Adds and bitwise ops go through the multi-step ALU pipe.
+
+**Implication**: For algorithms that can use min/max instead of add (argmax, pooling, top-k), prefer redux.min for **3× speedup over add reduction**.
+
+## mbarrier op costs
+
+| Op | cy/op |
+|----|-------|
+| mbarrier.arrive (no return) | 24 |
+| mbarrier.arrive (returns state) | 24 |
+| **mbarrier.arrive.release.cta** | **24 (release is FREE!)** |
+
+Unlike `atom.add.release.gpu` (872 cy = 17× tax), mbarrier already has release semantics built in — adding the `.release` qualifier costs nothing extra. This is why mbarrier is the recommended primitive for synchronizing TMA / async ops on Blackwell.
+
