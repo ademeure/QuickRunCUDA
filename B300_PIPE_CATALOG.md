@@ -5736,3 +5736,29 @@ Min is slightly faster than add (possibly a fast path). CAS / exch add ~15 cy fo
 2. `atom.min` is free relative to `atom.add` — use it for reductions where semantically equivalent.
 3. Scope qualifier `.cta/.gpu/.sys` is free — always use the widest scope your semantics require.
 
+
+## Atomic data type cost (coalesced per-lane add)
+
+| Type | cy/op | vs u32 | Notes |
+|------|-------|--------|-------|
+| **u32** | **34** | 1.0× | Baseline (coalesced atom.add.u32) |
+| u64 | 92 | 2.7× | Double-word path |
+| f32 | 86 | 2.5× | FP add uses slower path |
+| f16 | 1527 | **44.9×** | Emulated via CAS loop! |
+| bf16 | 1527 | 44.9× | Same emulation |
+
+**Critical: atomic FP16/BF16 add is ~45× slower than u32** — it's effectively a CAS loop in hardware, not a native atomic. For neural network gradient accumulation, use FP32 master copies with u32-style atomic add, NOT direct FP16 atomics.
+
+## Atomic contention vs coalescing
+
+| Pattern | cy/op | Throughput |
+|---------|-------|------------|
+| Same address (warp contention) | 51 | 1 atomic per cy |
+| **Unique per-lane (coalesced)** | **34** | **32 atomics per 34 cy = 0.94 atomics/cy/lane** |
+| Stride 128B (non-coalesced) | 64 | Slower — separate cachelines |
+| Random per-lane | 53 | Similar to contention |
+
+**Coalesced unique atomics run 30× the effective throughput of contended atomics.** The hardware merges lane requests into a single L2 transaction when addresses share a 128B cache line. For histograms / reductions: key on `blockIdx.x + threadIdx.x` to give each lane a unique address within the same cacheline, not a hashed random address.
+
+Chip-wide coalesced atomic peak: 0.94 atomics/cy/lane × 32 lanes × 1 warp × 1.92 GHz × 148 SMs = **8.9 Gatomic/s**. (Multi-warp would multiply further, saturating L2 BW.)
+
