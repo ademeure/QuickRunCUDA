@@ -3268,6 +3268,17 @@ Within 1% across all ops. The L2 atomic unit processes every operation in one cy
 
 u32/u64/f32 are essentially identical. f64 is ~7% slower locally and ~1% slower remote — the wider 64-bit float atomic takes marginally longer at the L2 ALU, but the round-trip dominates.
 
+**Full-warp (32 threads) simultaneous atomic** vs single thread:
+
+| pattern | 1 thread / atom | 32 threads warp / atom | ratio |
+|---|---:|---:|---:|
+| LOCAL unique | 590 | 1,173 | 2.0× |
+| LOCAL contended | 590 | 912 | 1.5× (merging helps) |
+| REMOTE unique | 2,966 | 3,552 | 1.2× |
+| REMOTE contended | 2,790 | 3,420 | 1.2× |
+
+Throughput per warp: 32 threads do 32 atoms in parallel but each serialized chain takes 1.5-2× single-thread latency. Net warp throughput = 16-27× single-thread throughput. Remote has smaller per-atom overhead because NVLink packet pipeline absorbs the burst better than local L2's single atomic unit.
+
 **Atomic throughput (bulk, 32 threads × 148 SMs × 256 atomics/thread, NOT serial-chained):**
 
 | pattern | LOCAL Matomic/s | REMOTE Matomic/s | slowdown |
