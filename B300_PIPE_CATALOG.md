@@ -3180,6 +3180,28 @@ Cache-hint sensitivity on REMOTE pointer chase is minimal:
 
 Even `.ca` sometimes completes in 36 cy (L1-hit lucky case), but the median is unchanged — the chained pattern defeats speculation.
 
+**Cross-GPU atomic CONTENTION doesn't inflate per-SM latency** (serial chain of 8 atoms, all SMs hitting SAME remote address):
+
+| SMs | LOCAL cy/atom | REMOTE cy/atom |
+|---:|---:|---:|
+| 1   | 590 | 2,790 |
+| 8   | 577 | 2,778 |
+| 32  | 576 | 2,764 |
+| 148 | 565 | 2,784 |
+
+With 148 SMs hammering one remote atomic, each SM still perceives ~2,800 cy latency — identical to single-SM. The remote memory controller pipelines incoming atomics, so per-SM wait time stays constant. Useful for multi-GPU synchronization: shared atomic counters don't get exponentially slower with participants.
+
+Uncontended (each SM own remote address): same pattern, 2,750-2,970 cy at all SM counts.
+
+**Atomic throughput (bulk, 32 threads × 148 SMs × 256 atomics/thread, NOT serial-chained):**
+
+| pattern | LOCAL Matomic/s | REMOTE Matomic/s | slowdown |
+|---|---:|---:|---:|
+| unique addresses | **5,926** | 2,278 | 2.6× |
+| contended (same CL) | **13,934** | 2,851 | 4.9× |
+
+Local atomic contention gets a 2.4× throughput boost from cache-line merging at L2. Remote contention only gets +25% — the NVLink-bound throughput is the ceiling. Peak cross-GPU atomic rate is ~2.3-2.9 Gops/s (≈ 300-370 MB/s effective payload). Linear scaling in SM count up to 148 with no saturation → throughput limit is at the remote L2's atomic unit or NVLink request rate, not per-link BW.
+
 ### Multi-GPU fence.sys cost — cross-GPU writes pay ~18K cy NVLink drain
 
 System: 2× B300 SXM6 AC connected by NV18 (18 NVLinks × 53.125 GB/s = ~900 GB/s (18 NVLink5 × 50 GB/s per direction, data-only; nvidia-smi's 53.125 GB/s/link includes protocol overhead) peer BW). Standalone tool `multigpu/MGFenceBench.cpp` allocates buffer A on a remote GPU via P2P, then launches kernel on primary GPU that writes to remote A, then fences. Clock placed after writes to isolate pure-fence time.
