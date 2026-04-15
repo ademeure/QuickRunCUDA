@@ -7240,6 +7240,72 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# Global memory FP atomics — all native, u64 CAS 30× slower
+
+Single warp × 32 lanes × unique addresses per lane, 1000 atomic ops:
+
+| Op | cy/atom |
+|----|--------:|
+| `atom.global.add.u32` (baseline) | 24 |
+| `atom.global.add.f32` | **24** (native, NOT emulated!) |
+| `atom.global.add.f16x2` | 24 (native) |
+| `atom.global.add.bf16x2` | 24 (native) |
+| `atom.global.add.f64` | 24 (native on sm_60+) |
+| `atom.global.min.u64` | 33 |
+| **`atom.global.cas.b64`** | **731** (30× slower!) |
+
+**Key findings:**
+
+1. **All common global FP atomic adds (f32, f16x2, bf16x2, f64) are NATIVE at 24 cy/atom** on B300 — same speed as u32. Unlike SMEM where `atom.shared.add.f32` is emulated via bsync+CAS loop at 97 cy.
+
+2. **Global 32-bit atomics**: add / cas / min / max all at 24-39 cy — fast.
+
+3. **Global `cas.b64` is EXTREMELY slow (731 cy, 30× slower than add.u64)** — likely goes through a slower bus width or uses multi-step implementation. Avoid 64-bit CAS in hot paths; use 32-bit CAS for locks when possible.
+
+**Practical**:
+- Histograms with FP32 accumulators: use `atomicAdd(gmem_ptr, float)` freely, it's native.
+- For locks / doubly-indexed linked lists on 64-bit keys, 64-bit CAS is painful. Split to 32-bit if you can.
+
+
+# MIG (Multi-Instance GPU) — supported on B300 SXM6 AC
+
+`nvidia-smi --query-gpu=mig.mode.current` returns `Disabled` (configurable via `nvidia-smi -mig 1`).
+
+Available MIG profiles on B300 (via `nvidia-smi mig -lgip`):
+
+| Profile | Instances | SMs | Memory | DEC | ENC |
+|---------|:---------:|----:|-------:|----:|----:|
+| **MIG 1g.34gb** | 7/7 | 18 | 30.5 GiB | 1 | 0 |
+| MIG 1g.34gb+me | 1/1 | 18 | 30.5 GiB | 1 | 1 |
+| MIG 1g.67gb | 4/4 | 30 | 66.5 GiB | 1 | 0 |
+| MIG 2g.67gb | 3/3 | 36 | 66.5 GiB | 2 | 0 |
+| MIG 3g.135gb | 2/2 | 70 | 133.5 GiB | 3 | 0 |
+| MIG 4g.135gb | 1/1 | 72 | 133.5 GiB | 4 | 0 |
+| **MIG 7g.269gb** | 1/1 | 148 | 268 GiB | 7 | 1 |
+
+**B300 total resources**: **268 GiB memory + 148 SMs** = the full GPU is profile 7g.269gb.
+
+Partitioning the B300 to **7 MIG slices** gives each slice 18 SMs + 30.5 GiB — useful for multi-tenant serving or isolating workloads. SMs are split across GPCs (each slice gets complete GPCs for locality).
+
+
+# curand RNG throughput
+
+Generating N = 64 M (= 256 MB) random numbers:
+
+| Generator / distribution | Time | G rnds / s | GB/s |
+|--------------------------|-----:|-----------:|-----:|
+| Default (XORWOW) Uniform | 0.24 ms | **280** | 1 119 |
+| Default (XORWOW) Normal (Box-Muller) | 1.75 ms | 38 (7× slower) | 153 |
+| Default LogNormal | 1.87 ms | 36 | — |
+| **Philox4×32×10 Uniform** | **0.08 ms** | **835** (3× XORWOW) | 3 339 |
+| XORWOW explicit | 0.24 ms | 282 | 1 127 |
+
+**Findings:**
+1. **Philox is 3× faster than XORWOW** for uniform generation — 835 G rnds/s = 3.3 TB/s output BW. Prefer Philox when you need raw throughput.
+2. **Normal / LogNormal distributions are 7× slower** than uniform due to Box-Muller transform (uses `log`, `sqrt`, `sin`/`cos` — MUFU pipe-bound).
+3. If possible, generate uniform + apply inverse-CDF on-the-fly in your compute kernel — keeps data on-chip rather than round-tripping through curand's DRAM output.
+
+
 # cuBLAS init + GEMM real-world throughput (4096³ matrices)
 
 Single 4 K × 4 K × 4 K GEMM = 137.4 GFLOPs of work (2 × M × N × K). Timed with cudaEvents:
