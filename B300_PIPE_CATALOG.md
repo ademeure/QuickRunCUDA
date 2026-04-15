@@ -7345,6 +7345,27 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# NVLink topology on this 2× B300 node
+
+```
+nvidia-smi topo -m:
+       GPU0    GPU1    CPU Affinity    NUMA Affinity
+GPU0   X       NV18    0-59            0
+GPU1   NV18    X       0-59            0
+```
+
+**`NV18` = 18 direct NVLink lanes connecting GPU 0 ↔ GPU 1.**
+
+Per-lane speed (from `nvidia-smi nvlink -s`): **53.125 GB/s per lane.**
+
+Aggregate: 18 lanes × 53.125 = **956 GB/s bidirectional** per GPU to peer. The measured peer BW (~820 GB/s from earlier MGFenceBench) is ~86 % of this theoretical ceiling — consistent with protocol overhead on peer R/W traffic.
+
+**Topology**:
+- Both GPUs on the same NUMA node (0-59 CPUs visible to each).
+- Direct NV18 lane-for-lane connection (no NVSwitch on this 2-GPU board).
+- Both share `accessPolicyMaxWindowSize`, `MIG`, and other per-GPU resources independently.
+
+
 # CUB library throughput (heavily optimized reductions + scans)
 
 Using `cub::DeviceReduce::Sum` and `cub::DeviceScan::ExclusiveSum` on u32 arrays:
