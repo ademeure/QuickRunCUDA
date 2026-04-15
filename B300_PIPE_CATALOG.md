@@ -6266,3 +6266,33 @@ For 1024-thread CTAs (32 warps each), max = 1 CTA/SM.
 - For latency-critical kernels, target ~32 active warps per SM total (not 32 CTAs unless each is 1-warp)
 - For occupancy-bound kernels (memory-bound), more warps per SM helps until you hit the 32-warp limit
 
+
+---
+
+# MUFU (Transcendental) Throughput
+
+Per-warp throughput with 8 independent chains:
+
+| Op | cy/op | Chip GOPS @ 1.92 GHz × 4 SMSP × 148 SM |
+|----|-------|-----------------------------------------|
+| **ex2.approx.f32** | **10.5** | 433 |
+| tanh.approx.f32 | 11.3 | 403 |
+| sin.approx.f32 | 12.0 | 379 |
+| cos.approx.f32 | 12.0 | 379 (same as sin) |
+| sqrt.approx.f32 | 13.9 | 328 |
+| rsqrt.approx.f32 | 13.9 | 328 |
+| lg2.approx.f32 | 13.9 | 328 |
+| **rcp.approx.f32** | **15.5** | 294 (slowest!) |
+
+Interesting findings:
+- **`ex2` is the fastest MUFU** (10.5 cy)
+- **`sin` and `cos` take equal time** (12 cy) — likely shared HW
+- **`rcp` (reciprocal, 1/x) is slowest** at 15.5 cy — counterintuitive, normally simplest
+- `sqrt.approx` is faster than `rcp.approx`
+
+**Practical guidance**:
+- Softmax: prefer `ex2` over `exp` (= ex2 × ln(2))
+- Normalization: use `rsqrt` × x instead of `sqrt` then `rcp`
+- Activations: tanh.approx is reasonably cheap (11 cy) for direct use
+- For division, use `1.0f / x` only if `x` is constant; otherwise prefer `__fdividef(a, b)` (= div.approx, 5.5 cy), which is *3× FASTER than rcp(b) × a*
+
