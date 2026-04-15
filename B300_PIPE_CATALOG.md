@@ -4795,3 +4795,12 @@ Measured via pointer chase with varying working-set sizes:
 - Large WS (> L2): each load hits DRAM, 813 cy
 
 L1→L2 step = +243 cy. L2→DRAM step = +518 cy. DRAM latency dominates when working set exceeds L2 capacity.
+
+### PRMT (byte permute) throughput
+
+`prmt.b32 d, a, b, selector` — arbitrary byte permute across two 32-bit sources.
+
+- pipe_alu: **99.75%**
+- Instruction rate: 565 inst/ns
+
+Same full-pipe rate as IADD3, LOP3, and shift operations. PRMT is on the fast ALU pipe — essentially free for byte-level manipulation. Useful for FP8/FP6/FP4 packing, byte-wise shuffles, and general byte-level SIMD-like patterns.
