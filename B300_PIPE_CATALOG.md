@@ -5923,3 +5923,55 @@ Each iteration jumps 512 B (force L2 miss):
 
 **Vector loads are essentially free width-wise** — same latency, 2-4× more bytes moved. Always coalesce consecutive elements into ld.v4 when possible. The DRAM/L2 latency is fixed at ~510 cy per memory transaction; the wider the request, the more data per transaction.
 
+
+---
+
+# Division, Sqrt, Type Conversion Costs (Major Findings)
+
+## Division and sqrt by precision
+
+| Op | cy/op | Chip TOPS @ 1.92 GHz × 148 SMs |
+|----|-------|---------|
+| **div.approx.f32** | **5.5** | 661 GOPS |
+| div.full.f32 | 10.5 | 346 GOPS |
+| **div.rn.f32 (IEEE)** | **243** | **15 GOPS (44× slower!)** |
+| sqrt.approx.f32 | 13.3 | 274 GOPS |
+| rsqrt.approx.f32 | 13.3 | 274 GOPS |
+| **div.rn.f64** | **4939** | **0.74 GOPS (700× slower than approx FP32)** |
+| **sqrt.rn.f64** | **1907** | **1.9 GOPS** |
+
+**B300 has crippled FP64 division and IEEE-round FP32 division** in favor of AI throughput. Practical implications:
+1. **NEVER use `/`** in CUDA-C inner loops — defaults to IEEE-round (243 cy). Use `__fdividef()` (= div.approx).
+2. **NEVER use FP64 division** — 4939 cy = effectively useless. If you absolutely need FP64 precision, do `1.0/x` via reciprocal × x rather than div.
+3. **`rsqrt.approx`** is the fast inverse-square-root path (13 cy). For normalization, use this instead of `1.0f / sqrtf()`.
+
+## CVT (type conversion) throughput
+
+| Conversion | cy/cvt |
+|------------|--------|
+| u32→s32 (reinterpret) | **0** (no-op) |
+| s32→f32 | 3.3 |
+| f32→f16 (round-trip) | 3.9 |
+| f32→e4m3x2 (FP8 packed) | 5.3 |
+| f32→e5m2x2 (FP8 packed) | 5.3 |
+| f32→s32 | 8.5 |
+| **f32→f64** | **72.9** |
+| **f64→f32** | **121.5** |
+
+**f32 ↔ f64 conversions are 70-120 cy** — about 50× slower than FP32 type conversions. Avoid in hot loops. If you must mix precisions, do all conversions outside the inner loop.
+
+## Practical compute pipe summary
+
+| Op | cy/inst (per lane) | Used for |
+|----|-------|------|
+| FFMA / FFMA2 | 1.5 | Tensor-equivalent compute |
+| FMUL / FADD | 2-3 | Basic FP |
+| Integer add/sub | 2-3 | Bookkeeping |
+| Cmp/select | 2-3 | Branches |
+| div.approx.f32 | 5.5 | Reciprocals (fast) |
+| sqrt/rsqrt.approx | 13 | Norm calculations |
+| popc / brev / clz / bfind | 8-15 | Bit manipulation |
+| div.rn.f32 (IEEE) | 243 | **AVOID** |
+| div.rn.f64 | 4939 | **AVOID** at all costs |
+| sqrt.rn.f64 | 1907 | **AVOID** |
+
