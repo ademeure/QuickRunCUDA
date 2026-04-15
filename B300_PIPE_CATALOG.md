@@ -5202,3 +5202,21 @@ For now the B300 published specs are:
 These are 40× higher than the mma.sync `HMMA.16816` peak of 577 TFLOPS — the async tensor memory path is essential for hitting B300's full tensor throughput.
 
 **Listed in FUTURE_IDEAS.md** as the #1 remaining high-value gap.
+
+### MUFU NOT dual-issue with FFMA2 (tested: __frsqrt_rn)
+
+| rsqrt:FFMA2 | wall | FP32 TFLOPS | rsqrt rate |
+|---:|---:|---:|---:|
+| 0:8 (FFMA2 only) | 432 µs | 71.8 | 0 |
+| 1:8 | 1,079 µs (+2.5×) | **28.8 (−60%)** | 899 G/s |
+| 2:8 | 1,937 µs | 16.0 | 1,002 G/s |
+| 4:8 | 3,493 µs | 8.9 | 1,111 G/s |
+| 8:8 | 6,872 µs | 4.5 | 1,129 G/s |
+
+**MUFU (rsqrt) is NOT free alongside FFMA2**. Even at 1:8 ratio (1 rsqrt per 8 FFMA2), FP32 throughput drops by 60%. MUFU shares issue slots / sub-units with FMA dispatch — can't run concurrently.
+
+This contradicts the earlier "MUFU on pipe_alu" simplification. Under real FFMA2 pressure, MUFU blocks the FMA pipe issue path.
+
+**Design rule**: Do not insert MUFU ops (rsqrt, exp, sin, cos, log) into FFMA2-bound hot loops. They cost ~5-10× a single FFMA2 slot.
+
+For mixed MUFU+FMA workloads (e.g., softmax normalization), place MUFU in a separate phase of the computation rather than interleaved with the GEMM inner loop.
