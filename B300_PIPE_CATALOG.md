@@ -4373,3 +4373,17 @@ via ncu pipe_fma/pipe_alu metrics:
 IMAD/IMUL share pipe_fma with FFMA — each IMAD takes roughly **6-8 cycles** vs FFMA's 1-cycle throughput. Avoid IMAD in hot paths (use IADD + shift or similar where possible). When an IMAD is emitted, it blocks subsequent FFMAs on the same pipe for several cycles.
 
 Compiler often replaces simple `i * k + c` with IADD+LOP3 when it can — check SASS to confirm IMAD vs IADD.
+
+### FFMA + IMAD parallel issue — integer math is free alongside FP
+
+8-chain FFMA + 8-chain IMAD interleaved:
+
+| kernel | pipe_fma % | pipe_alu % |
+|---|---:|---:|
+| FFMA-only (8 chains) | 98.69% | 0.01% |
+| IMAD-only (8 chains) | 59.63% | 30.47% (compiler splits IMAD → some IADD3) |
+| **FFMA + IMAD mixed** | **98.44%** | 1.52% |
+
+With FFMA + integer math interleaved, the FFMA pipe still hits 98.4% of peak — nearly identical to pure FFMA. Integer work happens in parallel on pipe_alu (IADD3) with some IMAD on pipe_fma's idle slots. **Index arithmetic is essentially free alongside FP compute.**
+
+Design rule: don't worry about integer work in inner loops — it hides behind FFMA. If your hot loop is IMAD-bound (not FFMA), that's a different story and pipe_fma will be the limit.
