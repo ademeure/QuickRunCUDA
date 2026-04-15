@@ -3130,6 +3130,29 @@ Per-iteration timing (not averaged) on 1 LIGHT SM paced to overlap heavy's full 
 
 Per-SM fence.sc.sys cost is **genuinely local** to each SM; there is no proportional fabric-contention scaling between SMs.
 
+### NVLink throughput (2× B300, NV18 = 18 NVLink5 links per direction)
+
+**Platform context:**
+- 18 NVLink5 links × ~50 GB/s data rate = **~900 GB/s per direction** peak (data-only; `nvidia-smi` reports 53.125 GB/s/link including protocol overhead, aggregate 956 GB/s raw).
+- NVLink is full-duplex; 900 GB/s in each direction simultaneously, independently.
+- Both GPUs at 1920 MHz SM clock (max 2032 MHz), 3996 MHz HBM. All cycle values are at 1920 MHz.
+
+**Measured cross-GPU throughput (148 SMs × aw=32, coalesced, cache-defeat for reads):**
+
+| | WIDTH=1 (32b) | WIDTH=4 (128b) | WIDTH=8 (256b) |
+|---|---:|---:|---:|
+| **WRITE** (W=64)  | 735 GB/s | 761 GB/s | 764 GB/s |
+| **WRITE** (W=512) | 759 GB/s | 767 GB/s | 766 GB/s |
+| **READ** (W=16)   | 816 GB/s | 835 GB/s | 834 GB/s |
+| **READ** (W=64)   | 810 GB/s | 789 GB/s | 809 GB/s |
+
+- **Write efficiency: ~85% of 900 GB/s** (~760 GB/s sustained)
+- **Read efficiency: ~90% of 900 GB/s** (~810 GB/s sustained)
+- Width-invariance above W ≈ 32; wider writes help only at low W where issue-count matters.
+- Writes need ACK from peer L2 → slightly less efficient than reads which can stream.
+
+**Bidirectional saturation**: running read/write in both directions simultaneously does NOT degrade either direction — the two links are electrically separate.
+
 ### Multi-GPU atomic & load latency (warm L2, 1 SM, pointer-chase pattern)
 
 Each batch = 8 serial atomic adds (or .cg loads) with true data dependency between operations. Per-operation average over 64 batches. Atomics chain `x ← atomicAdd(addr, x | 1)`, loads chain `x ← A[x]` with A initialised to a closed pointer chain.
@@ -3159,7 +3182,7 @@ Even `.ca` sometimes completes in 36 cy (L1-hit lucky case), but the median is u
 
 ### Multi-GPU fence.sys cost — cross-GPU writes pay ~18K cy NVLink drain
 
-System: 2× B300 SXM6 AC connected by NV18 (18 NVLinks × 53.125 GB/s = 956 GB/s peer BW). Standalone tool `multigpu/MGFenceBench.cpp` allocates buffer A on a remote GPU via P2P, then launches kernel on primary GPU that writes to remote A, then fences. Clock placed after writes to isolate pure-fence time.
+System: 2× B300 SXM6 AC connected by NV18 (18 NVLinks × 53.125 GB/s = ~900 GB/s (18 NVLink5 × 50 GB/s per direction, data-only; nvidia-smi's 53.125 GB/s/link includes protocol overhead) peer BW). Standalone tool `multigpu/MGFenceBench.cpp` allocates buffer A on a remote GPU via P2P, then launches kernel on primary GPU that writes to remote A, then fences. Clock placed after writes to isolate pure-fence time.
 
 **Fence scope × LOCAL vs REMOTE A (148 SMs, aw=32, W=16 CL/warp):**
 
@@ -3211,9 +3234,9 @@ System: 2× B300 SXM6 AC connected by NV18 (18 NVLinks × 53.125 GB/s = 956 GB/s
 - GPU 0 REMOTE fence (W=16), GPU 1 idle: 27,111 cy
 - GPU 0 REMOTE fence, GPU 1 ALSO doing heavy cross-GPU (bidirectional saturation): 26,285 cy
 
-The NVLink has enough bidirectional capacity (~956 GB/s per direction) that saturating one direction doesn't hurt the other. Fences only pay cross-GPU cost when THEIR writes go across — not when OTHER GPU's writes cross.
+The NVLink has enough bidirectional capacity (~~900 GB/s (18 NVLink5 × 50 GB/s per direction, data-only; nvidia-smi's 53.125 GB/s/link includes protocol overhead) per direction) that saturating one direction doesn't hurt the other. Fences only pay cross-GPU cost when THEIR writes go across — not when OTHER GPU's writes cross.
 
-**Effective NVLink drain rate**: 9.7 MB transfer in 18K cy (9.4 µs) ≈ **1.03 TB/s**, consistent with 956 GB/s peer-link peak. At W=128 REMOTE, 77.6 MB transfer in 46 µs ≈ 1.69 TB/s, indicating some overlap between fence's drain and the kernel's own store-pipe issue.
+**Effective NVLink drain rate**: 9.7 MB transfer in 18K cy (9.4 µs) ≈ **1.03 TB/s**, consistent with ~900 GB/s (18 NVLink5 × 50 GB/s per direction, data-only; nvidia-smi's 53.125 GB/s/link includes protocol overhead) peer-link peak. At W=128 REMOTE, 77.6 MB transfer in 46 µs ≈ 1.69 TB/s, indicating some overlap between fence's drain and the kernel's own store-pipe issue.
 
 **Even `fence.sc.cta` is affected** (495 → 5,786 cy when A is remote) because the cta-scope barrier still waits for local outgoing STRONG.SYS writes to reach their ack, and remote stores have much longer turn-around.
 
