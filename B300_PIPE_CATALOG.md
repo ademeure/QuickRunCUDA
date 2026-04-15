@@ -5662,3 +5662,32 @@ ptxas: Instruction 'wgmma.wait_group' cannot be compiled for architecture 'sm_10
 
 This is the back-to-back overhead — issue 1 MMA, fully sync, repeat. In practice you should NEVER do this; pipeline 4+ MMAs and only sync at boundaries.
 
+
+---
+
+# Cache Hierarchy Size & Latency Map
+
+Working set sweep with strided-256B access (defeats L1 coalescing, measures true cache tier):
+
+| Working Set | cy/load | Tier |
+|-------------|---------|------|
+| 128 KB | 12 | L1 hit |
+| 256 KB | 12 | L1 hit (1 SM × 256KB L1) |
+| 512 KB | 28 | L1 miss, L2 hit |
+| 1 MB | 29 | L2 hit |
+| 4 MB | 82 | L2 starts paging |
+| 16 MB | 89 | L2 mostly hit |
+| 64 MB | 91 | L2 limit |
+| 128 MB | 144 | L2 partial / DRAM |
+| 256 MB | 199 | DRAM |
+
+**B300 effective L2 for a single kernel: ~64 MB** (half of chip total 126 MB). The L2 is partitioned across two L2 slices; a single CTA only sees one slice's share in practice.
+
+L1 hit latency: 12 cy  
+L2 hit latency: 28-91 cy (varies with WS size — larger WS = more coherence traffic)  
+DRAM latency: 199 cy (~104 ns at 1.92 GHz) — matches earlier pointer-chase HBM latency of ~100 ns
+
+## tcgen05.mma 2-MMA pipeline test
+
+Running 2 MMAs per iter to different TMEM buffers gives **identical** 128 cy/MMA as single MMA (M=128, N=256, FP8). The tensor pipe is fully saturated with one MMA in flight — **double-buffering doesn't help peak throughput** (but does help if you need to hide data-movement latency with a ping-pong pattern).
+
