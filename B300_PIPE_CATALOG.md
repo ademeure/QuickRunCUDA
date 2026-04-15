@@ -7195,3 +7195,26 @@ Practical guidance:
 - Use TMA (cp.async.bulk) for the most efficient cold reads
 - L2 working set ≤64 MB: enjoy 3× the BW (17 TB/s)
 
+
+## TMA (cp.async.bulk) HBM Peak
+
+Each block does 50× 8KB TMA loads (400 KB per CTA):
+
+| Blocks | Total bytes | BW (GB/s) | Notes |
+|--------|-------------|-----------|-------|
+| 148 (1/SM) | 0.06 GB | **6,833** | mostly cold (85% of HBM spec) |
+| 296 (2/SM) | 0.12 GB | 12,043 | L2 starting to hit |
+| 1480 (10/SM) | 0.61 GB | 74,970 | mostly L2 hits |
+
+**TMA peak: 6.83 TB/s cold reads** = **85% of HBM3e spec (8 TB/s)**.
+
+This is significantly better than `ld.global` cold reads (5.16 TB/s = 64%). TMA's advantages:
+1. Bulk transfer reduces per-load overhead
+2. Hardware-managed prefetch/coalescing
+3. Direct path from L2 to smem (avoids register/L1 routing)
+
+**Practical guidance**:
+- For cold streaming reads (model weights, inputs): use TMA, get 6.8 TB/s
+- For repeated access (attention KV cache reload): warm L2 then enjoy 17 TB/s
+- For random scatter-gather: ld.global, expect ~5 TB/s
+
