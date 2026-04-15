@@ -6402,3 +6402,35 @@ So the slowdown is **dispatch bubbles inserted at the SM level, NOT clock or pow
 
 **Practical implication**: Real GEMM kernels that interleave MMAs with TMA loads, register reads, etc. naturally avoid this throttle (the load/store work creates "idle time" for tensor pipe). The throttle ONLY appears in pure-MMA microbenchmarks. So **published peak TFLOPS in real workloads is achievable**.
 
+
+---
+
+# DSMEM Bandwidth & Atomic Costs (task #88)
+
+## DSMEM bandwidth (4 warps × v4 loads, 1000 iter)
+
+| Cluster size | Local smem | DSMEM remote |
+|--------------|------------|--------------|
+| 2 CTAs | 170.6 GB/s/SM | 169.0 GB/s/SM |
+| 4 CTAs | 170.6 | 169.1 |
+| 8 CTAs | 170.6 | 169.1 |
+
+**DSMEM bandwidth = 99% of local smem.** Cluster size doesn't matter (2/4/8 all identical). The cluster interconnect provides essentially full smem bandwidth between paired SMs.
+
+## DSMEM atomics
+
+| Op | cy/atom |
+|----|---------|
+| atom.shared (local) | 24 |
+| **atom.shared::cluster (DSMEM remote)** | **51 (2.1×)** |
+
+DSMEM **loads** are free, but DSMEM **atomics** are 2× slower (51 cy) due to cross-CTA coherence. Use DSMEM for read-mostly data sharing across CTAs in a cluster; for atomics, prefer local smem if possible.
+
+## DSMEM design summary (3 measurements combined)
+
+| Operation | Local smem | DSMEM | Penalty |
+|-----------|------------|-------|---------|
+| Load (u32) | 25 cy | 23 cy | **0× (free)** |
+| Load (v4) | 170 GB/s/SM | 169 GB/s/SM | **0%** |
+| Atomic add | 24 cy | 51 cy | 2.1× |
+
