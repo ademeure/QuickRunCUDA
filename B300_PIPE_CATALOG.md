@@ -4228,3 +4228,15 @@ All uncached load policies essentially identical (true round-trip dominates):
 - `ld.global.lu` REMOTE: 3,765 cy/load (+14%, last-use hint hurts cross-GPU)
 
 LOCAL pointer chase: 403-405 cy/load for .cg/.ca/.cv, 404 for .lu. Policies are equivalent on hot L2.
+
+### Cross-GPU atomic latency under NVLink contention
+
+Foreground: serial-chain atomicAdd (1 SM × 1 thread × 32 batches × 8 atoms). Background saturates NVLink with either heavy reads or writes.
+
+| scenario | median cy | min | max |
+|---|---:|---:|---:|
+| Baseline (quiet) | 2,968 | 2,716 | 144K |
+| BG: 148 SMs reading cross-GPU | **3,212 (+8%)** | 2,754 | 644K |
+| BG: 148 SMs writing cross-GPU | **3,229 (+9%)** | 2,730 | 609K |
+
+**Finding**: NVLink saturation inflates atomic latency by only **~8-9% on median**, but tail latency (max) grows dramatically (600K+ cy). Both read-BG and write-BG produce similar effect — atomics use both directions, so traffic either way competes with their req+resp path.
