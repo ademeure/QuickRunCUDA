@@ -6521,3 +6521,28 @@ Loading from same address across all 32 lanes (uniform) vs unique per lane:
 
 Both tcgen05.fence variants cost **23 cy** — same as warp barrier or mbarrier.arrive. Cheap to use between MMA phases for ordering.
 
+
+---
+
+# Single-Warp Dispatch Rate per SMSP
+
+Independent chains, no dependency stalls — measure raw issue rate from one warp:
+
+| Pipe pattern | cy/inst (avg) | Insts per 1000 iter | Effective rate |
+|--------------|---------------|---------------------|----------------|
+| pipe_alu only (prmt) | 2.63 | 1× | 0.38 inst/cy/lane |
+| pipe_fma only (FFMA) | **1.75** | 1× | 0.57 inst/cy/lane |
+| **ALU + FMA dual-issue (1:1)** | **1.38** | 2× | **0.73 inst/cy/lane** |
+| ALU + FMA + MUFU triple-issue | 3.19 | 3× | 0.31 inst/cy/lane (MUFU bottleneck) |
+
+**Findings**:
+1. **FFMA pipe is faster than ALU pipe** (1.75 vs 2.63 cy/inst per warp)
+2. **Dual-issue is real and beneficial**: ALU+FMA together = 2.75 cy total vs 1.75+2.63=4.38 if serial = **37% saving**
+3. **Triple-issue with MUFU degrades** — MUFU pipe is the slowest (~10 cy/op), can't keep up
+
+**Practical implication**: For peak single-warp throughput, mix prmt/iadd3 (pipe_alu) with FFMA (pipe_fma). MUFU ops should be sparse.
+
+Chip-wide peak instruction rate (4 SMSP × 148 SM × 1.92 GHz):
+- Pure FFMA: 18.3 inst/cy/SMSP × 4 × 148 × 1.92 = ~21 Tinst/s
+- ALU+FMA dual: 23.3 inst/cy/SMSP × 4 × 148 × 1.92 = ~26 Tinst/s
+
