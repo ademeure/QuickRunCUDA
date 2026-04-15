@@ -5691,3 +5691,48 @@ DRAM latency: 199 cy (~104 ns at 1.92 GHz) — matches earlier pointer-chase HBM
 
 Running 2 MMAs per iter to different TMEM buffers gives **identical** 128 cy/MMA as single MMA (M=128, N=256, FP8). The tensor pipe is fully saturated with one MMA in flight — **double-buffering doesn't help peak throughput** (but does help if you need to hide data-movement latency with a ping-pong pattern).
 
+
+---
+
+# Atomic Scope and Ordering Costs
+
+## Scope qualifier (single-address, warp-contending)
+
+| Target | Scope | cy/op |
+|--------|-------|-------|
+| smem | .cta | **24** |
+| smem | .cluster | 47 |
+| global | .cta | 51 |
+| global | .gpu | 51 |
+| global | .sys | 51 |
+
+**Scope qualifier is FREE for global atomics** (.cta/.gpu/.sys all 51 cy) when contending on L2-hit data. Smem atomics are 2× faster. Cluster-scoped smem is 2× slower than local.
+
+## Memory ordering — huge penalty
+
+| Ordering | cy/op | × relaxed |
+|----------|-------|-----------|
+| .relaxed (default) add | **51** | 1.0× |
+| .acquire.gpu add | 780 | **15.3×** |
+| .release.gpu add | 872 | **17.1×** |
+| **.acq_rel.gpu add** | **1598** | **31.3×** |
+
+**Atomic memory ordering on B300 costs 15-31× MORE than relaxed.** This is the single biggest atomic performance tax. Use relaxed atomics + explicit `fence.acq_rel` at batch boundaries instead of applying ordering to every atomic op.
+
+## Op variants
+
+| Op | cy/op | vs add |
+|----|-------|--------|
+| atom.add (relaxed) | 51 | 1.0× |
+| **atom.min** | **47** | 0.9× (faster!) |
+| atom.cas | 66 | 1.3× |
+| atom.exch | 65 | 1.3× |
+| atom.and | 84 | 1.6× |
+
+Min is slightly faster than add (possibly a fast path). CAS / exch add ~15 cy for the read-modify-write compare/swap logic. And is slower because the result feeds subsequent reads.
+
+**Design rules**:
+1. Avoid `.acquire/.release/.acq_rel` on atomics. If you need ordering, use separate fences.
+2. `atom.min` is free relative to `atom.add` — use it for reductions where semantically equivalent.
+3. Scope qualifier `.cta/.gpu/.sys` is free — always use the widest scope your semantics require.
+
