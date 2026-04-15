@@ -5788,3 +5788,48 @@ Store variants:
 
 Also: default `ld.global` behaves like `ld.weak.global` — "weak" IS the default ordering for PTX loads.
 
+
+---
+
+# Async Data Movement (cp.async, TMA)
+
+## cp.async per-thread variants (per-thread cy)
+
+| Variant | Bytes | cy/cp |
+|---------|-------|-------|
+| cp.async.ca.4B | 4 | 32.5 |
+| cp.async.ca.8B | 8 | 32.6 |
+| cp.async.ca.16B | 16 | **32.6** ← fastest |
+| cp.async.cg.16B | 16 | 47.6 (50% slower) |
+| cp.async.cg.16B.L2::256B | 16 | 49.3 (no benefit) |
+
+**`cp.async.ca` (cache.allocate) at 16B** is the most efficient — uses L1 path and packs full 16B per request. The `.cg` (cache.global, bypass L1) variant pays a 50% latency tax for no benefit when data is hot. The L2::256B prefetch hint that helped `ld.global` doesn't help cp.async (already async).
+
+Per-CTA (128 threads) at 16B: 128 × 16 = 2048 B in ~33 cy = **62 B/cy/SM = 119 GB/s/SM**.
+
+## TMA (cp.async.bulk) pipelined throughput
+
+50 transfers issued before single mbarrier wait:
+
+| Bytes/transfer | cy/transfer | GB/s/SM |
+|----------------|-------------|---------|
+| 128 | 60.6 | 4 |
+| 512 | 60.6 | 16 |
+| 2048 | 60.6 | 65 |
+| **8192** | **94.7** | **166** |
+
+Below 2KB the cost is dominated by the ~60 cy per-transfer overhead. At 8KB, TMA hits 166 GB/s/SM = **24.5 TB/s chip-wide** (from L2-hit data; would saturate at HBM peak ~8 TB/s for cold data).
+
+**Comparison summary (cached data)**:
+
+| Mechanism | GB/s/SM |
+|-----------|---------|
+| ld.global (default) | ~140 |
+| cp.async.ca.16B | 119 |
+| cp.async.cg.16B | ~80 |
+| **cp.async.bulk (TMA, 8KB)** | **166** |
+| tcgen05.cp (smem→TMEM, 128x256b) | 117 |
+| ldmatrix.x4 (smem→reg) | 17.7 B/cy/warp = ~250 GB/s/SM with 16 warps |
+
+**TMA is the fastest path for global→smem** at large block sizes. cp.async.ca is best for small per-thread loads.
+
