@@ -4185,3 +4185,17 @@ The 75% HBM efficiency gap may be due to row-buffer conflicts / access pattern s
   - 4096 ops/inst: **571 TFLOPS FP16→FP32**
   - 8192 ops/inst: **1,143 TFLOPS**
   - B300 spec ~1,980 TFLOPS FP16 dense → matches if HMMA shape is larger
+
+### Definitive cross-GPU useful BW (ncu + kernel logic, ITERS=100, W=128 coalesced)
+
+**READ REMOTE**:
+- **useful BW: 765 GB/s = 85% of 900 GB/s NVLink5 peak** (kernel logic ÷ ncu gpc time)
+- L1 BW (ncu): 765 GB/s (matches exactly — same time basis)
+- NVLink RX: 860 GB/s = **95.6% of 900 GB/s** (close to absolute ceiling)
+- NVLink TX: 143 GB/s (request-only, ~16.7% of RX for ~20B request headers)
+- Protocol overhead on RX: 95 GB/s = 12.4%
+
+**WRITE REMOTE** (to be filled from run):
+- See ncu output above
+
+At ITERS=100, wall / ncu time converge, so measurements are stable. My earlier "546 GB/s L1 BW" at ITERS=5 was launch-overhead inflated — real peak is ~765 GB/s useful.
