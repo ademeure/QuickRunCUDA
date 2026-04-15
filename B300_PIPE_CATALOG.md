@@ -5592,3 +5592,25 @@ Cost is **constant regardless of value** — it's a control register write, not 
 
 Chip-wide peak: 117 × 148 = ~17 TB/s (about half of smem peak, reflecting the asymmetric TMEM write port).
 
+
+---
+
+# Cluster / Distributed Shared Memory (DSMEM)
+
+## DSMEM latency vs local smem
+
+| Access | cy/load |
+|--------|---------|
+| Local smem (ld.shared) | 25 |
+| **DSMEM remote CTA (ld.shared::cluster)** | **23** |
+
+**DSMEM is ~identical latency to local smem** — the cluster interconnect on B300 is essentially free. You can build cluster-wide data sharing algorithms without significant latency penalty.
+
+This is unlike cross-GPU (NVLink) where P2P remote is ~10× slower than local.
+
+## Sparse FP8 metadata patterns — performance identical
+
+Tested metadata values 0x44444444, 0xCCCCCCCC, 0xEEEEEEEE, 0x11111111 — all produce **identical 160 cy/iter**. Metadata data doesn't affect hardware throughput, only correctness. The 7.44 PFLOPS ceiling is intrinsic to the sparse FP8 path.
+
+Implication: the 10 PFLOPS sparse FP8 spec appears to be a theoretical max that may not be reachable in any real kernel. CUTLASS likely reports similar ~7.5 PFLOPS for sparse FP8 in practice.
+
