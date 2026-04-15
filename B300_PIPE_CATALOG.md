@@ -5536,3 +5536,32 @@ Beyond x16, throughput drops — the load is too wide and stalls register write-
 - The full `fence.proxy.async` (no scope qualifier — defaults to system) is **5× more expensive** than the scoped variants. Always specify a scope.
 - GPU-scoped fences (acq_rel.gpu, membar.gl) are **10× more expensive** than CTA-scoped — only use when crossing CTA boundaries.
 
+
+## setmaxnreg.{dec,inc}.sync.aligned (sm_100+ dynamic register balancing)
+
+| Op | Range | cy/op |
+|----|-------|-------|
+| setmaxnreg.dec | 32-96+ regs | 73 |
+| setmaxnreg.inc | 64-232 regs | 50 |
+
+Lower bound for `dec`: 32 (24 → illegal instruction). Upper bound for `inc`: 232.
+
+Cost is **constant regardless of value** — it's a control register write, not a real reallocation. Total round-trip: 50+73 = 123 cycles.
+
+**Use case**: warp-specialized kernels (producer warps drop to 32 regs, consumer warps grab 232).
+
+## L1/L2 Cache Eviction Hints (streaming load test)
+
+| Hint | cy/load | Speedup |
+|------|---------|---------|
+| (default) | 820 | 1.00× |
+| `evict_first` | 830 | 0.99× |
+| `evict_last` | 818 | 1.00× |
+| `no_allocate` | 830 | 0.99× |
+| `ld.global.nc` | 828 | 0.99× |
+| **`ld.global.L2::256B`** | **665** | **1.23×** |
+
+**Most L1 eviction hints are no-ops on B300** — HW prefetcher is good enough that the hints don't matter for streaming. The non-coherent path (`ld.nc`, the texture-style loads) also gives no speedup.
+
+**`L2::256B` prefetch IS effective** — gives 23% speedup on streaming reads by prefetching a 256-byte granule into L2 ahead of need. Use this when you know you'll consume 8 contiguous 32B lines.
+
