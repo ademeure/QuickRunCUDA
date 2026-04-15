@@ -7240,6 +7240,40 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# setmaxnreg.aligned — dynamic register redistribution
+
+`setmaxnreg.{inc,dec}.sync.aligned.u32 N` on B300 sm_103a:
+
+- **Valid range N ∈ [32, 232]**. Outside this range → illegal-instruction trap at kernel launch.
+- Must be called **aligned across all warps** in the CTA at the same point. Different warps can set different N values (e.g. producer dec to 32, consumer inc to 232), but they must execute the instruction in lockstep.
+- Cost measured earlier: dec ≈ 73 cy, inc ≈ 50 cy (constant, regardless of delta).
+
+**Benefit is conditional**: regardless of runtime register count, each CTA's peak register allocation comes from compile-time `ptxas --maxrregcount`. `setmaxnreg` lets warps **temporarily reduce** their register footprint, but doesn't allow more CTAs/SM than the compile-time cap permits.
+
+Use case: warp-specialized pipelines where producer warps (e.g. TMA issuers) need few regs and consumer warps (e.g. tcgen05.mma) need many. The decrease frees register-file pressure for the consumer pair.
+
+**Caveat**: I could not construct a configuration where setmaxnreg measurably increased occupancy in a real kernel (either it worked without setmaxnreg, or the compile-time limit was the binding constraint). In practice, use warp specialization + static launch_bounds that assumes the heavier warp's needs, and use setmaxnreg primarily as documentation intent.
+
+
+# cp.async.bulk.prefetch — almost always net overhead for same-CTA prefetch
+
+Test: single CTA issues `cp.async.bulk.prefetch.L2.global` then follows with `cp.async.bulk.shared::cta.global` via mbarrier. Compare to no-prefetch baseline.
+
+| variant | cold cy (first run) | warm cy |
+|---------|--------------------:|--------:|
+| no prefetch | 3 320 | 704 |
+| with prefetch | 3 482 | 826 |
+
+**Prefetch hurts** in the single-CTA back-to-back case (+4-17 %). Because the prefetch + commit + wait take cycles, and then the actual TMA fetches the same data anyway.
+
+Prefetch is only a win when:
+- Multiple CTAs share data → one prefetches, others benefit from warm L2 (cross-CTA amplification).
+- Prefetch issued far ahead of the TMA → overlaps with compute on a separate work unit.
+- Big enough data that the prefetch trip gets amortized.
+
+In the same-CTA adjacent-op pattern, just do the TMA directly.
+
+
 # L2 cache residency policy (stream access-policy-window)
 
 API: `cudaStreamSetAttribute(stream, cudaStreamAttributeAccessPolicyWindow, &attr)` with `accessPolicyWindow.hitProp = cudaAccessPropertyPersisting` tells the HW to keep the window's data resident in L2 preferentially.
