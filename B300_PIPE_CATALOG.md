@@ -7345,6 +7345,38 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# cuFFT 1D C2C forward throughput
+
+Batched 1D FFT, batch = 1024:
+
+| Size N | µs per FFT | GFLOPS | % of 72 TFLOPS peak |
+|-------:|-----------:|-------:|--------------------:|
+| 256 | 0.008 | 1 214 | 1.7 % (launch-overhead-bound) |
+| 1 024 | 0.009 | 5 407 | 7.5 % |
+| 4 096 | 0.018 | **13 375** | **18.6 %** |
+| 16 384 | 0.085 | 13 527 | 18.8 % |
+| 65 536 | 0.535 | 9 795 | 13.6 % |
+
+**cuFFT peak ≈ 13.5 TFLOPS** at 4K-16K points. FFT is memory-bound at large sizes — the DRAM-pass-count per FFT doubles with each log2 size increase. Small sizes are launch-overhead-bound.
+
+For applications doing many small FFTs, batch them heavily (batch ≥ 1024) to amortize launch cost. For large single FFTs, expect ~10-14 TFLOPS (≈ 18 % of scalar peak).
+
+
+# cuda::binary_semaphore / cuda::barrier C++ sync primitives
+
+| Primitive | Scope | cy/cycle |
+|-----------|-------|---------:|
+| `cuda::binary_semaphore<thread_scope_block>` (acquire+release, 1 thread) | block | **264** |
+| `cuda::barrier<thread_scope_block>` (arrive+wait, 32 threads) | block | **82** |
+| `__syncthreads` (reference, earlier measurement) | block | 86 |
+
+**`cuda::barrier` is ~equivalent to `__syncthreads`** (82 vs 86 cy) — same underlying HW mechanism, C++ wrapper is free.
+
+**`cuda::binary_semaphore`** is 3× more expensive (264 cy) because it uses atomic CAS for the counter. For simple barrier needs, prefer `cuda::barrier` or `__syncthreads`; use semaphores only when you genuinely need acquire/release with a count.
+
+Note: initialization (`new (&sem) binary_semaphore<>(1)`) is done once in shared memory — placement new avoids host-managed construction cost.
+
+
 # NVLink topology on this 2× B300 node
 
 ```
