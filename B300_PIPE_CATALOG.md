@@ -4755,3 +4755,28 @@ Design: in shared memory, `atomicAdd` is always the cheapest atomic. For accumul
 LOP3 runs at full ALU pipe rate — essentially a "free" boolean operation. The compiler uses it heavily for packed bit manipulation (e.g., `(a & b) | c` → single LOP3). You can construct many bit patterns with `lop3` that would take 2-3 traditional instructions.
 
 **Design rule**: for any sequence of 2-3 bitwise ops, the compiler already folds to LOP3. No manual intervention needed unless you want a specific truth table that the compiler doesn't see.
+
+### mbarrier primitive costs (1 CTA × 32 threads × 100 iters)
+
+| operation | cy/iter |
+|---|---:|
+| `mbarrier.arrive` only | 24 |
+| `mbarrier.arrive + try_wait` loop | 82 |
+| `__syncthreads` (for comparison) | 24 |
+
+mbarrier.arrive costs the same as `__syncthreads` at 24 cy. The full arrive+wait cycle adds ~58 cy for the poll loop (amortized; one-shot wait with thread already past is ~60 cy additional).
+
+Compare to `__syncthreads` (24 cy, simpler barrier): mbarrier adds flexibility (async TMA completion tracking, partial barriers) at ~0 cost for arrive, ~2.4× cost for full wait-cycle.
+
+### __ldg vs ld.global variants (1 thread × 1000 chained, warm L1)
+
+| op | cy/load | path |
+|---|---:|---|
+| `__ldg(addr)` | 51.7 | L1-hit (compiles to ld.global.nc) |
+| `ld.global.ca` | 51.7 | L1-hit |
+| `ld.global.nc` | 51.7 | L1-hit (identical to __ldg) |
+| `ld.global.cg` | 295.6 | L2-only (L1 bypass) |
+
+**`__ldg` == `ld.global.nc` == `ld.global.ca` for read performance**. All hit L1 equally. Use `__ldg` (or `ld.global.nc`) when the compiler can prove the data is read-only and won't be modified during kernel — enables the read-only L1 texture path that may allow more aggressive caching. For mixed read/write, use `.ca`.
+
+Only `.cg` intentionally bypasses L1 (use for streaming data you won't re-access).
