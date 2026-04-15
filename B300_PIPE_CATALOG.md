@@ -7240,6 +7240,89 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# cudaMemset throughput — approaches HBM write peak
+
+| Size | µs | GB/s |
+|-----:|---:|-----:|
+| 1 MB | 8 | 130 (API floor) |
+| 16 MB | 8 | 1986 |
+| 256 MB | 41 | 6473 |
+| 1 GB | 152 | 7082 |
+| 4 GB | 584 | 7360 |
+| **8 GB** | **1149** | **7478 (94 % of HBM spec)** |
+
+cudaMemset **approaches HBM write peak** (7.5 TB/s vs our 7.4 TB/s measured cold peak). For bulk memset / zeroing, the CUDA implementation is essentially optimal. Below 16 MB, API overhead dominates (~8 µs floor).
+
+
+# NVRTC runtime-compile cost
+
+Using nvrtc 13 for sm_103a:
+
+| Kernel | Options | Create | Compile | GetCUBIN | Destroy | Total |
+|--------|---------|-------:|--------:|---------:|--------:|------:|
+| tiny (1 store) | default | 1 µs | **16.9 ms (cold)** | 1 µs | 0 µs | 16.9 ms |
+| tiny | `-maxrregcount=64` | 1 µs | **5.9 ms (warm)** | 1 µs | 0 µs | 5.9 ms |
+| medium (100-iter FFMA) | default | 1 µs | 6.0 ms | 2 µs | 0 µs | 6.0 ms |
+| medium | `-maxrregcount=64` | 1 µs | 6.0 ms | 1 µs | 0 µs | 6.0 ms |
+
+**Findings:**
+- **nvrtcCompileProgram ≈ 6 ms** steady state, regardless of kernel size (for small/medium).
+- First compile has **+11 ms cold-start overhead** (NVRTC lazy init).
+- Other API calls are essentially free (<2 µs each).
+
+**Practical**: JIT-compiled kernels pay ~6 ms per unique source. If you generate variants at runtime, cache by source hash. Also: `ptxas` optimization flags are passed via `--ptxas-options`, not `-O3` on the NVRTC command line (NVRTC flag parsing is strict).
+
+
+# cudaDeviceProp comprehensive dump (B300 SXM6 AC)
+
+Reference values from `cudaGetDeviceProperties`:
+
+```
+name:                            NVIDIA B300 SXM6 AC
+compute capability:              10.3
+totalGlobalMem:                  267.69 GiB
+sharedMemPerBlock (default):     48 KB
+sharedMemPerBlockOptin:          227 KB
+sharedMemPerMultiprocessor:      228 KB         (per-SM pool)
+regsPerBlock:                    65 536         (256 KB register file)
+regsPerMultiprocessor:           65 536
+warpSize:                        32
+maxThreadsPerBlock:              1 024
+maxThreadsPerMultiProcessor:     2 048          = 64 warps/SM
+maxBlocksPerMultiProcessor:      32
+multiProcessorCount:             148
+memoryBusWidth:                  7 680 bits     (unusual — possibly 8 HBM stacks × 960 or similar)
+l2CacheSize:                     126.5 MiB
+persistingL2CacheMaxSize:        79.1 MiB       (≈ 63 % of L2)
+accessPolicyMaxWindowSize:       128 MiB
+totalConstMem:                   65 536 B       (64 KB)
+concurrentKernels:               1
+cooperativeLaunch:               1
+asyncEngineCount:                4              (copy engines)
+unifiedAddressing:               1
+pageableMemoryAccess:            1
+managedMemory:                   1
+concurrentManagedAccess:         1
+directManagedMemAccessFromHost:  0              (NOT Grace — no native host atomic path)
+hostNativeAtomicSupported:       0
+ECCEnabled:                      1
+clusterLaunch:                   1
+gpuDirectRDMASupported:          1
+gpuDirectRDMAFlushWritesOptions: 1
+gpuDirectRDMAWritesOrdering:     100            (= OWNER scope for GDR writes)
+memoryPoolsSupported:            1
+timelineSemaphoreInteropSupported: 1
+ipcEventSupported:               1
+deferredMappingCudaArraySupported: 1
+```
+
+**Notable:**
+- **7 680-bit memory bus**: unusual vs standard HBM3e (6144-bit for 12-hi, 8192-bit for some SKUs). Likely 8 HBM3e stacks × 960 bits (with parity) or 7.5 × 1024 configuration.
+- **267.69 GiB HBM** — this is the "268 GiB" advertised B300 memory.
+- **directManagedMemAccessFromHost = 0**: B300 is NOT tightly integrated with CPU (unlike Grace-Hopper/Grace-Blackwell). CPU and GPU need explicit migration for UM, no coherent shared memory path.
+- **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
+
+
 # Green contexts — in-process SM partitioning (CUDA 12.4+)
 
 B300 supports green contexts (`cuGreenCtxCreate`) — partition the 148 SMs across multiple streams **within the same process**, distinct from MIG (process-level partitioning).
