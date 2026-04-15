@@ -6859,3 +6859,23 @@ Back-to-back `mov.u64 %0, %%globaltimer` reads:
 - Tick rate: **31.25 MHz** (1 / 32 ns)
 - Hardware-fixed; doesn't change with SM clock
 
+
+## B300 SXM6 AC: System & Clock Verification
+
+**This system**:
+- 2× NVIDIA B300 SXM6 AC (NVLink connected via NV18 = PCIe Gen5 x16 PSwitch)
+- 275,040 MiB HBM per GPU (~270 GiB usable)
+- Driver 580.126.09, CUDA 13.0/13.2, sm_103a (CC 10.3)
+- Max power limit: 1100 W per GPU
+- 60-core CPU, single NUMA node
+
+**Clock investigation (important)**:
+| Clock metric | Reported | Actual measured |
+|-------------|----------|-----------------|
+| Max SM clock | **2032 MHz** (nvidia-smi spec) | **1920 MHz** (under all load conditions) |
+| Memory clock | 3996 MHz (8 Gbps HBM3e) | matches |
+
+`nvidia-smi -lgc 2032 -i 0` ("Lock SM Clock to 2032") **succeeds** but SM still runs at 1920 MHz. The hardware/firmware **physically caps at 1920 MHz** regardless of host settings. The 2032 MHz is reachable only momentarily under light load.
+
+**All catalog measurements are at 1920 MHz, the true sustained max.** Multiply our cycle-rates by 1.92 GHz for actual throughput.
+
