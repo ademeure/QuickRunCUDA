@@ -4971,3 +4971,16 @@ Same FMA-pipe utilization as FFMA (98.66%). Each HFMA2 instruction produces 2 FP
 - Compare to FFMA: 68.7 TFLOPS FP32
 
 HFMA2 doubles FP throughput by packing 2 half-precision ops per instruction, at same pipe-cycle rate. For FP16 arithmetic workloads where full FP16 precision is fine, HFMA2 is 2× FFMA FLOPS.
+
+### FP32 non-FMA ops + FMIN pipe analysis
+
+| op | inst/ns | pipe_alu % | pipe_fma % |
+|---|---:|---:|---:|
+| FADD (add.rn.ftz.f32) | 1047 | 0.06% | **98.15%** (FMA pipe) |
+| FMUL (mul.rn.ftz.f32) | 1047 | 0.06% | **98.13%** |
+| FABS | 1047 | 0.06% | 98.13% |
+| FMIN | 564 | **99.41%** (ALU pipe!) | 0.21% |
+
+**FADD, FMUL, FABS** all run on pipe_fma at same rate as FFMA (~34 TFLOPS). The FMA pipe handles add, mul, abs, and fma at the same cycle rate.
+
+**FMIN/FMAX** run on pipe_alu at ~99% saturation → **can run in parallel with FFMA**! Unlike add/mul which compete with FMA, FMIN parallels with compute. Useful for clipping/clamping operations that can overlap with FFMA.
