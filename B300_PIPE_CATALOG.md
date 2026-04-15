@@ -5116,3 +5116,56 @@ Extending the ratio sweep to HFMA2:IADD > 1 (less IADD per FMA):
 **Design takeaway**: in a loop doing packed-FMA compute, you can insert **1 integer op per every 2 FMA2s at zero cost**. A loop of 8 FMA2 + 4 IADD3 = full 72 TFLOPS + 9 T-IADD/s bonus. This is the B300 dual-issue budget.
 
 For scalar FFMA (not packed), the issue rate is already 2× FFMA2, so ALU pipe is fully utilized by the issue logic — there's no free integer slot alongside scalar FFMA (you'd need to drop to FFMA2 to get dual-issue headroom).
+
+## Complete dual-issue map (FFMA2 + various ALU ops at 2:1 ratio)
+
+This is the **B300 dual-issue budget** — what ALU ops run FREE alongside FFMA2 at the 2:1 ratio:
+
+| ALU op | wall | FP32 TFLOPS | penalty | ALU T-ops/s | verdict |
+|---|---:|---:|---:|---:|---|
+| (none, FFMA2 only) | 433.0 µs | 71.7 | — | 0 | baseline |
+| IADD3 | 433.4 µs | 71.6 | **−0.1% FREE** | 8.95 | ✓ truly free |
+| SHR (bit shift) | 432.2 µs | 71.8 | **0% FREE** | 8.98 | ✓ truly free |
+| I2F (int→float cvt) | 432.2 µs | 71.8 | **0% FREE** | 8.98 | ✓ truly free |
+| LOP3 (3-input boolean) | 447.6 µs | 69.3 | −3.3% | 8.67 | ≈ free |
+| PRMT (byte permute) | 447.1 µs | 69.4 | −3.2% | 8.68 | ≈ free |
+| FMIN (fp32 min) | 541.6 µs | 57.3 | **−20%** | 7.16 | competes |
+| CLZ (count leading zeros) | 911.5 µs | 34.1 | **−52%** | 4.26 | heavy stall |
+
+**Classification of ALU ops by dual-issue penalty:**
+
+1. **Zero cost (truly free)**: IADD3, SHR, I2F — use without hesitation alongside FFMA2
+2. **Near-free (3%)**: LOP3, PRMT — minor issue-slot competition  
+3. **Moderate penalty (20%)**: FMIN/FMAX — share a bottleneck sub-unit with FFMA2 issue
+4. **Heavy penalty (50%+)**: CLZ — very expensive; emits multi-instruction sequences that block pipe
+
+**Design implications**:
+- Index arithmetic (IADD3, shifts) in a loop body doing FFMA2 is genuinely free
+- Integer→float conversions (I2F) are free, good for dispatch patterns that convert loop indices
+- Bit manipulation (LOP3/PRMT) is near-free
+- Avoid FMIN/FMAX and especially CLZ in FFMA2-bound hot loops — use in ramp-up/tear-down instead
+- Earlier finding ("FMIN on pipe_alu 99.4%") was misleading in isolation — under FFMA2 pressure, FMIN actually costs 20% of FP throughput (issue-port aliasing or shared sub-unit)
+
+## Updated overall dual-issue design pattern
+
+For maximum throughput on packed-FMA code:
+```
+// 8 FFMA2 + 4 (IADD3 | SHR | I2F) in inner loop
+// → 72 TFLOPS FP32 (packed) + 9 T-ALU/s bonus
+for (int j = 0; j < N; j++) {
+  fma_pair0 = fma(fma_pair0, c, d);   // FFMA2
+  fma_pair1 = fma(fma_pair1, c, d);
+  idx = idx + stride + offset;         // IADD3 free
+  fma_pair2 = fma(fma_pair2, c, d);
+  fma_pair3 = fma(fma_pair3, c, d);
+  mask = mask << 1;                    // SHR free
+  fma_pair4 = fma(fma_pair4, c, d);
+  fma_pair5 = fma(fma_pair5, c, d);
+  counter += delta;                    // IADD3 free
+  fma_pair6 = fma(fma_pair6, c, d);
+  fma_pair7 = fma(fma_pair7, c, d);
+  selector = permute(selector, mask);  // PRMT mostly free (3%)
+}
+```
+
+Do NOT mix in FMIN/FMAX or CLZ without budgeting for 20-50% throughput loss.
