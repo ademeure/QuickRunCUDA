@@ -7240,6 +7240,57 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# L2 cache residency policy (stream access-policy-window)
+
+API: `cudaStreamSetAttribute(stream, cudaStreamAttributeAccessPolicyWindow, &attr)` with `accessPolicyWindow.hitProp = cudaAccessPropertyPersisting` tells the HW to keep the window's data resident in L2 preferentially.
+
+B300 parameters:
+- `cudaDevAttrMaxAccessPolicyWindowSize = 128 MB`
+- `cudaLimitPersistingL2CacheSize` (queried default) = 24 MB
+- Set via `cudaDeviceSetLimit` up to L2/2 = 63 MB max (values above fail).
+
+Test: 64 MB hot + 512 MB cold, alternating 4 rounds:
+
+| Config | BW (GB/s) |
+|--------|----------:|
+| 64 MB hot, solo (default stream) | 19 306 (L2 hit plateau) |
+| 64 MB hot, solo (policy stream, persisting) | 19 703 (+2 %) |
+| 512 MB cold, solo (default) | 7 181 (HBM peak) |
+| 512 MB cold, solo (policy, streaming) | 7 156 |
+| **Alternating hot + cold (default)** | **6 642** |
+| **Alternating hot + cold (policy: hot=persisting)** | **6 529** (-2 %) |
+
+**Surprise: persisting policy slightly HURT** the alternating workload. Reasoning: 512 MB cold stream is so large it displaces most of the 64 MB persisting region anyway. The policy adds bookkeeping overhead without providing the expected reuse benefit.
+
+**When persist policy helps (theoretically)**:
+- Hot data much smaller than the persist budget (< 32 MB for B300)
+- Interleaved with streaming data that's NOT so large it sweeps L2 entirely
+- Access pattern with genuine reuse within the persist budget
+
+**Practical**: default L2 LRU does reasonably well. Don't reach for access-policy-window unless profiling shows reuse churn on a specific hot region.
+
+
+# cp.reduce.async.bulk (TMA atomic reduction to global)
+
+Test: each CTA reduces 128 u32 from smem to 128 global counters via either individual atomicAdd or a single bulk TMA reduce:
+
+| Variant | cy/iter (CTA0) | notes |
+|---------|---------------:|-------|
+| 128 × individual `atomicAdd` (per-thread) | **705** | many atomics but warp-coalesced |
+| 1 × `cp.reduce.async.bulk.global.shared::cta.bulk_group.add.u32` (512 B) | 1 011 | one bulk op |
+
+TMA bulk reduce is **~1.4× slower** than 128 parallel atomicAdd for this small-bulk case. atomicAdd wins when:
+- Atoms are warp-coalesced (fewer HW packets)
+- Reductions are small (< several KB)
+
+TMA bulk reduce wins when:
+- Very large bulk transfer (KB-MB range, not just 512 B)
+- You want to overlap the reduce with other work (it's async, using mbarrier)
+- Reducing from DSMEM (which atomics can't do directly)
+
+Verified: B300 supports `cp.reduce.async.bulk` with `.add.u32` reduction operator. Other operators available per PTX manual: `.min.*`, `.max.*`, `.and.*`, `.or.*`, `.xor.*`, `.inc.*`, `.dec.*`.
+
+
 # Shared memory limits + dynamic vs static performance
 
 ```
