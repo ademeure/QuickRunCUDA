@@ -6043,3 +6043,17 @@ Each doubling of CTA size adds ~7 cy to barrier cost. **128-thread CTAs hit the 
 
 `__threadfence()` (GPU-wide) costs 10× a CTA barrier — only use when sharing data across CTAs.
 
+
+## __nanosleep precision (refined)
+
+| req (ns) | actual (ns) |
+|----------|-------------|
+| 0-2 | 32 |
+| 3 | 64 |
+| 4-16 | 32 |
+| 24-56 | 32 |
+| 64 | 128 |
+| 72-80 | 96 |
+
+**B300 __nanosleep quantum: 32 ns** (matches globaltimer resolution at 31.25 MHz). Minimum useful sleep = 32 ns. Request values < 32 ns effectively do nothing. Requests in 64-256 ns range round to 32-128 ns multiples.
+
