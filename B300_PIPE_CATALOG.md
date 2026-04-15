@@ -4674,3 +4674,15 @@ The shared atomic path (ATOMS) is in-SM — no L2/NVLink traversal. Even for CTA
 Global atomic contended-to-A[0]: performance splits sharply — at bs=32 with warp-coalescing, only 1 HW packet per warp, so 175 cy/op is warp-serialized. At bs=1024, 32 warps per CTA × 148 CTAs = 4736 warps all queueing at the single L2 slice → 5882 cy/op.
 
 For **in-kernel counters**, reducing-shared → single global-atomic of the final count is far cheaper than N global atomics.
+
+### cvta (generic ↔ shared address space conversion) cost
+
+| pattern | cy/iter |
+|---|---:|
+| `cvta.to.shared` (generic → shared) only | 23.3 (= baseline loop) |
+| `ld.shared` with explicit cvta | 51 |
+| generic pointer load (compiler auto-resolves) | 51 |
+
+**cvta is essentially free** — the compiler automatically inserts it when needed and it's folded into the LSU instruction. Explicit cvta and implicit (compiler-resolved) generic→shared loads have identical cost.
+
+No performance benefit to manually using `__cvta_*` intrinsics vs just writing `smem[i]` directly.
