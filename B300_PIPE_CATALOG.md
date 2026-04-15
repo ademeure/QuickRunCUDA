@@ -4012,3 +4012,14 @@ With 10 clocks: emits ~5 UIADD3s in a chain — saves 10 vector regs vs the all-
 - **SMSP friction:** sustained dispatch peaks at `smsp__inst_executed = 0.99` (PRMT + FFMA2 at 8:8, confirmed by ncu). F2FP specifically shows 0.84 max when paired with FFMA2 — a mild regfile-port or latency quirk unique to F2FP.
 - **Kernels** live in `tests/bench_`* with one-op-per-`OP` macro so you can re-run any measurement with `./QuickRunCUDA tests/bench_<name>.cu -H '#define OP N …'`.
 
+
+### Cross-warp poll latency — intra-SM (same CTA)
+
+Writer warp does `atomicExch(A, i)`, reader warp (different warp, same CTA) polls with `ld.global.cv.u32` until observed. Measure `t_observed - t_written`:
+
+- min: 1,335 cy
+- median: ~18,000 cy (inflated — reader slower than writer's 1µs cadence, misses intermediate values)
+
+The min ~1,335 cy is the lower bound for "time from write visible via cv-load to another warp". Matches roughly 1 L2 write commit + 1 L2 read path.
+
+For true cross-GPU polling, need separate kernels on both GPUs synchronized via shared atomic — complex to set up in single-process harness; skipped.
