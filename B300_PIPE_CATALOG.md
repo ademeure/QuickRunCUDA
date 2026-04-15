@@ -4585,3 +4585,25 @@ Launching 148 CTAs × 32 threads, each reads `%smid`:
 For 296 CTAs (2 per SM): only 142/148 SMs get both rounds from the first 148 CTAs — launch scheduler may occupy fewer SMs than expected if CTAs overlap in timing.
 
 See `side_aware.cu` for an SMID-aware algorithm that uses this mapping explicitly.
+
+### Register pressure / spill thresholds (ncu-measured)
+
+Per-thread register count vs FFMA throughput (148×256 threads × 8+chain FFMA):
+
+| regs/thread | pipe_fma % | FFMA inst/ns | LMEM ld/st/s |
+|---:|---:|---:|---|
+| 8   | 98.74% | 34,800 | 0 / 0 |
+| 16  | 99.16% | 35,097 | 0 / 0 |
+| 24  | 99.35% | 35,207 | 0 / 0 |
+| 32  | 99.03% | 34,483 | 0 / 0 |
+| 48  | **72.53%** | 23,615 | 0 / 0 (no spill, but occupancy drop) |
+| 64  | 69.22% | 17,834 | 0 / 0 |
+| 128 | 77.70% | 24,721 | 0 / 0 |
+| 255 | **28.27%** | 10,159 | **56 / 56** (actual LMEM spill) |
+
+**Three regimes:**
+1. **≤32 regs/thread**: near-peak 99% pipe_fma. Full occupancy (≥48 warps/SM).
+2. **48-128 regs**: 70-78% pipe_fma due to reduced occupancy (fewer warps/SM, less latency hiding). No actual spills.
+3. **>200 regs**: triggers LMEM spills, catastrophic drop (28%).
+
+Design: aim for ≤32 regs/thread when possible. Use `__launch_bounds__` to cap register allocation. Above that, trade off more regs for less re-computation selectively. Avoid >200 regs (real spills).
