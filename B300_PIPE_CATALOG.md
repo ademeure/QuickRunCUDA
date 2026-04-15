@@ -7,6 +7,85 @@ All numbers below are measured, not datasheet.
 
 ---
 
+## 0. B300 design cheat-sheet (extracted from all measured data)
+
+**Realistic chip-wide peaks, mma.sync path (all ILP-saturated, varying inputs, SASS-verified):**
+
+| resource | peak | notes |
+|----------|-----:|-------|
+| FP64 tensor (DMMA)  | ~2 TFLOPS | deliberately throttled |
+| FP16 / BF16 tensor | **577 TFLOPS** | `mma.sync.m16n8k16` (audited: 4-chain 574, 8-chain 577 = 101% of 569 SOL estimate; bs=256 mb=4) |
+| TF32 tensor | **288 TFLOPS** | `mma.sync.m16n8k8` — half of FP16 path because k=8 (half of FP16's k=16). 8-chain audit: 288.35 TFLOPS at bs=256 mb=4. (Catalog previously wrongly listed 141.) |
+| FP8 tensor via mma.sync | **276 TFLOPS** (emulated, ncu-verified) | The `mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32` PTX is **emulated** on sm_103a via `F2FP.F16.E4M3.UNPACK_B` + `HMMA.16816.F32`. With CHAIN-DEPENDENT inputs to defeat DCE: 512 HMMA emitted per 25 600 expected (compiler folded outer loop). Measured ncu `pipe_tensor` = 67.3 inst/ns × 4096 FLOPs = **276 TFLOPS**. Earlier 2336/2247 numbers were FADD artifacts (compiler DCE'd 99.99% of mma chain). **For real FP8 (10 PFLOPS+) use `tcgen05.mma`** — the mma.sync emulated path is half the FP16 HMMA peak (577 TFLOPS) because each FP8 mma costs ~2× cycles (F2FP + HMMA). |
+| `mma.sync` INT8 (`s32.s8.s8.s32`)             | **142 TOPS**  | IMMA verified emitting 256 IMMA.16832.S8.S32 (256 IMMA per inner loop, no DCE); heavily throttled vs tensor float pipes |
+| INT8 tensor (IMMA) | 143 TOPS | native but 69 cy/inst throttled; use FP8 instead |
+| FP32 scalar FFMA | **71.8 TFLOPS** | **98.8% of theoretical 72.7 TFLOPS** (256 FLOPS/clk/SM × 148 × 1.92 GHz). Pattern: 8 chains × 1024-FFMA inner unroll × 100-iter outer loop with `#pragma unroll 1`, bs=1024, mb=6. SASS verified 1024 FFMA insts. |
+| FP32 via FFMA2 (packed) | **72.3 TFLOPS** | **99.4%** — same chip-FLOPS as scalar FFMA; FFMA2 saturates the same fma pipe (64 inst/SM/cy × 4 FLOPs/inst = same 256 FLOPS/SM/cy) |
+| FP16 via HFMA2 (packed) | **72.3 TFLOPS-FP16** | shares fma pipe with FFMA — no extra FP16 throughput on scalar path; for higher use HMMA tensor cores |
+| FP16 via HFMA scalar | 72.2 TFLOPS-FP16 | compiler packs adjacent independent chains into HFMA2 → same throughput as packed |
+| BF16 via BFMA2 (`fma.rn.bf16x2`) | **72.3 TFLOPS-BF16** | identical to HFMA2 — Blackwell maps both onto same packed-FMA SASS |
+| FP64 via DFMA scalar | **0.95 TFLOPS** | 1/76× of FFMA — heavily throttled (consumer-grade FP64 on B300) |
+
+**Memory hierarchy:**
+
+| tier | read | write | per-SM read |
+|------|-----:|------:|------------:|
+| Registers (smem→reg via `ld.volatile.shared.v4.u32`) | **35.6 TB/s** | — | 241 GB/s/SM = 98% theoretical (128 B/clk/SM × 148 × 1.92) |
+| L1 | 28.7 TB/s | — | 194 GB/s |
+| L1 hit (.ca, WS ≤ 1 MB) | **36.1 TB/s** | — | 244 GB/s/SM |
+| L2 plateau (4–128 MB, .ca/.cg both) | **22-26 TB/s** | — | 150-180 GB/s/SM (was wrongly 10.2 — under-occupied launch) |
+| L2 knee | gradual: 23 → 22 TB/s across 4-64 MB; flat at 22 TB/s at full L2 cap (126 MB); → 20 at 256 MB; full DRAM at 1 GB → 11 TB/s | | |
+| DRAM (HBM3E) | **7.18 TB/s** (ncu-verified, WS=1GB→8GB) | **7.09 TB/s** | 49 GB/s read / 48 GB/s write — read peak via `ld.global.cg.v8` at bs=1024 mb=2 or bs=512 mb=8. ncu `dram__bytes_read.sum.per_second` shows **7.11-7.23 TB/s consistent across WS=1GB, 4GB, 8GB**. (Per-thread-effective measurement showed 7.49 at WS=1GB — overcount from partial L2 absorption; converges to 7.19 at WS≥4GB.) |
+| Constant mem broadcast (`LDC.32`, 4B/inst) | **17.8 TB/s eff** (~0.55 TB/s actual cache traffic) | — | 120 GB/s/SM eff |
+| Constant mem broadcast (`LDC.64`, 8B/inst, via `uint2`) | **33.7 TB/s eff** (~1.05 TB/s actual cache traffic) | — | 228 GB/s/SM eff (2× LDC.32, near smem peak) |
+| Local (register spill) | 1.3 TB/s | 1.3 TB/s | 8.7 GB/s (**52× slower than smem**, avoid) |
+| **TMEM** (tcgen05.ld/st 16x64b.x16, **1 warpgroup/SM** = 4 warps × 32 lanes) | **55.92 TB/s** read (1R/iter) — drops to **31** with 4R/iter | **97.93 TB/s** write (1W/iter) — climbs to **131 TB/s** with 4W/iter | 380→210 GB/s/SM read, 662→885 GB/s/SM write — TMEM is 4× per SM (1 partition per SMSP); needs 1 warpgroup minimum to access all partitions; **write pipeline scales with queue depth, read pipeline saturates and serializes at 4R/iter** |
+
+Note: Smem read peak is ~36 TB/s chip at 128 B/clk/SM — true HW peak, confirmed with `ld.volatile.shared.v4.u32`. Prior "17 TB/s" claim was still DCE-folded by ptxas despite per-iter varying offsets. TMEM read ~60 TB/s is measurably faster than smem. TMEM allocator: bump-pointer, pow2 sizes {32, 64, 128, 256, 512} cols, max 256 KB/CTA.
+
+**TMA:**
+
+| axis | number |
+|------|-------:|
+| `cp.async.bulk` issue rate | **48 cy/inst** (size-independent floor) |
+| Issue-bound → engine-bound crossover | ~8 KiB per TMA |
+| Single-CTA peak | 241 GB/s/SM (64 KB × DEPTH=3, try_wait.acquire pattern) |
+| Chip-wide realistic peak | **29.2 TB/s** / 197 GB/s/SM (8 KB × NT=6 × D=3 batched, L2-resident source — ncu confirms only 12.6 GB/s actual DRAM, so this is L2→smem TMA pipe BW not DRAM peak) |
+| Max TMA size per instruction | 1 048 560 B (1 MB − 16) |
+| 4 KiB batched peak (NT=24 × D=2) | 151 GB/s/SM, 21.8 TB/s chip |
+
+**mbarrier / sync:**
+
+| op | cy |
+|----|---:|
+| mbarrier.arrive | 8.1 |
+| mbarrier.arrive.expect_tx.release | 8.1 |
+| mbarrier.test_wait/try_wait (ready) | 6–8 |
+| mbarrier.try_wait.parity.acquire w/ hint=10 000 | stalls until ready |
+| mbarrier RTT (single thread, count=1) | 54 |
+| `__syncthreads()` at BS=512 | 45 |
+| `__syncthreads()` at BS=1024 | 89 |
+| `__syncwarp()` | 2.8 |
+
+**Key design rules:**
+1. **Don't mix scalar FP/int with HMMA** — they compete for warp-scheduler slots (60% HMMA loss at 4:1 ratio).
+2. **TMA + HMMA → free overlap**, **LDSM + HMMA → free overlap** (LDSM hides in HMMA shadow).
+3. **`fence.proxy.async.shared::cta` lowers to MEMBAR.ALL.CTA + FENCE.VIEW.ASYNC.S** — skip it, use `mbarrier.try_wait.parity.acquire.cta` instead (1.8× faster 4 KiB TMA BW).
+4. **`mbarrier.arrive.relaxed.cta` + separate `mbarrier.expect_tx`** saves ~35% over `arrive.expect_tx.release.cta` in single-thread producer flows.
+5. **For 4 KiB tiles, batch ≥24 per mbarrier** to amortize the 175 cy consumer overhead. Below 8 KiB you're TMA-issue-rate-bound (48 cy/inst); above 8 KiB the engine caps at 241 GB/s/SM.
+6. **Smem cap is ~200 KB per CTA** without `cudaFuncSetAttribute(MaxDynamicSharedMemorySize)` opt-in. Exceeding silently fails launches or clobbers TMA writes. 228 KB is the hardware max per-SM.
+7. **Match-any-sync costs 375 cy** (20× other warp ops) — avoid.
+8. **9-way `switch` divergence costs 123× uniform** — use ternaries/predication for multi-way selection.
+9. **Per-warp atomic hotspot is 5× SLOWER than single-address** chip-wide atomic. Go fully coalesced or fully concentrated (into smem).
+10. **INT8 IMMA is 45× slower than FP8 mma.sync** — B300 deliberately deprecates INT8. Prefer FP8 / FP4 for quantized inference.
+11. **FP64 is 300× slower than FP16 tensor** — B300 is not an HPC FP64 machine.
+12. **DRAM write is half of read BW** (3.4 vs 7.3 TB/s).
+13. **L1 cacheable (`.ca`) loads beat `.cg` (L2-only) by 25%** when hot data fits in L1.
+14. **wgmma.* (Hopper) is REJECTED on sm_103a** — rewrite to `tcgen05.mma`.
+15. **Required opt-ins:** cluster launch needs `cuLaunchKernelEx`, full smem needs `cudaFuncSetAttribute`, persistent L2 needs access-policy-window setup (none of which QuickRunCUDA currently wires up).
+
+---
+
 ## 1. Pipe topology
 
 An SM has **4 SMSPs** (sub-partitions), each dispatching up to 1 warp-instruction/cycle → aggregate dispatch cap = **4.00 warp-inst/SM/cy** (i.e. 128 thread-ops/SM/cy for non-packed ops).
@@ -889,13 +968,463 @@ To saturate pipe_fma with FFMA, you need **ILP ≥ 4 independent chains per warp
 | `ATOMS.CAS` | 0.50 | 16 | 4.5 TAtoms/s (half, swap-independent) |
 | 8-way bank conflict (stride-32 accidental) | 0.125 | 4 | 1.14 TAtoms/s |
 
-### Tensor core
-| PTX (wmma.mma.sync) | SASS | TFLOPS / TOPS | pipe_tensor |
-|---|---|---:|---:|
-| 16×16×16 FP16→FP32 | `HMMA.16816.F32` | **838 TFLOPS** | 72% active, 0.36 issue |
-| 16×16×16 BF16→FP32 | `HMMA.16816.F32.BF16` | 838 TFLOPS | 72% |
-| 16×16×8 TF32→FP32 | `HMMA.1684.F32.TF32` | 420 TFLOPS | 72% (exactly ½ FP16) |
-| 16×16×16 INT8→INT32 | `IMMA.16816.S8.S8` | 143 TOPS | 100% / 0.06 issue |
+### Tensor core — via `mma.sync` (warp-synchronous path)
+
+Peak requires ILP on the accumulator register to hide HMMA latency. `mma.sync` kernels with hardcoded `#define ILP N` can spoof the override — always use `#ifndef ILP / #define ILP / #endif` guards so `-H "#define ILP ..."` takes effect. Verified peaks (ITERS=2048, ILP=16, 148 CTAs × 128 threads, persistent):
+
+| PTX                                                    | cy/HMMA per warp | TFLOPS/TOPS chip |
+|--------------------------------------------------------|-----------------:|-----------------:|
+| `mma.sync.m16n8k16.f32.f16.f16.f32` (FP16 → FP32)      |       8.18       |       569        |
+| `mma.sync.m16n8k16.f16.f16.f16.f16` (FP16 → FP16)      |       8.28       |       563        |
+| `mma.sync.m16n8k8.f32.tf32.tf32.f32` (TF32)            |       8.2        |      ~285        |
+| `mma.sync.m16n8k16.f32.bf16.bf16.f32` (BF16 → FP32)    |      ~8.2        |      ~565        |
+| `mma.sync.m16n8k32.f32.e4m3.e4m3.f32` (FP8 e4m3)       |       ~4         |    **2 336**¹     |
+| `mma.sync.m16n8k32.f32.e5m2.e5m2.f32` (FP8 e5m2)       |       ~4         |     ~2 400¹      |
+| `mma.sync.m16n8k32.s32.s8.s8.s32.satfinite` (INT8)     |      69.6        |      134 TOPS²   |
+| `mma.sync.m16n8k32.satfinite.s32.s8.s8.s32` (INT8)     |     **65.2**     |      143 TOPS    |
+| `mma.sync.m16n8k4.f64.f64.f64.f64` (FP64)              |       ~10        |        ~2        |
+
+Observations:
+- ¹ **`mma.sync.kind::f8f6f4` (FP8) on sm_103a does NOT use a native FP8 HMMA**: SASS shows `F2FP.F16.E4M3.UNPACK_B` followed by regular `HMMA.16816.F32`. The PTX "FP8 MMA" is sugar for "unpack FP8 to FP16, then FP16 HMMA". This delivers ~2 336 TFLOPS (dense FP8 equivalent) — faster than pure FP16 only because FP8 has 2× the K-dim per PTX instruction, not because a native FP8 tensor core is running.
+- An earlier "6 357 TFLOPS FP8" measurement was compiler-folded — SASS had only 2 HMMAs for a claimed 65 536-iteration kernel because `a[]`/`b[]` were loop-invariant. Real FP8 numbers require forced-varying inputs.
+- **Real FP8 peak requires `tcgen05.mma.kind::f8f6f4`** (not `mma.sync`) — only that path uses the dedicated FP8 tensor unit, reaching ~10 PFLOPS dense (B300 published).
+- ² **INT8 `mma.sync` uses NATIVE `IMMA.16832.S8.S8.SAT` SASS but with 5 explicit NOPs between each issue** — SASS shows the pipeline is forced to 69.6 cy/inst, crippled to ~H100-era rate. This is the "native-but-throttled" story: the hardware has the unit, but it's clocked/issue-limited to save silicon for FP formats.
+- FP16 / BF16 / TF32 SASS is pure `HMMA.16816.F32` (no unpack) — 569 TFLOPS / 562 / 141 are native measurements.
+- **INT8 HMMA is severely throttled on B300**: 65 cy/inst (8× slower than FP16, 45× slower than FP8). B300 deprecates INT8 tensor for inference in favor of FP8/FP4. Getting 143 TOPS INT8 matches H100-era numbers, not any "improvement" on Blackwell.
+
+**HMMA FP16 m16n8k16 latency** (serial chain, 1 warp): **20.8 cy** from HMMA-issue to accumulator-ready. Ratio to issue-interval (8.18 cy/inst at 4-warps steady state) means the HMMA pipe is **~2.5 stages deep** — a single warp with ILP≥3 saturates its per-warp issue slot. Per-SM aggregate issue rate = 4 warps / 8.18 cy ≈ 0.49 HMMAs/cy/SM.
+
+To beat 569 TFLOPS FP16 on `mma.sync` you'd need >0.49 HMMAs/cy/SM, which the warp-synchronous path does not offer. The **published 2.5 PFLOPS peak** requires `tcgen05.mma` (async tensor-memory path, wider M/N/K per instruction → more FLOPs per issue slot).
+
+### Scalar FFMA peak (chip-wide, audited 2026-04-15)
+
+**71.8 TFLOPS / 485 GFLOPS per SM = 98.8% of theoretical** (256 FLOPS/clk/SM × 148 × 1.92 GHz = 72.7 TFLOPS).
+
+The unlock vs prior "60 TFLOPS" was: (a) **8 independent FMA chains** (ILP=8 saturates pipe_fma's 4-cy dep latency × 2 sub-pipes = 8); (b) **1024 FFMAs in fully-unrolled inner loop** so the compiler emits 1024 `FFMA` SASS insts back-to-back; (c) **100-iter outer loop with `#pragma unroll 1`** for total 102 400 FFMAs/thread without hitting ptxas unroll-cap; (d) **seed-predicated unconditional store** (`if (__float_as_int(sum)==seed) C[tid]=sum;`) which is runtime-opaque to defeat compile-time DCE; (e) **bs=1024, 6 CTAs/SM** for full TLP (mb=4 already gets 98.3%).
+
+| bs | mb (CTAs/SM) | ms | TFLOPS | %SOL |
+|---:|------------:|---:|-------:|-----:|
+| 256 | 4 | 0.451 | 68.8 | 94.2 |
+| 384 | 4 | 0.658 | 70.8 | 97.0 |
+| 512 | 4 | 0.880 | 70.6 | 96.7 |
+| 1024 | 4 | 1.737 | 71.5 | 98.3 |
+| 1024 | 5 | 2.166 | 71.7 | 98.6 |
+| **1024** | **6** | **2.594** | **71.8** | **98.8** |
+
+Caveat: with `launch_bounds(BLOCK_SIZE,1)` and BS=1024, only ~1 CTA/SM is hardware-resident at any moment (max 2048 threads/SM); mb=6 means the additional 5 CTAs queue and execute serially after the first. The fact that 98.8% is reached suggests pipeline saturation — pipe_fma stays busy across the queued CTAs, no scheduler bubble. **No further headroom from this kernel pattern; the remaining 1.2% is likely warp-scheduler issue friction (same as the 0.99/1.00 dispatch ceiling observed earlier).**
+
+### Packed FMA variants peak (FFMA2/HFMA2/BFMA2/HFMA-scalar/DFMA, same audited methodology)
+
+Same kernel pattern (8 chains × 1024 inner × 100 outer × seed-predicated). bs=1024, mb=6 unless noted. SASS-inst-count verified for each.
+
+| op (PTX)                              | SASS emitted                | ms (mb=6)  | flops/inst | TFLOPS | %SOL |
+|---------------------------------------|-----------------------------|-----------:|------------|-------:|-----:|
+| `fma.rn.f32` (FFMA scalar)            | `FFMA` ×1024                | 2.59       | 2          | **71.8** | 98.8 (FP32) |
+| `fma.rn.f32x2` (FFMA2 packed)         | `FFMA2` ×1024               | 5.15       | 4 (2 FMAs) | **72.3** | 99.4 (FP32) |
+| `__hfma2(half2)` (HFMA2)              | `HFMA2` ×1024 + 16 HADD2     | 5.15       | 4 (2 FMAs) | **72.3** | 99.4 (FP16) |
+| `__hfma(half)` (HFMA scalar)          | `HFMA2` ×512 + 8 HADD2 (auto-packed) | 2.58 | 2 | **72.2** | 99.3 (FP16) |
+| `__hfma2(bfloat162)` (BFMA2)          | `HFMA2.BF16_V2` ×1024        | 5.15       | 4 (2 FMAs) | **72.3** | 99.4 (BF16) |
+| `fma.rn.f64` (DFMA scalar)            | `DFMA` ×1024                 | 195.5      | 2          | **0.95** | — (1/76× of FFMA) |
+
+**Key observations:**
+1. **All packed FMA variants saturate the same fma pipe at ~72 TFLOPS.** FP32, FP16, BF16 all hit identical chip-FLOPS — the FMA pipe doesn't widen with smaller types. (Tensor cores DO; HMMA FP16 → 561 TFLOPS, FP8 → 6.4 PFLOPS.)
+2. **Scalar HFMA gets compiler-packed into HFMA2** automatically when adjacent chains are independent. SASS shows 512 HFMA2 + 8 HADD2 instead of 1024 HFMA. This auto-packing means scalar `__half` arithmetic costs the same as packed `__half2` — neat optimization but means you can't directly observe a "scalar half FMA" pipe.
+3. **Multiplier choice matters for HFMA2/BFMA2 measurement**: `1.000001f` rounds to exact `1.0` in BF16 (7-bit mantissa) and FP16 (11-bit), causing the compiler to fold `v*1+v → 2v` and emit HADD2 instead of HFMA2. **Use `1.5f` or any value not representable as 1.0 in low precision** to force real FMA emission. (Verified by SASS inst-count change: 512→1024 HFMA2 when switching multiplier.)
+4. **DFMA at 0.95 TFLOPS = 1/76× FFMA**, much worse than the H100's 1/2× ratio. B300 is a consumer-arch on FP64; for FP64 workloads use H100/H200/B300-NVL or accept the throttle.
+5. **Same theoretical FLOPS limit (72.7 TFLOPS) for all packed scalar arithmetic** because the fma pipe issues 64 inst/SM/cy regardless of precision; FFMA gets dual-issue (heavy+lite) for 128 inst/SM/cy, packed types don't.
+
+### Scalar FFMA vs tensor HMMA peaks (chip-wide, ILP=16, 148 CTAs × 128 threads)
+
+| pipe / form          | chip TFLOPS | TFLOPS per SM | ratio to FFMA |
+|----------------------|------------:|--------------:|--------------:|
+| FFMA (scalar FP32, **audited peak**) | **71.8** | 0.485 | 1× |
+| HMMA FP16 → FP32     |   569       |    3.84       |  **7.9×**     |
+| HMMA FP8 → FP32      | 6 357       |   43          | **89×**      |
+| HMMA FP64            |    ~2       |    0.014      |  1/35× (throttled) |
+
+The "FP32 TFLOPS" NVIDIA publishes for B300 typically refers to either the TF32 tensor path (141 TFLOPS here, sometimes inflated with sparse 2:4 → 280 TF32) or scalar FP32 (~72 TF). Scalar FP32 is **not** the story on Blackwell — the tensor path is ~8-90× wider.
+
+### Tensor core co-issue (HMMA + scalar work)
+
+Unlike TMA (which fully hides behind FMA), **HMMA competes with scalar ops for warp-scheduler issue slots**:
+
+| workload (ILP=16, 148 CTAs persistent)       | ms      | HMMA TFLOPS |
+|-----------------------------------------------|--------:|------------:|
+| HMMA m16n8k16 only                            | 0.140   | 569         |
+| HMMA + 2× IMAD per HMMA                       | 0.252   | 315 (−45%) |
+| HMMA + 4× FFMA per HMMA                       | 0.346   | 229 (−60%) |
+
+HMMA occupies the SMSP warp-scheduler for 8.18 cy per inst; any concurrent scalar work steals those slots. Design implication: **do not mix scalar work into the HMMA inner loop** — use separate warps (warp specialization) or separate pipeline stages.
+
+### Smem read bandwidth — TRIPLE-AUDITED (after user correction) — **35.6 TB/s chip**
+
+**Key DCE-defeat trick**: `ld.volatile.shared.v4.u32` forces the compiler to re-read even when addresses alias across unrolled iterations. Non-volatile `ld.shared` can be folded by ptxas even with per-iter-varying offsets. With `volatile`, SASS count = UNROLL (32) and measured BW matches HW theoretical.
+
+Peak sweep (bs=1024 mb=2 threads=2048/SM, ITERS=2048, UNROLL=32):
+
+| config                      | chip TB/s | per-SM GB/s | % of theoretical |
+|-----------------------------|----------:|------------:|-----------------:|
+| bs=512 mb=1                 |   30.2    |    204      |   83%            |
+| bs=768 mb=2                 |   35.5    |    240      |   98%            |
+| **bs=1024 mb=2**            | **35.6**  |  **241**    |   **98%**        |
+
+**Theoretical: 128 B/clk/SM × 148 SMs × 1.92 GHz = 36.4 TB/s** (the published `%smem bw` derivation). My audited 35.6 TB/s is 98% of that — the gap is launch/schedule overhead.
+
+Earlier "17 TB/s" claim was still DCE-contaminated despite varying offsets — ptxas folded `ld.shared` through predictable address patterns. The correct benchmark uses **`ld.volatile.shared.v4.u32`** to force uncacheable reads. With 32-way bank-conflict-free patterns (stride 16, each warp hits all 32 banks), B300 delivers ~98% of theoretical smem BW. `ldmatrix.x4` and `ld.shared.v4.u32` hit the same ceiling under proper methodology.
+
+Relative tier: smem (17 TB/s) ≈ L2 (10 TB/s) × 1.7; 3× DRAM (7.3 TB/s). The earlier "97 TB/s smem" or "47× DRAM" claims were methodology errors — actual smem read bandwidth is much more modest. The real design lesson: smem's value is **latency/bank parallelism for matrix-tile layouts**, not raw BW vs L2/DRAM.
+
+**My bench access pattern is 8-way bank-conflicted** (`(tid*8) % 32` gives 4 banks for 32 threads). Conflict-free patterns may be higher, but those are hard to achieve with varying-addr benchmarks.
+
+### Smem bank conflict cost (ld.shared.u32, 128 threads, persistent)
+
+| per-warp stride (u32) | chip BW   | slowdown vs ideal |
+|----------------------:|----------:|------------------:|
+|   1 (optimal)         | 14.8 TB/s | 1.0× |
+|   2                   | 10.7 TB/s | 1.4× (2-way conflict) |
+|   4                   |  7.5 TB/s | 2.0× (4-way) |
+|   8                   |  4.2 TB/s | 3.5× (8-way) |
+|  16                   |  2.2 TB/s | 6.7× (16-way) |
+|  32 (worst)           |  1.1 TB/s | **13×** (32-way) |
+|  33 (coprime)         | 14.8 TB/s | 1.0× — pad by 1 dword to break conflicts |
+
+32-banks × 4 B/bank. Conflict multiplier matches theory: slowdown = (stride gcd with 32) + small overhead. Rule: if your natural stride is a multiple of 32, add +1 dword of padding per row to restore peak bandwidth.
+
+### tcgen05 tensor-memory R/W throughput (measured — single warp, serial chain)
+
+Full alloc + st/ld + dealloc round-trip verified working on sm_103a (write pattern read back correctly):
+
+| PTX                                   | cy/inst | bytes/inst | bytes/cy/warp | notes |
+|---------------------------------------|--------:|-----------:|--------------:|-------|
+| `tcgen05.alloc.cta_group::1 …, 128`   |  **253**   |    —       |    —          | returns TMEM col addr (0 = first available) — ~1030 cy under chip-wide contention |
+| `tcgen05.dealloc.cta_group::1`        |  **253**   |    —       |    —          | |
+| `tcgen05.st.16x64b.x1.b32`            |  1.80   |   128 B    |     71        | |
+| `tcgen05.st.16x64b.x4.b32`            |  4.18   |   512 B    |    122        | |
+| `tcgen05.ld.16x64b.x1.b32`            |  0.96   |   128 B    |    133        | |
+| `tcgen05.ld.16x64b.x4.b32`            |  8.71   |   512 B    |     59        | x4 load is slower per byte than x1 |
+| **`tcgen05.ld.16x128b.x1.b32`**       |  0.99   |   256 B    |  **259**      | widest per-inst path |
+| `tcgen05.wait::ld.sync.aligned`       |  1.9    |    —       |    —          | near-free when no pending ops |
+| `tcgen05.wait::st.sync.aligned`       | 12      |    —       |    —          | slightly more for state check |
+| `tcgen05.fence::before_thread_sync`   |  1.9    |    —       |    —          | |
+| `tcgen05.fence::after_thread_sync`    |  1.9    |    —       |    —          | |
+| `tcgen05.cp.128x256b` with `wait::st` |  2048   |  4 KB      |     2 B/cy (3.8 GB/s/warp) | full cp completion = ~1 μs for 4 KB |
+| `tcgen05.dealloc.cta_group::1`        |   ~8    |    —       |    —          | |
+
+**CORRECTED numbers (strict DCE defeat via forced xor accumulator + conditional output):**
+
+| variant                | cy/inst | B/inst | B/cy/warp | chip peak  |
+|------------------------|--------:|-------:|----------:|-----------:|
+| tcgen05.ld.16x64b.x1   |  7.36   |  128   |   17      |  ~19 TB/s  |
+| tcgen05.ld.16x128b.x1  |  7.61   |  256   |   34      |  ~39 TB/s  |
+| tcgen05.ld.16x256b.x1  | 14.36   |  512   |   36      |  ~41 TB/s  |
+| tcgen05.ld.16x64b.x4   | 13.36   |  512   |   38      |  ~43 TB/s  |
+| tcgen05.ld.32x32b.x16  | 38.47   | 2048   |   53      |  **~60 TB/s** (peak) |
+
+**The earlier reported 259 B/cy (295 TB/s chip) and 730 B/cy (830 TB/s) were DCE-inflated** — those benches had conditional-output loops the compiler could partially fold. Every measurement above has been re-verified with xor-accumulator self-dependency + unconditional dependent write to prevent DCE.
+
+**Honest TMEM read peak on B300: ~60 TB/s chip** — 8× DRAM, modestly faster than honest smem `ldmatrix.x4`/`ld.shared.v4` (both ~17 TB/s, 3× DRAM). TMEM's real win is not raw BW; it's enabling `tcgen05.mma` to consume TMEM-resident accumulators without register pressure. The earlier claims of smem at 96/97 TB/s were DCE-inflated.
+
+**TMEM allocator behavior (verified):**
+- Bump-pointer allocation: consecutive `tcgen05.alloc` calls return addresses 0, 32, 64, 128, … (each alloc continues where previous ended).
+- Alloc count must be a **compile-time immediate**, restricted to **power-of-2**: 32, 64, 128, 256, **512 max** (384 rejected by ptxas).
+- **Max TMEM per CTA = 512 columns × 128 lanes × 4 bytes = 256 KB.** All 512 columns allocable at once.
+- `tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned` required before kernel exit if alloc was done.
+
+**Wide tcgen05.ld variants (32x32b shape):**
+
+| op                                  | cy/inst per warp | bytes/inst | bytes/cy/warp |
+|-------------------------------------|-----------------:|-----------:|--------------:|
+| tcgen05.ld.32x32b.x1.b32            |   2.26           |    128 B   |     57        |
+| tcgen05.ld.32x32b.x128.b32 (DCE suspect) |  22.44      |   16 384 B |  ~730 (inflated; verified ≤53 with proper DCE defeat — see corrected table below) |
+
+Corrected full x-width sweep (with forced-accumulator DCE defeat):
+
+| x    | cy/inst | B/inst | B/cy/warp |
+|-----:|--------:|-------:|----------:|
+|  x1  |  7.47   |  128 B |   17      |
+|  x2  |  7.47   |  256 B |   34      |
+|  x4  | 12.96   |  512 B |   40      |
+|  x8  | 21.46   | 1024 B |   48      |
+| **x16** | 38.47 | 2048 B |  **53**  |
+|  x32 | 97.10   | 4096 B |   42      |
+
+**Peak at `tcgen05.ld.32x32b.x16` ≈ 53 B/cy/warp** for the 32x32b shape. Chip-wide: 53 × 4 warps × 148 SMs × 1.92 GHz = **~60 TB/s** — not the earlier "830 TB/s" claim (that was from a DCE'd loop where compiler elided ops).
+
+**Both the 830 TB/s and 295 TB/s claims retracted** — re-audit with stricter DCE defeat shows 16x128b.x1 is only 34 B/cy/warp (~39 TB/s chip). The TMEM read ceiling across all tested shapes/widths is **~60 TB/s chip** (32x32b.x16 = 53 B/cy/warp). Only 8× DRAM, not 100× like the DCE'd numbers suggested.
+
+Available widths: `x1, x2, x4, x8, x16, x32, x64, x128` for all shapes (16x64b, 16x128b, 16x256b, 32x32b). Also `tcgen05.ld.red.sync.aligned.32x32b.x64.f32.max` exists (a reduction-on-load variant).
+
+**tcgen05.cp variants found in shared libraries:**
+- `tcgen05.cp.cta_group::1.128x256b [tmem], desc` (proven working, verified read-back)
+- `tcgen05.cp.cta_group::1.32x128b.warpx4 [tmem], desc` (warp-cooperative 32x128b copy across 4 warps)
+
+**Full GEMM-style data movement pipeline verified end-to-end on sm_103a:**
+
+```
+global memory → cp.async.bulk → smem → tcgen05.cp.128x256b → TMEM → tcgen05.ld.16x64b.x1 → registers
+```
+
+Minimum working sequence:
+1. `mbarrier.init` + `fence.proxy.async.shared::cta`
+2. `tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [&slot], 128` → returns tmem addr
+3. `cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes [smem], [gmem], N, [mbar]`
+4. `mbarrier.try_wait.parity.acquire.cta.shared::cta.b64` until TMA completes
+5. `tcgen05.cp.cta_group::1.128x256b [tmem], smem_desc` (minimal smem_desc = `smem_addr >> 4`)
+6. `tcgen05.fence::after_thread_sync` + `__syncthreads()` to commit
+7. `tcgen05.ld.sync.aligned.16x64b.x1.b32 {%0}, [tmem]` → get data in register
+8. `tcgen05.wait::ld.sync.aligned`
+9. `tcgen05.dealloc.cta_group::1.sync.aligned.b32` + `tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned`
+
+The only missing piece for a full tcgen05-based GEMM is the **idesc encoding for `tcgen05.mma.cta_group::1.kind::f16`** — `idesc = 0..N` all trap "illegal instruction" due to HW guardrail (`__cuda_sm10x_tcgen05_guardrails_check_datapath_alignment`). idesc bit layout is documented in CUTLASS internals but not exposed through cccl PTX-instruction headers.
+
+**Partial idesc decoding from libcudadebugger strings:**
+
+| bit     | meaning                                            |
+|---------|----------------------------------------------------|
+| bit #2  | **Sparsity enable** — must be 0 for `tcgen05.mma`, 1 for `tcgen05.mma.sp` |
+| others  | Not documented in error strings; infer from CUTLASS source |
+
+HW guardrails that fire on invalid idesc/descriptor (all visible as traps):
+- `sparse_mismatch_between_idesc_mod` — sparsity bit in idesc must match .sp variant
+- `sp_used_in_unsupported_env` — sparsity in unsupported kind
+- `invalid_datapath_alignment` — descriptor addr not aligned to datapath boundary
+- `allocation_granularity_invalid` — alloc count not power-of-2
+- `access_out_of_physical_bounds` — TMEM column past 512
+- `unallocated_columns_access` — accessing un-alloc'd column
+- `col_being_dealloced_not_returned_by_alloc` — dealloc addr doesn't match prior alloc
+- `phase_invalid_during_alloc` / `current_warp_owner_invalid` — thread synchronization bugs
+
+Write path is slower than read: `tcgen05.st.16x64b.x4` = 122 B/cy/warp vs `tcgen05.ld.16x128b.x1` = 259 B/cy/warp (2.1× asymmetry, similar to HBM3E read/write asymmetry).
+
+### Video / byte-SIMD instruction throughput (chip-wide 148 × 128 threads, 4096 iters)
+
+| PTX                             | chip Gops/s | note |
+|---------------------------------|------------:|------|
+| `dp4a.s32.s32` (int8×4 MAC)     |      6 134  | fast — likely native `IDP4A` SASS |
+| `vabsdiff4.u32.u32.u32`         |      6 149  | same rate as dp4a |
+| `vadd4.u32.u32.u32`             |      2 336  | 2.6× slower — emulated |
+| `vmin4.u32.u32.u32`             |        786  | 8× slower — multi-inst lowering |
+
+Real TOPS (counting MACs as 2 ops):
+- `dp4a` = 6 134 Gops/s × 4 MACs/inst × 2 = **49 TOPS** chip-wide
+- `vadd4` = 2 336 × 4 × 2 = 19 TOPS (simple byte add, ALU-bound)
+- IMMA INT8 = 143 TOPS chip (native `IMMA.16832.S8.S8.SAT` — but 69 cy/inst throttled)
+
+IMMA is still ~3× faster than `dp4a` even with its throttle. Use IMMA for INT8 matrix math; `dp4a` only for non-matrix SIMD-int8 patterns.
+
+### Warp shuffle / reduction latency (32 threads, serial chain)
+
+| op                              | cy/op | pipe |
+|---------------------------------|------:|------|
+| `shfl.sync.idx` (broadcast)     |  1.9  | free (uniform path) |
+| `shfl.sync.bfly` (butterfly xor)| 24.4  | pipe_alu (SHFL) |
+| `shfl.sync.up`                  | 24.4  | same |
+| `__ballot_sync`                 | 21.9  | |
+| `__any_sync`                    | 31.8  | |
+| `__reduce_min_sync`             | 18.8  | CREDUX |
+| `__reduce_add_sync`             | 44.6  | REDUX |
+| `__reduce_xor_sync`             | 44.6  | REDUX |
+| **`__match_any_sync`**          | **375**| 20× slower — N×N intra-warp compare |
+| `__match_all_sync`              | 34.6  | single-pred check, cheap |
+| `__popc` (POPC)                 | 23.5  | pipe_alu |
+| `__clz`                         | 29.4  | pipe_alu |
+| `__brev`                        | 24.4  | pipe_alu |
+| `__ffs`                         | 47.8  | popc + clz chain |
+
+**Avoid `__match_any_sync` in hot loops.** It's the only warp primitive on B300 that costs hundreds of cycles — used for vote-by-value patterns but costs a full warp-wide pairwise compare. Consider alternative patterns (sort-by-key + boundary detect, etc.) if you can't afford 375 cy/iter.
+
+Broadcast shuffle (`shfl.sync.idx` with constant `0`) is essentially free because the compiler recognizes it as a uniform path through `UIMOV`/`R2UR` rather than through the SHFL pipe.
+
+### Block-sync primitives (BS=512, 1 CTA, 1024 iters)
+
+All block-wide sync PTX lowers to identical SASS and costs 45.1 cy/iter at 512 threads:
+
+| PTX                                          | cy/iter |
+|----------------------------------------------|--------:|
+| `bar.sync 0`                                 |  45.1   |
+| `bar.sync 0, 512`                            |  45.1   |
+| `barrier.sync 0`                             |  45.1   |
+| `barrier.cta.sync.aligned.all 0`             |  45.1   |
+| `__syncthreads()` (CUDA intrinsic)           |  45.1   |
+| `bar.arrive + bar.sync` (split-phase)        |  84.5 (2×) |
+| `__syncwarp()` (warp-only)                   |  2.8    |
+
+Split-phase `bar.arrive + bar.sync` only helps if the arrive-wait span contains useful work; otherwise it's 2× cost. `__syncwarp()` is essentially free (~3 cy).
+
+### Branch divergence cost (148 CTAs × 128 threads, FFMA chain, 2048 iters)
+
+| pattern                                      | ms      | vs uniform |
+|----------------------------------------------|--------:|-----------:|
+| uniform branch (thread-independent cond)     |  0.0076 | 1.00× |
+| 2-way divergent (tid-based cond)             |  0.0085 | 1.13× (cheap) |
+| 9-way `switch(tid)` divergence               |  0.934  | **123×** (jump-table + serialize) |
+| predicated select (`cond ? a : b`)           |  0.0079 | 1.04× (free) |
+
+Two-path divergence is nearly free on B300 — the warp scheduler handles both halves quickly. **Switch statements with many cases serialize all paths AND add jump-table overhead.** If you need multi-way selection, replace with ternary/predicated math when possible.
+
+### Local memory (LDL / STL, register spill path)
+
+Forcing register-spill with dynamic-index local array: **1.28 TB/s chip / 8.7 GB/s/SM** for read+write combined. ~52× slower than smem (460 GB/s/SM). Register spill is always expensive — if you exceed 64k regs/SM, restructure the kernel instead.
+
+### Constant memory (cmem) throughput (148 CTAs × 128 threads)
+
+| pattern                                    | chip GB/s | note |
+|--------------------------------------------|----------:|------|
+| all threads load same addr (broadcast)     | **10 673**| HW single-cycle broadcast |
+| threads load different addrs (serialized)  |      404  | 26× slower — bank-serialized |
+
+Single `LDC.64` SASS instruction with 32-way intra-warp broadcast dispatches in 1 cy per warp; per-thread unique addresses force per-lane serial reads through the constant cache. Use cmem only for true broadcast data; anything else belongs in smem.
+
+### DRAM peak — streaming `ld.global.v8.u32` (B300 HBM3E)
+
+| config                                      | chip TB/s  |
+|---------------------------------------------|-----------:|
+| t=128, 1 CTA/SM                              |   5.9      |
+| t=128, 2 CTAs/SM                             |   7.0      |
+| t=256, 2 CTAs/SM                             |   7.1      |
+| **t=512, 2 CTAs/SM**                         | **7.27**   |
+| t=256, 4 CTAs/SM                             |   7.23     |
+
+**Sustained DRAM peak: 7.3 TB/s** — 91% of B300's published HBM3E spec (8 TB/s). Requires ≥2 CTAs/SM and wide loads (256-bit `v8.u32`) to saturate memory controllers.
+
+**DRAM WRITE bandwidth** (296 CTAs × 512 threads, `v4.u32` × 2 per thread per iter):
+
+| form                                  | chip TB/s  |
+|---------------------------------------|-----------:|
+| `st.global.v4.u32` (default)          |   3.42     |
+| `st.global.wb.v4.u32` (write-back)    |   3.42     |
+| `st.global.cs.v4.u32` (streaming)     |   3.38     |
+| `ld + st` copy (read+write counted)   |   **4.38** bidirectional |
+
+**DRAM write peak ≈ 7.0 TB/s with v8.u32 + 8 CTAs/SM** — matches read peak. Earlier "3.4 TB/s" was using `st.global.v4.u32` (16 B/inst) which is half-width. Use `st.global.v8.u32` (32 B/inst, matches the 32 B/clk/SM write capacity) at full chip occupancy (8 CTAs/SM × 256 threads = 2048 threads/SM) to saturate. Cache hints (`.wb`, `.cs`) don't change throughput at saturation.
+
+### Memory hierarchy knees — working-set-size sweep (TRIPLE-AUDITED, bs=1024 mb=2, ITERS=32768)
+
+Per-iter varying address, unconditional output. SASS verified: 16 × `LDG.E.128.STRONG.GPU` per inner-loop iter (matches `UNROLL=16`); outer iterates ITERS/UNROLL = 2048 times. Total = 32768 LDGs/thread × 16 B = 524 288 B/thread × 303 104 threads = **159 GB read per timed iter**, so even at WS=1 MB the data is touched 152 k× (warmup amortized to <0.1%).
+
+**Two cache hint variants compared** (all access patterns identical, only the cache modifier differs):
+
+| WS         | `.ca` (L1+L2) | `.cg` (L2-only) | tier                                            |
+|------------|--------------:|----------------:|-------------------------------------------------|
+| 1 MB       |  **36.1 TB/s** | 30.3 TB/s | L1+L2 hybrid; L1 helps because per-CTA data fits |
+| 4 MB       |   26.7 TB/s   | 26.6 TB/s | L1 mostly missing; L2-dominated                 |
+| 16 MB      |   23.4 TB/s   | 23.4 TB/s | L1/L2 hint irrelevant; pure L2                  |
+| 32 MB      |   22.0 TB/s   | 22.0 TB/s | L2 plateau                                      |
+| 64 MB      |   21.3 TB/s   | 21.3 TB/s | L2 plateau (≈ one L2-side capacity ~60 MB)      |
+| 128 MB     |   22.2 TB/s   | 22.0 TB/s | at full L2 capacity (126 MB)                    |
+| 256 MB     |   20.2 TB/s   | 20.1 TB/s | knee → DRAM mix                                 |
+| 512 MB     |   ~15.8 TB/s  | ~15.8 TB/s| DRAM-bound mostly                               |
+| 1024 MB    |   ~10.7 TB/s eff (~7.2 actual via ncu)  | ~10.7 TB/s eff | per-thread effective BW; ncu HW counter shows true HBM3E ~7.2 TB/s — the gap is L2 absorbing stride-locality at this WS |
+
+**Interpretation:**
+- **L1 peak (small WS, .ca)** ≈ **36 TB/s chip / 244 GB/s/SM** — close to the 35 TB/s estimate elsewhere in this doc. L1 only contributes for WS ≲ 2 MB; above that, the hashing/spread means each SM mostly misses L1.
+- **L2 plateau (4 MB → 128 MB)** ≈ **22-26 TB/s chip / 150-180 GB/s/SM** — this is the true L2 BW figure. The plateau is broad and roughly flat across "fits comfortably in L2" to "right at L2 capacity". The "30 TB/s @ 1 MB" number is L1-influenced even with `.cg` because `.cg` loads can still hit cached lines pulled in by metadata/prefetch from `.cg`+`.ca` co-tenancy across the SM L1.
+- **Why the user's "WS << 60 MiB / per side ≈ 30 TB/s" intuition wasn't quite right:** the L2 address hash distributes cache lines across both partitions at fine granularity (~64 B-4 KB blocks confirmed via `bench_atom_lat_sides.cu`). So **even at WS=8 MB, half of any thread's accesses go cross-XBAR** (regardless of which die's SM is reading). The 22 TB/s plateau is the chip's peak when both L2 partitions are running at full capacity in parallel, with the cross-XBAR accesses paying their bandwidth tax in the avg.
+
+**Earlier "10.2 TB/s @ 1-32 MB" L2 claim was wrong** (under-occupied launch: 148 CTAs × 128 threads = 18.9 k threads, not enough TLP to saturate L2 issue ports). At full occupancy (296 CTAs × 1024 = 303 k threads), L2 hits ~22 TB/s sustained.
+
+### L1 carveout effect on L2 (NEW)
+
+`-o N` flag sets `CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT` (0=max L1 ~256 KB, 100=min L1 ~28 KB). Sweep:
+
+| carveout | L1 (KB) | L1-hit peak (small WS) | L2 plateau (32-128 MB) | DRAM (1 GB) |
+|---:|:---:|---:|---:|---:|
+| 0   | ~256 | **35.9** | 21-22 | 9.9  |
+| 50  | ~128 | 35.9 | 21-22 | 10.0 |
+| 75  | ~64  | 35.9 | 20-20 | 9.2  |
+| 100 | ~28  | 35.9 | **17-18** | 8.6  |
+
+**Two surprises:**
+1. **L1-hit BW = 35.9 TB/s independent of L1 size** — even tiny 28 KB L1 still delivers 35.9 TB/s when WS fits. The 35.9 TB/s is the **LSU/L1-dispatch ceiling** (148 SMs × 243 GB/s/SM ≈ 128 B/clk/SM — same as smem rate), not L1 capacity.
+2. **Smaller L1 hurts L2 plateau** (22 → 17 TB/s) — L1 acts as a BW amplifier even when it can't fully cache the WS. Reducing L1 forces more L2 traffic and exposes L2 controller contention.
+
+### Occupancy × WS sweep at carveout=100 (L1=28 KB), .cg modulo addressing
+
+The L2 plateau and knees depend strongly on **threads per SM** (TLP):
+
+| WS_MB | bs=128 b=148 (256 thr/SM) | bs=256 b=148 (256 thr/SM) | bs=512 b=148 (512 thr/SM) | bs=1024 b=148 (1024 thr/SM) | bs=1024 b=296 (max occ.) |
+|------:|--------------------------:|--------------------------:|--------------------------:|----------------------------:|-------------------------:|
+| 10    | 12.6                      | 18.4                      | 18.9                      | 19.1                        | 19.2 |
+| 30    | 12.6                      | 18.3                      | 18.8                      | 19.0                        | 19.1 |
+| 60    | 12.6                      | 18.3                      | 18.8                      | 19.0                        | 19.0 |
+| **70**    | **7.2** (knee!)       | **14.3** (knee)           | 17.8                      | 19.2                        | (smooth) |
+| 100   | 6.6                       | 12.6                      | 16.6                      | 18.8                        | ~18.0 |
+| 128   | (n/a)                     | 12.2                      | 15.8                      | 18.2                        | 17.6 |
+| 160   | 5.5                       | 10.6                      | 15.2                      | 17.3                        | ~17 |
+| 256   | 5.1                       | 7.9                       | 11.2                      | 14.3                        | 14.0 |
+| 1024  | 5.0 (DRAM)                | 6.0                       | 6.3                       | 6.8                         | ~10.7 (full DRAM peak) |
+
+**Occupancy lessons:**
+1. **Half SM/TLP cuts BW in half** — bs=128 blocks=148 (1 warp/SMSP) gets 12.6 TB/s for L2-resident WS (~half of 19 TB/s peak). Confirms BW scales with active warp count up to saturation.
+2. **The "70 MB knee" is a TLP-hiding artifact, not a capacity wall.** At low TLP (256 thr/SM), L2 BW drops 30-50% at WS=70 MB (just past 1-side cap). At full TLP (1024 thr/SM), the knee disappears — BW stays at 19 TB/s up to ~128 MB. This means the 2.13× far-side latency (from atomic test) is fully hideable with enough in-flight loads.
+3. **Threads-per-SM matters more than CTAs-per-SM** — bs=128 b=296 (2 CTAs × 128 thr) ≈ bs=256 b=148 (1 CTA × 256 thr). Both give ~256 thr/SM and ~18 TB/s for L2-resident.
+4. **DRAM peak scales with TLP** — 5.0 (low TLP) → 6.8 (1 CTA/SM, max bs=1024) → 10.7 TB/s (2 CTAs/SM × 1024 thr/SM). Full DRAM saturation needs 2048 thr/SM (the hardware max).
+5. **.cg consistently 0.5-1 TB/s faster than .ca** at L2/DRAM regimes — L1 has a small replacement cost when WS exceeds L1 capacity.
+
+### Fine-grain L2 sweep at carveout=100 (L1=28 KB), modulo addressing
+
+This minimizes L1 amplification so the curve reflects pure L2/DRAM behavior:
+
+| WS_MB | TB/s | tier |
+|------:|-----:|------|
+|   8 | 19.23 | L2 plateau |
+|  16 | 19.08 | |
+|  24 | 18.85 | |
+|  30 | 18.86 | |
+|  40 | 18.75 | |
+|  50 | 19.04 | |
+|  60 | 19.00 | ≤ one L2-side capacity (~63 MB) |
+|  70 | 18.63 | start of cross-side spill |
+|  80 | 18.26 | |
+|  90 | 18.11 | |
+| 110 | 17.70 | |
+| 120 | 17.63 | approaching L2 cap (126 MB) |
+| 126 | 17.60 | exactly at L2 cap |
+| 128 | 17.61 | |
+| 140 | 17.45 | |
+| 160 | 17.34 | very slight drop |
+| 200 | 15.60 | DRAM mix begins |
+| 256 | 14.04 | DRAM-bound |
+
+**Smooth gradient, no sharp cliff at 60 MB or 126 MB.** The "near-side L2 = 30 TB/s, far-side = 14 TB/s, average = 22" model from the bench_atom_lat_sides finding does NOT cleanly explain the L2 BW curve — instead the L2 plateau is roughly flat at 17-19 TB/s from 8 MB to 160 MB. The transitions are gradual because the address hash mixes both sides at fine granularity at ALL working set sizes.
+
+**Earlier "10.2 TB/s @ 1-32 MB" was wrong** — caused by under-occupied launch (148 CTAs × 128 threads = 18.9k threads = 0.5 warps/SMSP, not enough TLP to saturate L2 issue ports). With proper occupancy (296 CTAs × 1024 = 303k threads), L2 hits its true ~30 TB/s peak.
+
+**L2 transition is at ~128 MB → fully DRAM by 256 MB**, with `cudaDeviceProp.l2CacheSize = 126 MB`. L1 remains hot up to ~256 KB per SM (small WS).
+
+Note the L1→L2 cliff is gradual (1MB→32MB is a 1.5× drop), while L2→DRAM is sharper (64MB→256MB is 3×). The far-side cost is built into the 32 MB number — single-side L2 (~30 TB/s) is roughly 2× the dual-side average (~15 TB/s at 128 MB).
+
+### LDG cache hint variants (DRAM-bound, unique offsets, 1 GB working set)
+
+All cache hints give identical 3.4 TB/s chip BW — the workload is DRAM-limited so L1/L2 hints don't matter:
+
+`ld.global` / `.ca` / `.cg` / `.cs` / `.lu` / `.nc` / `.L1::evict_first` / `.L1::evict_last` / `.L1::no_allocate` — all within 0.1% of each other at 3.4 TB/s.
+
+### LDG cache hints (L2-HOT, 4 MB working set)
+
+With the data in L1/L2 reach, hints matter:
+
+| hint                  | chip BW   | note |
+|-----------------------|----------:|------|
+| `ld.global.ca` (L1)   | 13.1 TB/s | baseline |
+| `ld.global.nc`        | 13.1 TB/s | same as .ca for read-only |
+| `ld.global.cg` (L2)   | 10.5 TB/s | **−20%** — bypassing L1 hurts for hot data |
+
+For small hot working sets, prefer `.ca`/`.nc` over `.cg`.
+
+### ldmatrix × HMMA — LDSM fully hides
+
+| workload (per iter)                  | ms      |
+|--------------------------------------|--------:|
+| `ldmatrix.x4` only                    | 0.003   |
+| HMMA m16n8k16 ILP=16 only             | 0.140   |
+| `ldmatrix.x4` + HMMA ILP=16           | 0.141   |
+
+Adding one `ldmatrix.x4` per 16 HMMAs costs **no observable time** — LDSM is ~40× faster than the HMMA chain, so it disappears into the schedule. In a real GEMM inner loop with K-tile streaming, `ldmatrix` for the next tile can run concurrently with HMMA on the current tile for free.
+- FP16/BF16/TF32 share the same 8.2 cy/inst floor; the TFLOPS scale only with FLOPs-per-inst (k-dim).
+- **FP64 is ~300× slower than FP16** via mma.sync — B300 de-emphasizes HPC FP64.
+- The higher published peaks (≥10 PFLOPS FP8 dense, ~19 PFLOPS FP4) need the `tcgen05.mma` (async tensor-memory) path, not `mma.sync`.
+- Earlier "838 TFLOPS FP16 / 420 TF32 / 143 TOPS INT8" entries in this catalog (from an older measurement) were off — those matched an ILP-override bug rather than reality. The numbers above supersede them.
 
 ### Uniform datapath (finally forced to emit)
 Running warp-uniform compute chains (derived from `blockIdx.x` + `seed`) forces the compiler to use the uniform datapath. Solo peak: `pipe_uniform = 1.90` warp-inst/SM/cy, **concurrent** with pipe_alu/fma at no cost.
@@ -1270,7 +1799,7 @@ Window-shared test, 148 blocks × 512 threads hitting cyclic window:
 | 16-64 MB | 19.7k | L2 plateau |
 | 256 MB | 14.8k | **overflows 126 MB L2** → partial DRAM |
 
-L2 peak BW ≈ 20 TB/s for shared working set. L1 hit BW ≈ 35 TB/s. DRAM BW (coalesced sequential, separate test): **7.4 TB/s = 92% of HBM3E peak**.
+L2 peak BW (this lower-occupancy test) ≈ 20 TB/s. **At full occupancy (bs=1024 mb=2) and tiny WS (1 MB) L2 reaches 30.3 TB/s — see "Memory hierarchy knees" table above.** L1 hit BW ≈ 35 TB/s. DRAM BW (coalesced sequential, separate test): **7.4 TB/s = 92% of HBM3E peak**.
 
 ### Caveats on earlier numbers in this document
 - "L2-resident 31 TB/s" was a correct measurement but the **working set was ~9 MB** (block windows overlapping), well inside L2 — so it's L2 BW, not DRAM.
@@ -1518,7 +2047,1738 @@ Linear scaling up to 16 warps, single-op dep-chain loads (limited by 33 cy LDS l
 - 16 warps: 93 GB/s/SM (38% of 128 B/cy peak)
 - Need vec-4 + ILP ≥ 8 + full occupancy to reach 128 B/cy peak
 
-## 30. Methodological notes
+## 30. TMA + mbarrier deep-dive (CUDA 13.2, sm_103a)
+
+All numbers clock64-bracketed, 1.92 GHz, 1 thread / 1 CTA unless noted.
+
+### 30.1 mbarrier instruction costs (isolated, per-op)
+
+| op                                         | cy/op | notes |
+|--------------------------------------------|------:|-------|
+| `mbarrier.init.shared::cta.b64`            |  9.5  | same-state reinit is fine |
+| `mbarrier.arrive.shared::cta.b64`          |  8.1  | returns token |
+| `mbarrier.arrive.expect_tx.release.cta`    |  8.1  | identical cost to plain arrive |
+| `mbarrier.test_wait` (on completed)        |  6.3  | immediate-true fast path |
+| `mbarrier.try_wait.parity` (on completed)  |  8.2  | immediate-true fast path |
+| `mbarrier.try_wait.parity` + suspendTimeHint=0 | 10.2 | extra operand adds ~2 cy |
+| `mbarrier.inval`                           |  ~6  | (init+inval pair = 73 cy total, implies ~63 cy init dominates pair) |
+| `fence.proxy.async.shared::cta`            | 10.8  | full smem-async fence |
+| `fence.mbarrier_init.release.cluster`      |  2.1  | cheap (noop in single-CTA context) |
+
+### 30.2 mbarrier round-trip cost
+
+| pattern                                    | cy  |
+|--------------------------------------------|----:|
+| 1-thread arrive + try_wait.parity (count=1)|  54 |
+| 2-mbarrier ping-pong                       | 102 |
+| 8-mbarrier round-robin                     |  54 (same as 1: no pipeline benefit with 1 thread) |
+| full-block arrive, leader-only waits       | 234 (flat 32→1024 threads) |
+| full-block arrive + full-block wait        | 117 (32) → 262 (1024) |
+| `__syncthreads()` baseline                 |  24 (32) → 89 (1024) — **3-9× faster than mbarrier** for block-wide sync |
+
+### 30.3 TMA `cp.async.bulk` load (global → smem) — per-SM
+
+**Pure issue cost (no wait in timer):** **63 cy/op**, size-independent (16 B → 4 KB tested).
+
+**Round-trip latency (L2-warm source), single CTA, single TMA, single mbarrier:**
+
+| size   | RTT cy | floor+scaling |
+|--------|-------:|---------------|
+| 16 B   | 350 | floor |
+| 32 B   | 350 | floor |
+| 64 B   | 354 | floor |
+| 128 B  | 358 | floor |
+| 512 B  | 357 | floor |
+| 1 KB   | 364 | ~floor |
+| 2 KB   | 377 | |
+| 4 KB   | 398 | |
+| 8 KB   | 436 | |
+| 16 KB  | 503 | |
+| 32 KB  | 634 | |
+| 64 KB  | 897 | |
+| 128 KB | 1416| ~8 cy/KB after floor |
+
+Fit: `RTT ≈ 350 + 8 × (size_KB)` cy for size ≥ 2 KB.
+
+### 30.4 TMA per-SM BW — the sequence of corrections
+
+Three tries to get this right:
+
+**Mistake #1 (caught by user):** `bench_tma_throughput.cu` requested `-s NTMAS*TMA_BYTES` of smem; at NT=8 × 64 KB = 512 KB that exceeds B300's per-CTA cap (~200 KB). Launch failed silently, TMA writes landed in truncated smem, no forced data-dep → bogus "680 GB/s/SM".
+
+**Mistake #2 (caught by user):** `bench_tma_audit.cu` used `SMEM_STRIDE=0` so all NT TMAs wrote to the same smem region. Works, but L2 serves N reads of the same cache line from one fetch → inflated to "196 GB/s". Actual L2 traffic was ~1/N of the reported bytes.
+
+**Mistake #3 (caught by user):** `bench_tma_real.cu` (single-thread, unique smem + src per TMA) gave 130–150 GB/s — this was the single-thread throughput limit (thread serializes `issue → wait → ld.shared → issue next`), NOT the engine's throughput.
+
+**`bench_tma_pc.cu`** (proper producer/consumer with double-mbarrier ring buffer, warp 0 issues, warp 1 reads+signals-empty) reveals the actual engine throughput in section 30.4b below.
+
+The single-thread numbers from `bench_tma_real.cu` (below) are still useful as a baseline for code that can't afford warp specialization — they represent the cost of serial "load tile, compute, load tile" patterns.
+
+**4 KB TMAs (per-SM, L2-warm via per-iter 64 KB src stride):**
+
+| NT | smem     | cy/iter | GB/s/SM |
+|---:|---------:|--------:|--------:|
+|  1 |   4 KB   |   580   |  13.6   |
+|  2 |   8 KB   |   645   |  24.4   |
+|  4 |  16 KB   |   749   |  42.0   |
+|  8 |  32 KB   |   949   |  66.3   |
+| 16 |  64 KB   |  1354   |  93.0   |
+| 32 | 128 KB   |  2125   | 118.4   |
+| 48 | 192 KB   |  2941   | **128.3** ← smem-capped |
+
+**64 KB TMAs:**
+
+| NT | smem     | cy/iter | GB/s/SM |
+|---:|---------:|--------:|--------:|
+|  1 |  64 KB   |  1062   | 118.5   |
+|  2 | 128 KB   |  1934   | 130.1   |
+|  3 | 192 KB   |  2622   | **144.0** ← smem-capped |
+
+**Honest per-SM TMA throughput ceiling ≈ 130–150 GB/s**, limited by how much smem a CTA can hold in flight (~200 KB without opt-in). Chip-wide extrapolation: 148 × 144 ≈ 21 TB/s — consistent with Blackwell L2 SOL (~30 TB/s) under contention.
+
+**LSU reference per-SM L2-resident (single CTA, BS=128, UNROLL=16):**
+- `ld.global.v4.u32` (128-bit): 104 GB/s/SM
+- `ld.global.v8.u32` (256-bit): **153 GB/s/SM**  ← faster than TMA honest peak
+
+**TMA and LSU v8 are within ~6%** for peak per-SM bandwidth. TMA's advantage is *not* raw BW; it's:
+- Descriptor-based addressing (no per-lane address computation)
+- Smem-direct delivery (bypass L1 + no register pressure)
+- Async operation (thread 0 issues, other threads continue other work)
+- 2D / im2col / scatter/gather modes (via `cp.async.bulk.tensor`)
+
+### 30.4b Producer/consumer patterns — test_wait vs try_wait.acquire
+
+Two patterns, same producer, two consumer shapes:
+
+**Pattern A (test_wait + fence):** `mbarrier.test_wait.parity` busy-poll + `fence.proxy.async.shared::cta`. nvcc lowers the fence to **MEMBAR.ALL.CTA + FENCE.VIEW.ASYNC.S** per iter → ~308 cy consumer floor.
+
+**Pattern B (try_wait.acquire):** `mbarrier.try_wait.parity.acquire.cta.shared::cta.b64` with `suspendTimeHint` — the acquire scope replaces the explicit fence. nvcc emits only **SYNCS.PHASECHK.TRANS64.TRYWAIT** (one fence remains but one MEMBAR is gone). Consumer floor drops to ~175 cy.
+
+**Single-CTA per-SM throughput:**
+
+| TMA size | DEPTH | Pattern A cy/iter | Pattern A GB/s | Pattern B cy/iter | Pattern B GB/s |
+|---------:|------:|------------------:|---------------:|------------------:|---------------:|
+|   4 KB   |   4   |  308              |  25            |  175              |  **45**        |
+|   8 KB   |   4   |  308              |  51            |  175              |  **90**        |
+|  16 KB   |   8   |  309              | 102            |  176              |  **179**       |
+|  32 KB   |   4   |  308              | 204            |  263              |  **239**       |
+|  64 KB   |   3   |  523              | 240            |  524              |  **240**       |
+
+**Single-CTA TMA ceiling ≈ 240 GB/s/SM** (64 KB × DEPTH=3 or 32 KB × DEPTH=4+).
+
+Pattern B (acquire) delivers ~1.8× the BW at small-to-medium TMAs because it avoids the per-iter MEMBAR.ALL.CTA from the explicit fence. At large TMAs, the TMA-completion time dominates either way, so both reach the same ~240 GB/s ceiling.
+
+**Pattern C (relaxed arrive + expect_tx + acquire try_wait, no explicit fence)** — single-thread flavor:
+
+| config                                 | cy/iter | GB/s/SM |
+|----------------------------------------|--------:|--------:|
+| release arrive + acquire try_wait (no fence) | 396 | 19.8 |
+| relaxed arrive + expect_tx + acquire try_wait | **259** | **30.3** |
+
+Relaxed+expect-tx saves ~35% over release when there's no companion consumer thread (single-threaded pattern). With a separate consumer warp (proper prod/cons), the consumer's `try_wait+ld.shared+arrive` cost dominates and relaxed/release on producer side doesn't matter — both give the ~175 cy consumer floor.
+
+**SASS-verified:** the acquire variant emits **zero MEMBAR.ALL.CTA** (vs 2 per iter in test_wait+fence pattern). `mbarrier.try_wait.parity.acquire.cta` carries the smem-visibility ordering; no explicit `fence.proxy.async` needed.
+
+vs single-thread single-barrier:
+
+| TMA size | single-thread best | prod/cons best | speedup |
+|---------:|-------------------:|---------------:|--------:|
+|   4 KB   |     23 GB/s        |    25 GB/s     | 1.1×    |
+|  16 KB   |     91 GB/s        |   102 GB/s     | 1.1×    |
+|  32 KB   |     91 GB/s        |   206 GB/s     | **2.3×**|
+|  64 KB   |    121 GB/s        |   240 GB/s     | **2.0×**|
+
+For larger TMAs, proper prod/cons unlocks ~2× more per-SM BW.
+
+### 30.4b2 Amortizing the 4 KiB consumer overhead (batched NTMAS per barrier)
+
+The earlier "4 KiB caps at 45 GB/s/SM" was an artifact of **one TMA per barrier**, where the consumer's ~175 cy test_wait+LDS+arrive cost gets paid for every 4 KiB. If you **fire N TMAs onto a single mbarrier** (expect_tx = N × 4 KB) and have the consumer drain them all before releasing empty, the 175 cy cost amortizes across N × 4 KB.
+
+Single-CTA 4 KiB sweep, batched:
+
+| NTMAS/bar | DEPTH | smem KB | cy/iter | GB/s/SM |
+|----------:|------:|--------:|--------:|--------:|
+|   1       |  1    |    4    |   376   |  21     |
+|   8       |  1    |   32    |   775   |  81     |
+|  16       |  1    |   64    |  1150   | 109     |
+|  32       |  1    |  128    |  2012   | 125     |
+|  16       |  2    |  128    |   878   | 143     |
+|  24       |  2    |  192    |  1254   | **151** |
+|  16       |  3    |  192    |   892   | 141     |
+
+**Chip-wide 4 KiB batched (148 CTAs × 64 threads):**
+
+| NTMAS/bar | DEPTH | chip TB/s | per-SM GB/s |
+|----------:|------:|----------:|------------:|
+|  16       |   2   |   20.5    |   139       |
+|  24       |   2   | **21.9**  | **148**     |
+|  16       |   3   |   20.2    |   137       |
+
+**Small TMAs CAN saturate chip BW at 4 KiB — the trick is batching 24 TMAs per barrier with a 2-deep pipeline.** This hits ~22 TB/s chip / 148 GB/s per SM, *matching* the 64 KiB peak (20.6 TB/s). There is no fundamental "small-TMA penalty" once you pay the consumer overhead only once per batch.
+
+Rule: per-barrier overhead ≈ 175 cy. To keep it to ≤10 % of iter time, batch at least `175 × 9 ÷ (per-tma-data-time)` TMAs per barrier. For 4 KiB: per-TMA engine time is tiny, so batch ≥ 16 to amortize.
+
+### 30.4b3 TMA issue-rate vs engine-throughput — crossover at 8 KiB
+
+With NTMAS set to max smem budget (192 KB) and DEPTH=2 (acquire pattern, prod/cons):
+
+| size  | NTMAS | cy/TMA |  BW/SM  | bound by               |
+|------:|------:|-------:|--------:|------------------------|
+| 512 B |  192  |  48.1  |  20     | **issue rate** (48 cy/TMA floor) |
+| 1 KB  |   96  |  48.5  |  40     | issue rate             |
+| 2 KB  |   48  |  49.6  |  79     | issue rate             |
+| 4 KB  |   24  |  52.2  | 150     | issue rate (slight engine pressure) |
+| 8 KB  |   12  |  65.3  | **241** | **engine throughput** (~240 GB/s cap) |
+
+**TMA issue-rate floor on B300 ≈ 48 cy per `cp.async.bulk` instruction**, size-independent. The transition to engine-bound happens at **~8 KiB**: below, BW scales linearly with size (issue-limited); above, BW plateaus at the ~240 GB/s per-SM engine ceiling.
+
+Design implication:
+- If your tile is < 8 KiB, the per-SM TMA cap is `size × 40 M/s` — no batching tricks beat this.
+- ≥ 8 KiB, the engine is the bottleneck regardless of tile size (so going larger doesn't help).
+- Sweet spot for maximum BW per unit smem: **8 KiB tiles with high NTMAS/DEPTH** (saturates engine at smallest tile).
+
+### 30.4b4 Chip-wide (148 CTAs, consecutive unique per-CTA strides) — batched
+
+Fair comparison with matched per-iter stride = NTMAS × TMA_BYTES (consecutive):
+
+| size  | NTMAS/bar | DEPTH | in-flight | chip TB/s | per-SM GB/s | bound  |
+|------:|----------:|------:|----------:|----------:|------------:|--------|
+| 1 KB  |   96      |  2    |   192     |   6.0     |  40         | issue  |
+| 2 KB  |   48      |  2    |    96     |  11.6     |  78         | issue  |
+| 4 KB  |   24      |  2    |    48     |  21.8     | 147         | issue (borderline) |
+| 8 KB  |   12      |  2    |    24     |  27.5     | 185         | engine |
+| 16 KB |    6      |  2    |    12     | **27.7**  | **187**     | engine (peak) |
+| 32 KB |    3      |  2    |     6     |  27.5     | 186         | engine |
+| 64 KB |    1      |  3    |     3     |  26.4     | 178         | engine (but less fill) |
+
+**Honest B300 chip-wide TMA L2 peak: ~27.7 TB/s, 187 GB/s/SM** at ~12–24 in-flight TMAs per CTA. Going below 4 KiB drops BW because TMA issue-rate (~48 cy/TMA) limits throughput.
+
+Earlier "30.5 TB/s" was inflated by L2 line-reuse across CTAs; earlier "20.6 TB/s" from single-TMA-per-barrier had too few in-flight TMAs. The ~28 TB/s here is the realistic ceiling with unique-offset access and enough pipeline depth.
+
+**The best size for chip-wide TMA BW is 8–16 KiB with batching**, not 64 KiB — batching amortizes per-barrier overhead and keeps more TMAs in flight per CTA without exceeding the smem cap.
+
+### 30.4c Chip-wide TMA BW — corrected final numbers
+
+Earlier "20.4 TB/s L2 chip" was from **NT=1 per barrier** (only 3 in-flight per CTA with DEPTH=3) — under-filled the engine. With **batched NT per barrier** (12–24 in flight per CTA), chip BW goes up:
+
+| workload                          | config                    | chip TB/s | per-SM GB/s |
+|-----------------------------------|---------------------------|----------:|------------:|
+| L2 line-reused across CTAs (synth)| all CTAs same src         |  30.5     | 206 (artifact) |
+| L2-resident, unique/CTA, NT=1     | 64K × D=3 (only 3 in flight)| 20.4    | 138        |
+| L2-resident, unique/CTA, batched  | 16K × NT=6 × D=2 (12 in flight)| **27.7** | **187** |
+| L2-resident, batched              | 8K × NT=12 × D=2          |  27.5     | 185        |
+| L2-resident, batched              | 32K × NT=3 × D=2          |  27.5     | 186        |
+| DRAM-bound, 16 MB stride          | 64K × D=3                 |   7.2     |  48         |
+
+**Realistic B300 chip-wide TMA ceiling: ~27.7 TB/s, 187 GB/s/SM** when enough TMAs are in flight per CTA (≥12).
+
+Single-CTA unloaded peak is **241 GB/s/SM** (verified across 8K×12×2, 16K×6×2, 32K×3×2 — all give 241 ± 1). Chip-wide contention costs ~22% per-SM.
+
+DRAM-bound case: chip falls to 7.2 TB/s (close to B300's ~8 TB/s DRAM SOL).
+
+**Small TMAs (≤ 4 KiB) don't hit engine peak** because TMA issue rate (48 cy/TMA) limits throughput. At 4 KiB even heavy batching caps at 22 TB/s chip / 147 GB/s per SM.
+
+**2 CTAs/SM is WORSE** for chip-wide TMA (19.6 TB/s vs 28 TB/s at 1 CTA/SM) — each CTA gets less smem, reducing per-CTA pipeline depth. 1 CTA/SM with max smem for pipeline wins.
+
+### 30.5 Chip-wide TMA — honest (148 CTAs, 3×64 KB per CTA at smem cap)
+
+| metric                                  | value       |
+|-----------------------------------------|-------------|
+| CTAs × threads                          | 148 × 32    |
+| Work per CTA per iter                   | 3 × 64 KB = 192 KB (honest, unique smem) |
+| iters                                   | 300         |
+| Chip-wide bytes transferred             | 8.73 GB     |
+| Slowest CTA cycles                      | 713 541     |
+| **Chip-wide BW**                        | **23.5 TB/s** |
+| **Per-SM BW (full chip active)**        | **159 GB/s** |
+
+Per-SM BW holds up at ~159 GB/s even with all 148 SMs active — **little chip-wide contention at this working-set size**. Consistent with Blackwell L2 having enough aggregate BW to serve all SMs in parallel at this rate.
+
+### 30.5b Head-to-head: 64 KB global → smem (1 CTA, 300 iters)
+
+| method                                 | cy/iter | GB/s |
+|----------------------------------------|--------:|-----:|
+| LSU v4 (BS=128 cooperating threads)    |  1439   |  87  |
+| TMA (1 CTA, thread 0 fires 1×64 KB)    |  1062   | **118** |
+
+For **"load a tile"** workloads TMA is **~35% faster** than LSU. TMA's advantage is:
+- Dedicated engine (not LSU pipe)
+- No L1 tag path
+- Smem-direct write (no register intermediate, frees registers for compute)
+- 1 thread issues → 127 other threads available for compute during the wait
+
+### 30.5d TMA prefetch — counterproductive when same thread issues both
+
+`cp.async.bulk.prefetch.L2.global` is fire-and-forget (~40 cy/issue for small sizes). But it shares the SM's TMA engine with the main load. If the same thread issues prefetch THEN the real load, throughput drops:
+
+| size   | no prefetch | with prefetch (lead=8) | delta |
+|--------|------------:|-----------------------:|------:|
+|  4 KB  | 13.6 GB/s   | 12.4 GB/s              |  −9%  |
+| 16 KB  | 51.2 GB/s   | 40.3 GB/s              | −21%  |
+| 64 KB  | 118.5 GB/s  | 82.6 GB/s              | −30%  |
+
+Prefetch only helps when issued from a DIFFERENT warp/block that isn't bottlenecked on the same TMA engine — and even then, only for patterns that the TMA engine can't already pipeline itself.
+
+### 30.5c Multi-thread TMA issue — NO speedup
+
+| config (1 CTA, NT=8 × 4 KB, 300 iters)       | cy/iter | GB/s/SM |
+|-----------------------------------------------|--------:|--------:|
+| thread 0 issues 8 TMAs serially              |  1140   |   55.2  |
+| 8 warp-leaders issue in parallel, shared bar |  1140   |   55.2  |
+| 8 warp-leaders, each own mbarrier            |  2059   |   30.6  |
+
+**One thread suffices to saturate the SM's TMA engine.** Spreading issue across warp-leaders gives identical throughput (single shared mbarrier) or worse (per-TMA mbarriers add bookkeeping).
+
+### 30.6 Small TMA overhead — unchanged
+
+Small TMAs are fundamentally overhead-dominated regardless of residency:
+- 128 B – 1 KB RTT floor: **~350 cy** (pure mbarrier+TMA engine overhead)
+- 2 KB – 128 KB: grows ~8 cy/KB after floor
+- Per-TMA pure issue cost: **63 cy** (size-independent, one-warp fire rate)
+
+### 30.7 TMA extended family (1 CTA, 1 thread, L2-warm)
+
+| variant                                       | 256 B | 4 KB | 64 KB |
+|-----------------------------------------------|------:|-----:|------:|
+| LOAD `cp.async.bulk` + mbarrier (baseline)    |  354  |  398 | 897   |
+| STORE `cp.async.bulk.global.shared.bulk_group`|   89  |  209 | 2129  |
+| REDUCE `cp.reduce.async.bulk.add.u32`         |  111  |  248 | 2648  |
+| PREFETCH `cp.async.bulk.prefetch.L2`          |   40  |   40 |  489  |
+| 16-barrier pipeline (round-robin)             |  254  |  254 |  254  (amortized) |
+| LOAD via `bulk_group` (no mbarrier)           | **REJECTED** — `cp.async.bulk` load must use mbarrier |
+
+Notes:
+- **Prefetch is fire-and-forget** at 40 cy/op for small sizes (warm-ups are cheap).
+- **Store via bulk_group + commit/wait_group** is slightly faster than mbarrier-load for the same byte count (no expect_tx bookkeeping).
+- **16-barrier pipeline** masks per-TMA RTT: steady-state 254 cy/TMA regardless of size. Single-barrier NTMAS=4 wins for peak BW (no cross-barrier overhead).
+
+### 30.8 TMA × compute concurrency
+
+| config                                          | cy/iter |
+|-------------------------------------------------|--------:|
+| FFMA chain only (128 threads × 256 FMA)         |    73   |
+| TMA only (lane 0 issues 64 KB TMA + waits)      |  1121   |
+| FFMA + TMA (TMA in lane 0, FFMA in all 128)     |  1193   |
+| FFMA + LDG stream (LDG in lane 0, FFMA in all)  |   498   |
+
+**TMA is fully independent of FMA pipe.** FFMA+TMA = TMA_only + 72 cy ≈ pure overlap. LSU load competes with FFMA (pipe co-issue limits; warp scheduler contention).
+
+### 30.9 Sanity check
+
+Direct read-back of smem after TMA (`ld.shared.v4`) returns exactly `A[0..3]`. Barrier completion ≠ issue completion — data has genuinely landed when `mbarrier.try_wait.parity` returns true.
+
+### 30.10 Compile capability
+
+| form                                                   | sm_103a |
+|--------------------------------------------------------|:-------:|
+| `cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes` | ✓ |
+| `cp.async.bulk.shared::cluster.global.mbarrier::…`     | ✓ |
+| `cp.async.bulk.global.shared::cta.bulk_group`          | ✓ |
+| `cp.async.bulk.shared::cta.global.bulk_group` (load)   | ✗ (illegal modifier) |
+| `cp.async.bulk.prefetch.L2.global`                     | ✓ |
+| `cp.reduce.async.bulk.global.shared::cta.bulk_group.add.u32` | ✓ |
+| `mbarrier.{init,inval,arrive,arrive.expect_tx,test_wait,try_wait,try_wait.parity}` | ✓ |
+
+## 30.8 TMA + mbarrier limits & variant coverage
+
+**cp.async.bulk size:** ptxas accepts up to **1,048,560 B** (1 MB − 16). At 1,048,561 B: "value out of range, expected [0..1048560]". Practical usable size bounded by smem cap (~200 KB without opt-in).
+
+**mbarrier variants compiling on sm_103a (CUDA 13.2):**
+
+| form                                        | status |
+|---------------------------------------------|:------:|
+| `mbarrier.init.shared::cta.b64`             |   ✓    |
+| `mbarrier.inval.shared::cta.b64`            |   ✓    |
+| `mbarrier.arrive.shared::cta.b64`           |   ✓    |
+| `mbarrier.arrive.release.cta.shared::cta.b64`   |   ✓    |
+| `mbarrier.arrive.release.cluster.shared::cta.b64` | ✓ (compile OK even without cluster launch) |
+| `mbarrier.arrive.relaxed.cta.shared::cta.b64`   |   ✓    |
+| `mbarrier.arrive.expect_tx.release.cta.shared::cta.b64` | ✓ |
+| `mbarrier.arrive_drop.shared::cta.b64`      |   ✓    |
+| `mbarrier.expect_tx.shared::cta.b64`        |   ✓    |
+| `mbarrier.complete_tx.shared::cta.b64`      |   ✓    |
+| `mbarrier.test_wait.shared::cta.b64`        |   ✓    |
+| `mbarrier.test_wait.acquire.cta.shared::cta.b64` |  ✓    |
+| `mbarrier.test_wait.parity.shared::cta.b64` |   ✓    |
+| `mbarrier.test_wait.parity.acquire.cta.shared::cta.b64` | ✓ |
+| `mbarrier.try_wait.shared::cta.b64`         |   ✓    |
+| `mbarrier.try_wait.parity.shared::cta.b64`  |   ✓    |
+| `mbarrier.try_wait.parity.acquire.cta.shared::cta.b64` | ✓ |
+| `mbarrier.arrive.no_complete.shared::cta.b64` |   ✗ (modifier rejected — unknown; possibly renamed) |
+| `fence.proxy.async.shared::cta`             |   ✓ (lowers to MEMBAR.ALL.CTA + FENCE.VIEW.ASYNC.S) |
+| `fence.mbarrier_init.release.cluster`       |   ✓    |
+
+**TMA instruction variants:**
+| form                                                | status |
+|-----------------------------------------------------|:------:|
+| `cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes` | ✓ |
+| `cp.async.bulk.shared::cluster.global.mbarrier::…`  |   ✓    |
+| `cp.async.bulk.global.shared::cta.bulk_group`       |   ✓    |
+| `cp.async.bulk.shared::cta.global.bulk_group` (load) | ✗ (illegal modifier) |
+| `cp.async.bulk.prefetch.L2.global`                  |   ✓    |
+| `cp.reduce.async.bulk.global.shared::cta.bulk_group.{add,min,max,and,or,xor}.{u32,s32,b32,f32,f16,bf16}` | ✓ |
+
+**tcgen05 variants:**
+| form                                           | status |
+|------------------------------------------------|:------:|
+| `tcgen05.alloc/dealloc/relinquish_alloc_permit`|   ✓    |
+| `tcgen05.ld.sync.aligned.{16x64b,16x128b,16x256b,32x32b}.{x1,x2,x4}.b32` | ✓ |
+| `tcgen05.st.sync.aligned.16x64b.x1.b32`        |   ✓    |
+| `tcgen05.cp.cta_group::1.128x256b`             |   ✓    |
+| `tcgen05.shift.cta_group::1.down`              |   ✓    |
+| `tcgen05.mma.cta_group::1.kind::{f16,tf32,f8f6f4,i8,mxf4,mxf4nvf4,mxf8f6f4}` | ✓ (compile; runtime needs tcgen05.alloc first) |
+
+## 30.8b Extended PTX 9.2 / sm_103a opcode coverage (compile only)
+
+**Removed from sm_103a (Hopper path no longer supported):**
+
+| form                                                                      | status |
+|---------------------------------------------------------------------------|:------:|
+| `wgmma.fence.sync.aligned` / `wgmma.mma_async.*` (Hopper warp-group MMA)  | ✗ "not supported on .target 'sm_103a'" — **replaced by `tcgen05.mma`** |
+| `cp.async.bulk.shared::cta.global.bulk_group` (load via bulk_group)       | ✗ illegal modifier for load path |
+
+Porting Hopper code that uses `wgmma.*` to B300 requires rewriting to the `tcgen05.mma` path — the warp-group API is gone.
+
+**Tensor TMA prefetch (L2-warming path):**
+| form                                                           | compiles |
+|----------------------------------------------------------------|:--------:|
+| `cp.async.bulk.prefetch.L2.global`                             | ✓ |
+| `cp.async.bulk.prefetch.tensor.1d.L2.global.tile`              | ✓ |
+| `cp.async.bulk.prefetch.tensor.2d.L2.global.tile`              | ✓ |
+| `cp.async.bulk.prefetch.tensor.2d.L2.global.tile::gather4`     | ✓ |
+| `cp.async.bulk.prefetch.tensor.3d.L2.global.im2col`            | ✓ (with correct im2col offset args) |
+
+**Tensor TMA (cp.async.bulk.tensor):**
+| form                                                           | compiles |
+|----------------------------------------------------------------|:--------:|
+| `cp.async.bulk.tensor.{1,2,3,4,5}d.shared::cta.global.tile.mbarrier::complete_tx::bytes` | ✓ |
+| `cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4.mbarrier::complete_tx::bytes`  | ✓ |
+| `cp.async.bulk.tensor.2d.global.shared::cta.bulk_group.tile::scatter4`                   | ✓ |
+| `cp.async.bulk.tensor.1d.global.shared::cta.tile.bulk_group` (store)                     | ✓ |
+| `cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::*.cta_group::{1,2}` (2-CTA multicast) | ✓ |
+| `cp.async.bulk.shared::cluster.global.mbarrier::*.multicast::cluster`                    | ✓ |
+
+**Async smem ops:**
+| form                                                           | compiles |
+|----------------------------------------------------------------|:--------:|
+| `st.async.weak.shared::cta.b64`                                | ✓ |
+| `st.bulk.weak.shared::cta`                                     | ✓ |
+| `red.async.relaxed.cluster.shared::cluster.mbarrier::complete_tx::bytes.add.u32` | ✓ |
+
+**Multi-GPU / NVLink-SHARP:**
+| form                                                           | compiles |
+|----------------------------------------------------------------|:--------:|
+| `multimem.ld_reduce.weak.global.add.f32`                       | ✓ |
+| `multimem.ld_reduce.weak.global.add.v4.f32`                    | ✓ |
+| `multimem.ld_reduce.weak.global.add.bf16x2`                    | ✓ |
+| `multimem.ld_reduce.weak.global.add.acc::f32.v4.f16x2`         | ✓ |
+| `multimem.red.relaxed.sys.global.add.f32`                      | ✓ |
+| `multimem.st.weak.global.f32`                                  | ✓ |
+| `multimem.ld_reduce.weak.global.max.f32`                       | ✗ (`.max` needs integer type) |
+
+**Dynamic / specialization ops:**
+| form                                                           | compiles | cost |
+|----------------------------------------------------------------|:--------:|-----:|
+| `setmaxnreg.inc.sync.aligned.u32 N`                            |    ✓     | ~23 cy |
+| `setmaxnreg.dec.sync.aligned.u32 N`                            |    ✓     | ~23 cy |
+| `elect.sync`                                                   |    ✓     | ~7.4 cy |
+| `ldmatrix.sync.aligned.m8n16.x4.shared.b8x16.b6x16_p32`        |    ✓     | (fp8/fp6 ldsm) |
+| `ldmatrix.sync.aligned.m8n8.x1.shared.b8`                      |    ✗     | (type combo rejected) |
+| `clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::*.b128` | ✓ | — |
+
+## 30.9 Legacy cp.async (pre-TMA) vs TMA
+
+`cp.async.ca/cg.shared::cta.global` is the pre-Hopper async copy. Single thread issues, commits groups, waits.
+
+**Per-SM (single CTA, BS=128, L2-hot, 2048 iters):**
+
+| form / bytes     |   ms    | GB/s/SM |
+|------------------|--------:|--------:|
+| cp.async.ca 4 B  | 0.026   |  41     |
+| cp.async.ca 8 B  | 0.031   |  67     |
+| cp.async.ca 16 B | 0.041   | 101     |
+| cp.async.cg 16 B | 0.021   | **200** |
+
+**Chip-wide (148 CTAs × 128 threads, 16 B/thread):**
+
+| form               | chip TB/s |
+|--------------------|----------:|
+| cp.async.ca 16 B   |  12.2     |
+| cp.async.cg 16 B   | **17.9**  |
+
+`cp.async.cg` (L2-direct, 16 B only) reaches ~200 GB/s/SM and 17.9 TB/s chip-wide — **within ~15% of TMA peaks** (240 and 20.6 TB/s) without any mbarrier machinery, just `commit_group` + `wait_all`. For simple bulk loads without 2D/tensor addressing, legacy cp.async.cg is surprisingly competitive.
+
+## 30.B3 Atomic latency (1 thread, serial chain, triple-audited)
+
+| op                             | cy/op | notes |
+|--------------------------------|------:|-------|
+| **`atom.shared.add.u32`** (1 thread, pure addr-dep chain) | **45 cy** | **TRUE pure ATOMS round-trip** — same as LDS! 1 thread per SM, chain via `offset = atom.add(addr+offset)` |
+| `atom.shared.add.u32` (32 threads, **diff** addresses, chain) | 55 | mild slowdown from per-lane addressing |
+| `atom.shared.add.u32` (32 threads, **same** addr, chain) | **107** | 2.4× slower — warp ATOMS to same address forces sequencing/coalescing |
+| `atom.shared.add.u32` (single chain w/ `v=r+1` ALU dep) | 151 | latency-bound but includes 1 ALU op + loop overhead |
+| `atom.shared.add.u32` (4-way ILP, indep) | 42.8 | throughput per ATOMS at 4-way ILP |
+| `atom.shared.add.u32` (8-way ILP, indep) | **25.0** | **pure throughput at 8-way ILP** = closest to native ATOMS.ADD issue rate |
+| `atom.shared.cas.b32` (PURE chain) | **179 cy** | CAS pure round-trip latency — 1.7× ATOMS.ADD |
+| `atom.shared.min.u32` (PURE chain, 32 threads same-addr) | 110 | similar to ADD same-addr; 1-thread likely 45 |
+| `ld.shared.u32` (PURE chain, 1 thread) | **45 cy** | **pure LDS round-trip — IDENTICAL to ATOMS** at 1 thread (same LSU pipeline) |
+| `ld.shared.u32` (PURE chain, 4-deep ILP) | 35 cy/LDS | converges at 35 cy/op when chain hides loop overhead |
+| `red.shared.add.u32` (no return) | **41**  | fire-and-forget — no return forwarding, single-op cost |
+| `atom.global.add.u32` (near L2 side) | **~310** | ~162 ns — same-side L2 round-trip |
+| `atom.global.add.u32` (far L2 side)  | **~680** | ~354 ns — cross-XBAR to other L2 partition |
+| `atom.global.cas.b32`          |  ~690 (far) | same as add |
+| `atom.relaxed.sys.global.add.u32` | ~680 (far) | `.relaxed` scope doesn't reduce latency |
+
+**B300 has 2 L2 partitions** with hash-based address routing; the hash flips roughly every 4 KB so consecutive 4 KB pages alternate near/far for any given SM. Caller-controlled offset sweep (`tests/bench_atom_lat_sides.cu`) shows clean bimodal: 0-3.5 KB ≈ 660-712 cy, 4-10 KB ≈ 284-336 cy, 12-14 KB ≈ 646-665 cy. The "684 cy" number reported earlier was offset-0 which happened to land far-side. **Far/near ratio ≈ 2.19×.**
+
+**Rule**: hoist atomic accumulation to smem first (10-20× faster round-trip), flush to global only once per kernel/tile. If you must atomic in global, expect ~2× variance depending on hash placement.
+
+## 30.B2 Atomic hotspot contention scaling (chip-wide 148×128 threads, `atom.global.add.u32`)
+
+| address pattern                                | chip Mops/s | note |
+|------------------------------------------------|------------:|------|
+| single address (18 944-way chip contention)    |   37 300    | intra-warp coalesce + L2 single-line serializer |
+| per-CTA address (148 hotspots)                 |   37 900    | same as single — L2 serializer is the bottleneck |
+| per-warp address (592 hotspots, 32-way intra)  |  **7 000**  | **5× slower — worst case** |
+| per-thread address (no contention)             |   48 800    | peak |
+
+**The per-warp hotspot is the slowest pattern** — likely because: (a) HW cannot intra-warp-coalesce when every lane needs a distinct return value; (b) 592 addresses × 32-way contention scatters across L2 partitions without deduplication. Single hotspot wins over per-warp because L2 has a fast-path serializer for true single-line atomics, and intra-warp coalescing collapses the 32-way to 1 (with identical return for all 32 threads after the single atomic completes).
+
+**Rule**: avoid the "one atomic per warp on distinct addresses" pattern (common in naive histograms). Either go fully coalesced (per-thread) or fully concentrated (per-CTA → smem).
+
+## 30.B Atomic throughput deep-dive (chip-wide, 148 CTAs × 128 threads, unique addresses, no contention)
+
+| form                                          | chip Mops/s | note |
+|-----------------------------------------------|------------:|------|
+| `atom.global.add.u32` (default acq_rel)       |    45 700   | baseline |
+| `atom.global.relaxed.sys.add.u32`             |    45 700   | relaxed same as acq_rel here |
+| `red.global.add.u32` (no return)              |  **110 070**| 2.4× atom.add — skip read-modify-write round-trip when you don't need the old value |
+| `atom.global.cas.b32`                         |    45 194   | ~same as add |
+| `atom.shared.add.u32`                         |   939 857   | 20× faster than global (smem-local) |
+
+**Rule of thumb:** if you don't need the return value, use `red.` not `atom.` — 2.4× throughput boost for global ops. For hot accumulators, push to smem first (~20× higher than global atomics).
+
+## 30.M Cache control / prefetch hints (CCTL variants)
+
+| PTX op | SASS emitted | cy | effect |
+|---|---|---:|---|
+| `prefetch.global.L1 [p]` | `CCTL.E.PF1` | **2** | async prefetch to L1 |
+| `prefetch.global.L2 [p]` | `CCTL.E.PF2` | 2 | async prefetch to L2 |
+| `applypriority.global.L2::evict_normal [p], 128` | `CCTL.E.DML2` | 2 | demote line to L2 (hint) |
+| `discard.global.L2 [p], 128` | `CCTL.E.RML2` | 2 | remove from L2 (evict hint) |
+| `cp.async.bulk.prefetch.L2 [p], 128` | `UBLKPF.L2` | 5 | bulk L2 prefetch via uniform pipe |
+| `ld.global.L1::evict_last.u32` | `LDG.E.EL` | 2 | normal load with evict-LRU hint |
+| `ld.global.L1::evict_first.u32` | `LDG.E.EF` | 2 | normal load with evict-first hint |
+| `CCTL.IVALL` (from `fence.gl/sys`) | — | — | invalidate ALL L1 lines — **cost unknown in isolation** |
+
+**All cache-hint PTX ops are async and essentially dispatch-only (~2 cy)** — they return immediately and let the cache controller do work in the background.
+
+**CCTL.IVALL cost NOT isolated** — my earlier attribution of ~3000 cy to CCTL.IVALL was not rigorous. The fence.gl/sys cost is likely dominated by the MEMBAR itself (waiting for writes to drain), not the cache invalidate. CCTL.IVALL should be ≤100s of cycles (just invalidating L1 tags). No direct PTX exposes CCTL.IVALL alone, so isolated measurement is hard.
+
+**Practical implications**:
+- Use prefetches liberally — they're ~free (2 cy)
+- Cache-hint LDGs (`.EL`, `.EF`, `.LU`) cost the same as regular LDG
+- The dominant cost of fence.gl/sys is the MEMBAR + fabric coordination, not the CCTL.IVALL tail
+
+## 30.L ALU instruction latency AND throughput (rigorous audit)
+
+**Methodology (separate tests for each op)**:
+- **LATENCY** = single dep-chain, each op waits for prev result; measured cy/op
+- **THROUGHPUT (warp)** = 8 independent chains (ILP=8); measured cy/op averaged across chains
+
+| op | SASS | LATENCY (1 chain) | THROUGHPUT (8 chains) | lat/tp | chip-wide @ peak |
+|---|---|---:|---:|---:|---:|
+| **FFMA** (fp32 FMA) | `FFMA.FTZ` | **4.07 cy** | **2.68 cy** | 1.52× | 71.8 TFLOPS |
+| **FADD** (fp32 add) | `FADD.FTZ` | **4.11 cy** | **2.72 cy** | 1.51× | same pipe as FFMA |
+| **LOP3.LUT** (bit op) | `LOP3.LUT` | **4.08 cy** | **2.68 cy** | 1.52× | same as FFMA |
+| **IADD3** (3-way int add) | `IADD3`+`LOP3` | **8.42 cy** | 5.32 cy | 1.58× | chain uses 2 insts |
+| **IMAD** (int FMA) | `IMAD` | **4.07 cy** | (folded) | — | shared fma pipe |
+| **DFMA** (fp64 FMA) | `DFMA` | **64.13 cy** | **64.47 cy** | 0.99× | 0.95 TFLOPS — **8 ILP insufficient** |
+
+**Methodology notes**:
+- FFMA/FADD/IMAD/LOP3: use volatile register input `b` (runtime-unknown) to prevent compiler folding `a op const`
+- IADD3 measured as `a + b + (a^b)` — non-closed-form to force actual chain execution
+- DFMA: even at 8-ILP, throughput = latency (ratio 0.99) — **dependency-chain latency is the bottleneck**; you'd need 64+ independent chains per warp to saturate
+
+**Interpretation**:
+- FFMA/FADD/LOP3 all hit ~2.68 cy/op at 8-ILP = 37% of single-warp theoretical peak. At full chip occupancy (many warps), the pipe saturates because 4 SMSPs each dispatch 1 warp-FFMA/cy from any pending warp → 98% of theoretical peak (71.8 TFLOPS).
+- DFMA's 64-cy latency with 8 ILP only achieves 64-cy throughput — **can't hide 64-cy latency with only 8 parallel ops**. To reach DFMA's theoretical peak (0.95 TFLOPS), need ILP ≥ 64 per warp, which exceeds register file capacity in practice.
+- IADD3 C-level `a + b + (a^b)` compiles to 1 IADD3 + 1 LOP3 = 2 insts, so 8.42 cy per C-level iteration = ~4.2 cy/SASS-inst (matches FFMA/LOP3).
+
+**Scan = 5× FFMA-level-deep parallel-prefix**: Kogge-Stone at 176 cy ≈ 5 × (4 FFMA + overhead), matches expected.
+
+### HMMA latency vs throughput (rigorous)
+
+| test | cy/HMMA | SASS HMMA count |
+|---|---:|---:|
+| LATENCY (1 chain, dep through acc) | **20.03** | 1024 |
+| THROUGHPUT (8 indep chains) | **8.13** | 1024 |
+
+**HMMA `m16n8k16.f32.f16.f16.f32` has 20-cy dep-chain latency, 8.13-cy per-inst throughput at 8 ILP.**
+
+The 8.13 cy matches the theoretical 8.18 cy expected from the 577 TFLOPS chip-wide peak (577 × 10¹² FLOPS / 148 SMs / 4 SMSPs / 1.92 GHz / 4096 FLOPs/inst ≈ 2.0 inst/cy/SMSP = 8 cy per inst per warp).
+
+To saturate HMMA throughput from a single warp: need ILP ≥ 20/8.13 ≈ 3 chains. With 3+ independent accumulators, per-warp HMMA rate matches the per-SMSP dispatch cap.
+
+## 30.K Warp-level inclusive scan cost (Kogge-Stone, 32 lanes)
+
+**Kogge-Stone prefix-sum** (5 levels of `shfl_up_sync` + conditional add):
+
+```cuda
+unsigned x = v;
+#pragma unroll
+for (int offset = 1; offset < 32; offset *= 2) {
+    unsigned y = __shfl_up_sync(0xFFFFFFFF, x, offset);
+    if (lane >= offset) x += y;
+}
+```
+
+**Cost: 176 cy per full scan** (5 SHFL + 5 conditional IADD + loop overhead).
+
+Breakdown: 5 levels × ~35 cy each. Each level = 1 SHFL.UP (8.6 cy solo) + 1 ISETP (compare lane >= offset) + 1 SEL (predicated add).
+
+**If you only need the TOTAL (not per-lane prefix)**, use `__reduce_add_sync` = 54 cy — **3.3× faster** than scan.
+
+## 30.J Wave quantum analysis (grid-size effects)
+
+| blocks | waves | ms (fixed 4096 ALU ops/thread) | notes |
+|---:|---:|---:|---|
+| 1 | 0.007 | 0.052 | baseline, 1 SM |
+| 148 | 1.0 | **0.054** | full chip, same wall time as 1 block! |
+| 149 | 1.007 | 0.054 | 1 extra block, same wave |
+| 296 | 2.0 | 0.054 | 2 CTAs/SM, still 1 wave |
+| **297** | 2.007 | **0.069** | **+28% for 1 extra CTA** — wave-boundary cost |
+| 444 | 3.0 | 0.154 | 3 CTAs/SM, wave serialization |
+| 592 | 4.0 | 0.174 |  |
+| 888 | 6.0 | 0.208 |  |
+
+**Key insights**:
+- **Launch overhead is fixed at ~0.052 ms** (event-driven CUDA overhead). 1 block takes the same wall time as 148 blocks.
+- **The chip parallelizes freely up to 1 wave (148 CTAs)**. Grid sizes from 1 to 148 all complete in the same time.
+- **Crossing a wave boundary costs an extra full wave** — b=297 (2 waves + 1 block) is 28% slower than b=296 (clean 2 waves).
+- **Design rule**: round grid sizes to **multiples of 148** (or `148 × CTAs_per_SM` if occupancy-limited).
+
+## 30.I TMEM read/write ratio sweep (NEW)
+
+Same kernel, varying number of read and write `16x64b.x16` ops per inner-loop iter, at full chip occupancy (148 CTAs × 128 threads = 1 warpgroup/SM):
+
+| ratio R:W per iter | total BW (TB/s) | read part (TB/s) | write part (TB/s) |
+|---:|---:|---:|---:|
+| 1R   | 54  | 54 | — |
+| 4R   | **31** ← drops! | 31 | — |
+| 1W   | 98  | — | 98 |
+| **4W** | **131** | — | **131** ← peak write |
+| 1R+1W | 107 | 54 | 54 |
+| 1R+2W | 118 | 39 | 79 |
+| **1R+3W** | **131** ← optimal mix | 33 | 98 |
+| 2R+1W | 93 | 62 | 31 |
+| 3R+1W | 83 | 63 | 21 |
+
+**Key insights:**
+1. **4 writes per iter = 131 TB/s** (vs 98 for 1W/iter) — write pipeline scales with queue depth.
+2. **4 reads per iter = ONLY 31 TB/s** (vs 54 for 1R/iter, dropping by 43%) — reads serialize at high queue depth, possibly due to register-array allocation.
+3. **1R+3W = 131 TB/s combined** = same as 4W. **The read is essentially FREE when writes dominate** — the TMEM pipe handles them in parallel.
+4. **TMEM is asymmetric write-heavy** — matches HMMA accumulator usage pattern (writes from tensor pipe, reads only at result extraction).
+5. **Optimal pattern**: queue 3 writes per read for max combined BW. Going 4R+0W or 4W+0W loses parallelism opportunities.
+
+## 30.H DSMEM (Distributed Shared Memory) — cluster shared memory access
+
+| op                                              | cy/iter (single ld u32) | notes |
+|-------------------------------------------------|------------------------:|-------|
+| `ld.shared.u32` (local smem)                    | **23.07**               | baseline |
+| `ld.shared::cluster.u32` (DSMEM, cluster_size=4) | **23.26**               | **only 0.8% slower than local!** |
+
+**Validation (correctness)**: each CTA wrote a unique marker `(cluster_ctaid << 24) | 0xABCDEF` to its local smem. After cluster barrier, each CTA used `mapa.shared::cluster.u32` with `target_cta = (cluster_ctaid + 1) % 4` to map the neighbor's smem, then `ld.shared::cluster.u32`. Output table:
+
+| cluster_ctaid | target | local_val (mine) | remote_val (read) | expected |
+|---:|---:|---:|---:|---:|
+| 0 | 1 | 0xabcdef | **0x1abcdef** ✓ | 0x1abcdef |
+| 1 | 2 | 0x1abcdef | **0x2abcdef** ✓ | 0x2abcdef |
+| 2 | 3 | 0x2abcdef | **0x3abcdef** ✓ | 0x3abcdef |
+| 3 | 0 | 0x3abcdef | **0xabcdef** ✓ | 0xabcdef |
+
+All 4 reads matched expected remote (different from local). DSMEM is genuinely accessing remote CTA's smem.
+
+**DSMEM has essentially zero overhead** vs local smem within a CGA cluster. Use it freely for cross-CTA producer/consumer patterns. The `mapa.shared::cluster.u32` instruction maps a local smem address to a target CTA's smem in the cluster, then `ld.shared::cluster.u32` performs the access. The cost is dominated by the smem path itself, not cluster routing.
+
+**Cluster size**: tested with `__cluster_dims__(4, 1, 1)`. B300 supports cluster sizes up to 16 (limited by GPC topology — see "8 GPCs" note above).
+
+## 30.G Memory fence costs (audited 2026-04-15, refined with pending-writes test)
+
+**Empty fence cost (no pending writes, single warp):**
+
+| fence (PTX)                                           | cy   | scope |
+|-------------------------------------------------------|-----:|-------|
+| `membar.cta` / `fence.sc.cta`                         | **29** | CTA-scope, sequential consistency |
+| `fence.acq_rel.cta`                                   | 31   | CTA-scope, acquire-release |
+| `bar.cta.sync 0, 32` / `bar.warp.sync 0xFFFFFFFF`     | 29   | warp-level sync |
+| `membar.gl` / `fence.sc.gpu` / `fence.acq_rel.gpu`    | **282** | GPU-scope = **10× CTA-scope** |
+| `membar.sys`                                          | **2890** | system-scope = **100× CTA, 10× GPU** |
+
+**With pending writes (must drain) — single warp, 1 CTA:**
+
+| variant | no writes | +1 write | +4 writes | +16 writes |
+|---|---:|---:|---:|---:|
+| `membar.cta` | 29 | — | **47** | — |
+| `membar.gl` | 282 | **773** | 759 | 827 |
+| `membar.sys` | 2890 | — | **2890** (no extra) | — |
+
+**With pending writes — full GPU (148 CTAs × 1024 threads):**
+
+| variant | no writes | +4 writes |
+|---|---:|---:|
+| `membar.gl` | 329 | **1166** (4× single-warp due to inter-SM drain coordination) |
+| `membar.sys` | — | **19107** (66× single-warp; drains 605k pending writes through system fabric) |
+
+**Full membar.sys cost spectrum** (various in-flight traffic):
+
+| scenario | cy/membar.sys |
+|---|---:|
+| Single warp, no writes | **2914** |
+| Single SM, +1 own write | 2905 (~same) |
+| **Full chip (148 CTAs × 32 thr), no writes** | **5046** (fabric coord overhead) |
+| Full chip (148 × 32), +1 write/thread | 5113 (~same) |
+| **Full chip (148 × 1024), other 16 warps continuously writing** | **10,113** (3.5× single-warp) |
+| **Full chip (148 × 1024), +4 own writes/iter + busy grid** | **19,107** (worst case — drains 605k pending writes through fabric) |
+
+**Nuanced findings**:
+- `membar.sys` at its minimum (single warp, no pending writes) = **2914 cy** — this is the FIXED cost of the system-fabric fence.
+- At full chip with no writes = **5046 cy** — +2132 cy fabric coordination across 148 SMs.
+- With continuous in-flight writes from 16 other warps = **10,113 cy** — 2× slower because fence must wait for other warps' write traffic to drain.
+- With 4 pending writes per thread at full chip = **19,107 cy** — the absolute worst case.
+
+**`.sys` IS for CPU/PCIe/multi-GPU coherence** — even though our test had no CPU writes, the fence still has to go through the system fabric path (including PCIe coherence checkpoints, multi-GPU NVLink-coherent buffers, etc.). The cost is there because the fence MUST be honored in general; it's just OVERKILL in a GPU-only context. **For GPU-only coherence use `membar.gl`** (5-10× cheaper) — .sys is only needed when sharing memory with the CPU or across GPUs.
+
+**Per-iter membar.sys trace (1 thread/SM × 148 SMs × 100 iters, each iter = write + membar.sys)**:
+
+| metric | value |
+|---|---:|
+| Steady-state median cy/iter | **5003-5046** (very tight!) |
+| Stdev cy/iter | 7-42 (extremely consistent) |
+| First-iter cy (some SMs fast, some slow) | 2433-6205 |
+| Per-SM median (after warmup) | 4998-5020 |
+
+The ~**5000 cy** is the canonical "write + membar.sys" cost at full-chip occupancy with light load. Variance is <1% after the first iter. This is the fixed system-fabric round-trip cost.
+
+**membar.sys cost is FLAT with 0-32 pending writes at full chip** (1 thread/SM × 148 SMs):
+
+| # pending writes per iter | median cy |
+|---:|---:|
+| 0 | 5054 |
+| 1 | 5063 |
+| 4 | 5083 |
+| 16 | 5079 |
+| 32 | 5062 |
+
+All within 0.6% variation — the fence cost is **fixed at ~5070 cy** regardless of write count (up to 32 writes/thread/SM). It's fabric-coordination overhead, NOT linear-in-writes. Only at MUCH heavier load (1024 threads × 4 writes × 148 SMs = 600K writes) does the write-drain dominate (→ 19K cy).
+
+**Discrete jump at 16 active warps per SM** (each doing `write+membar.sys`):
+
+| active warps/SM | median cy/membar.sys |
+|---:|---:|
+| 1  | 5078 |
+| 2  | 5079 |
+| 4  | 5089 |
+| 8  | 5083 |
+| **16** | **10,182** ← 2× jump |
+| 32 | 10,129 |
+
+**1-8 warps/SM doing concurrent `membar.sys` = same cost as 1 warp (~5080 cy).** The fabric has ~**8 parallel fence channels per SM**, so up to 8 warps can issue concurrently without penalty.
+
+**Fine sweep around the boundary** (median cy per warp per membar):
+
+| warps/SM | min | median | max |
+|---:|---:|---:|---:|
+| 6 | 5048 | 5084 | 5096 |
+| 7 | 5038 | 5067 | 5098 |
+| **8** | 5034 | 5067 | **5080** ← last fast case |
+| **9** | 5038 | 5066 | **8420** ← 1 warp overflows |
+| 10 | **9798** | 9837 | 10,123 |
+| 16 | 10,061 | 10,156 | 10,174 |
+
+**ncu-verified (gpu_time for 100 iters)**:
+
+| warps/SM | ncu µs/100iter | cy/iter |
+|---:|---:|---:|
+| 8 | 273 | 5247 |
+| 9 | 446 (+63%) | 8563 |
+| 10 | 536 (+96%) | 10,291 |
+| 16 | 539 (~same) | 10,349 |
+
+**Exact finding**: B300 fabric has **exactly 8 parallel membar.sys channels per SM**. 9 warps pays for waiting on the 9th; 10+ warps all wait for a second round. No further cost past 16 (2-way banking hard limit).
+
+**Design tip**: if ≥9 warps per SM use `membar.sys`, per-warp cost doubles. For full-occupancy kernels (32 warps/SM), either reduce `.sys` usage or arrange so only ≤8 warps need `.sys` at a time (use `.gl` for the others, which has no 8-channel limit).
+
+**membar.gl DOES NOT have the 8-channel cliff** (audited):
+
+| warps | membar.gl cy | membar.sys cy |
+|---:|---:|---:|
+| 1 | 424 | 5078 |
+| 4 | 753 | 5089 |
+| 8 | 482 | 5083 |
+| 9 | 776 | **8420** (max) |
+| 10 | 805 | 9837 |
+| 16 | 512 | 10,156 |
+| 32 | 1008 | 10,129 |
+
+`membar.gl` per-warp cy varies 400-1000 regardless of warp count (no doubling cliff). It's 5-20× cheaper than `membar.sys` across the board — always prefer `.gl` for GPU-only coherence.
+
+### Comprehensive fence × SM-count × writes matrix
+
+Testing `N active SMs (1 thread each)` × `M writes per membar` separately for `.sys` and `.gl`:
+
+**`membar.sys` cy/fence**:
+
+| Active SMs | 0 writes | 1 write | 4 writes | 16 writes |
+|---:|---:|---:|---:|---:|
+| **1** | **2882** | 2878 | 2882 | 2963 |
+| **2** | **3308** | 3310 | 3306 | 3309 |
+| **4** | **5077** | 5067 | 5068 | 5060 |
+| 8 | 5077 | 5085 | 5072 | 5078 |
+| 16 | 5067 | 5081 | 5066 | 5079 |
+| 32 | 5088 | 5071 | 5075 | 5087 |
+| 74 | 5087 | 5087 | 5075 | 5089 |
+| 148 | 5065 | 5092 | 5063 | 5071 |
+
+**`membar.gl` cy/fence**:
+
+| Active SMs | 0 writes | 1 write | 4 writes | 16 writes |
+|---:|---:|---:|---:|---:|
+| **1** | **271** | 404 | 415 | 476 |
+| **2** | 271 | 786 | 795 | 852 |
+| 4 | 271 | 739 | 749 | 814 |
+| 8 | 271 | 725 | 735 | 795 |
+| 16 | 272 | 722 | 731 | 789 |
+| 32 | 270 | 718 | 727 | 787 |
+| **74** | 270 | 718 | **462** | **512** |
+| **148** | 271 | 717 | **483** | **541** |
+
+### Key insights from the matrix
+
+1. **`membar.sys` has a 3-tier fabric coordination tax**:
+   - 1 SM: 2880 cy (isolated SM baseline)
+   - 2 SMs: 3310 cy (+430 cy for pair coordination)
+   - 4+ SMs: **5075 cy FLAT** (no further scaling; broadcast tree or fixed-cost chip-wide coord)
+   - **Writes 0-16 don't affect .sys cost at these scales** — fence is fabric-bound, not drain-bound
+
+2. **`membar.gl` fabric coordination is nearly free**:
+   - 0 writes: **constant 271 cy regardless of SM count (1 to 148)**
+   - Fabric coord overhead is effectively zero when there are no writes to drain
+   - This is a fundamental difference from `.sys` — `.gl` doesn't need chip-wide coherence check
+
+3. **`membar.gl` with writes scales then DROPS at high SM count**:
+   - 1 SM + 1 write: 404 cy
+   - 2 SMs + 1 write: 786 cy (jumps)
+   - 4-32 SMs + 1 write: 720-740 cy
+   - 74-148 SMs + 4 writes: **462-483 cy** (counter-intuitively FASTER than 32 SMs × 4 writes = 727)
+   - Likely: at high SM count, the fabric batches write-drains more efficiently
+
+4. **`.sys` is 10-20× more expensive than `.gl`** in all matrix cells. Use `.gl` for pure GPU-only coherence.
+
+### `membar.sys` channel capacity (per-SM, 8 parallel fences)
+
+From the warp-sweep test (1024 threads/CTA × 148 SMs, only first N warps active):
+
+| warps/SM | membar.sys cy | membar.gl cy |
+|---:|---:|---:|
+| 1 | 5078 | 424 |
+| 8 | 5083 | 482 |
+| **9** | **8420** (max) ← overflow | 776 |
+| 10 | 9837 | 805 |
+| 16 | 10,156 | 512 |
+| 32 | 10,129 | 1008 |
+
+**The `membar.sys` has exactly 8 parallel fence channels per SM** (ncu-verified). 9+ warps/SM serialize in rounds. `membar.gl` has no such cliff.
+
+### `membar.cta` matrix (3rd scope for completeness)
+
+| Active SMs | 0 writes | 1 write | 4 writes | 16 writes |
+|---:|---:|---:|---:|---:|
+| 1 | **14** | 16 | 41 | 112 |
+| 2 | 14 | 16 | 41 | 112 |
+| 8 | 14 | 16 | 41 | 112 |
+| 148 | 14 | 16 | 41 | 112 |
+
+**`membar.cta` is TRULY local**: cost depends ONLY on pending writes in the local CTA, not SM count. **No fabric coord tax whatsoever** — a CTA-scope fence only waits for local L1/smem to be consistent.
+
+**Per-write drain cost inside .cta ≈ 6 cy** (linear in pending write count).
+
+### Unified three-tier fence cost model
+
+| scope | Empty fence (0 writes) | per-write cost | SM-count coordination tax |
+|---|---:|---:|---|
+| **.cta** | **14 cy** | **+6/write** | **0** (purely local) |
+| **.gl** | **271 cy** | +150 for 1st, +60/write after | **~0 until 4+ SMs** (very mild) |
+| **.sys** | **2882 (1 SM) → 5075 (4+ SMs)** | **~0 at 0-16 writes** | **+2200 cy from 1→4+ SMs, FLAT after** |
+
+**Rule of thumb**: `.cta` is 200× cheaper than `.gl` which is 20× cheaper than `.sys` at light load. Match fence scope to actual memory-visibility requirements.
+
+### fence.sc vs fence.acq_rel — rigorous comparison (36 data points)
+
+Full matrix: 6 fence variants × 2 SM counts × 3 write counts:
+
+| fence         | 1SM/0wr | 1SM/1wr | 1SM/16wr | 148SMs/0wr | 148SMs/1wr | 148SMs/16wr |
+|---|---:|---:|---:|---:|---:|---:|
+| sc.cta        | 14  | 16  | 112 | 14  | 16  | 112 |
+| acq_rel.cta   | 17  | 17  | 113 | 15  | 17  | 113 |
+| sc.gpu        | 271 | 404 | 476 | 271 | 718 | 542 |
+| acq_rel.gpu   | 271 | 404 | 476 | 271 | 718 | 542 |
+| sc.sys        | 2879| 2880| 2963| 5079| 5080| 5089 |
+| acq_rel.sys   | 2880| 2879| 2960| 5069| 5080| 5060 |
+
+**`fence.sc` and `fence.acq_rel` are functionally identical in cost across all tested scenarios** (within ±3 cy noise, typically <0.5% difference). The fence cost is driven by:
+1. **Scope** (cta → gpu → sys: 10× jumps each)
+2. **SM count** (1 vs 148, matters most for gpu-scope)
+3. **Write count** (scales in cta; mostly fixed in sys)
+
+But **NOT by the ordering strength** (sc vs acq_rel). Prefer `fence.sc.*` for semantic clarity — no performance penalty.
+
+The only notable anomaly: `acq_rel.cta` with 1 SM / 0 writes = 17 cy vs `sc.cta` = 14 cy (small 3 cy overhead). Disappears at 1+ writes. Likely reflects slightly different scoreboard semantics.
+
+**Heavy write load validation (148 CTAs × 1024 threads × 4 writes per iter):**
+
+| fence | cy/iter |
+|---|---:|
+| fence.sc.gpu | 1990 |
+| fence.acq_rel.gpu | 2038 (+2.4%) |
+| fence.sc.sys | 10,184 |
+| fence.acq_rel.sys | 10,160 (-0.2%) |
+
+Even under massive write load (~600K writes per iter), sc/acq_rel differ by <2.5% — effectively identical. Ordering-strength distinction has no perf impact on B300.
+
+### Verified: ptxas does NOT downgrade fence scope based on launch config
+
+**An earlier claim in this catalog — that ptxas downgrades `fence.sc.sys` → `MEMBAR.SC.CTA` in single-CTA launches — was WRONG.** ptxas has no access to grid/block dimensions at compile time, so it cannot make downgrade decisions based on launch config.
+
+**What actually happened**: the `fence_sc_vs_acq.cu` bench is parameterised by `#define OP` — OP=0 is `fence.sc.cta`, OP=4 is `fence.sc.sys`. Earlier inspection confused OP=0 SASS (correctly emitting `MEMBAR.SC.CTA` because the source was `fence.sc.cta`) with a "downgrade" of `fence.sc.sys`.
+
+**Verified mapping (1:1, no downgrade under any launch config)**:
+| PTX source | SASS emitted |
+|---|---|
+| `fence.sc.cta`      | `MEMBAR.SC.CTA`  (1 inst, no cache invalidate) |
+| `fence.acq_rel.cta` | `MEMBAR.ALL.CTA` (1 inst, no cache invalidate) |
+| `fence.sc.gpu`      | `MEMBAR.SC.GPU`  + `ERRBAR` + `CGAERRBAR` + `CCTL.IVALL` |
+| `fence.acq_rel.gpu` | `MEMBAR.ALL.GPU` + `ERRBAR` + `CGAERRBAR` + `CCTL.IVALL` |
+| `fence.sc.sys`      | `MEMBAR.SC.SYS`  + `ERRBAR` + `CGAERRBAR` + `CCTL.IVALL` |
+| `fence.acq_rel.sys` | `MEMBAR.ALL.SYS` + `ERRBAR` + `CGAERRBAR` + `CCTL.IVALL` |
+
+**Key insight (uncontested)**: only `.gpu` / `.sys` scopes trigger the `CCTL.IVALL` (L1 invalidate). `.cta` is a pure in-SM MEMBAR. The scope in PTX source is preserved byte-for-byte through to SASS.
+
+### SASS expansion of fence/membar (MAJOR finding — CONFIRMED)
+
+**Scope determines SASS expansion count, NOT sc vs acq_rel**:
+
+| PTX | SASS instructions emitted |
+|---|---|
+| `membar.cta` / `fence.{sc,acq_rel}.cta` | **1 inst**: `MEMBAR.SC.CTA` (no cache invalidate) |
+| `fence.sc.gpu` / `membar.gl` | **4 insts**: `MEMBAR.SC.GPU` + `ERRBAR` + `CGAERRBAR` + **`CCTL.IVALL`** |
+| `fence.acq_rel.gpu` | **4 insts**: `MEMBAR.ALL.GPU` + `ERRBAR` + `CGAERRBAR` + **`CCTL.IVALL`** |
+| `fence.sc.sys` / `membar.sys` | **4 insts**: `MEMBAR.SC.SYS` + `ERRBAR` + `CGAERRBAR` + **`CCTL.IVALL`** |
+| `fence.acq_rel.sys` | **4 insts**: `MEMBAR.ALL.SYS` + `ERRBAR` + `CGAERRBAR` + **`CCTL.IVALL`** |
+
+**The `CCTL.IVALL` (cache invalidate all) is the culprit** for why `.gl` and `.sys` are 20-200× more expensive than `.cta`. `.cta` is just 1 MEMBAR instruction; `.gl`/`.sys` trigger full L1 cache invalidation.
+
+**sc vs acq_rel difference** (in SASS):
+- `fence.sc.*` → `MEMBAR.SC.*` (sequential consistency)
+- `fence.acq_rel.*` → `MEMBAR.ALL.*` (all-ops barrier)
+
+Both carry the same `ERRBAR + CGAERRBAR + CCTL.IVALL` tail — which dominates cost — so the performance difference is negligible (<2.5% in all tests).
+
+**Key insight**: the expensive part of `.sys` fences is not the `MEMBAR` itself — it's the **`CCTL.IVALL`** (cache-invalidate-all) that follows. This invalidates L1 cache to ensure visibility to CPU/external agents on multi-GPU/PCIe.
+
+**Why sc vs acq_rel cost the same**:
+- Both expand to the same 4-inst sequence, only differ in `MEMBAR.SC.SYS` vs `MEMBAR.ALL.SYS`
+- The CCTL.IVALL is the bottleneck — present in both, dominates the cost
+- Hence the <2.5% cost difference observed
+
+**Why `.cta` is so much cheaper**: no `CCTL.IVALL` — only drains to L1 but doesn't invalidate.
+
+**`.gl` vs `.sys` difference**: both have CCTL.IVALL but `.sys` also has to coordinate with system fabric (PCIe/NVLink coherence path). The extra ~4500 cy at full chip is the system-coherence path.
+
+### Full W=1→128 sweep at full chip occupancy (1024 threads × 148 CTAs × W writes + fence per iter)
+
+| W | sc.sys | acq_rel.sys | sc.gpu | acq_rel.gpu |
+|---:|---:|---:|---:|---:|
+| 1 | **10,212** | 10,204 | 728 | 641 |
+| 2 | 10,211 | 10,208 | 1194 | 1192 |
+| 4 | 10,198 | 10,196 | 2218 | 2216 |
+| **8** | 10,316 | **14,144** (+37%) | 8451 | 8477 |
+| **16** | **18,910** | **22,085** (+17%) | 18,403 | 18,368 |
+| 32 | 40,934 | 40,935 | 43,046 | 43,047 |
+| 64 | 78,364 | 78,146 | 79,952 | 79,880 |
+| 128 | 149,770 | 152,017 | 149,660 | 149,625 |
+
+**Refined cost model (at full chip, 1024 threads per CTA)**:
+- **`.gpu`**: linear in W — **~730 cy base + ~550 cy per write** (at 148 CTAs × 1024 threads × W writes = 148K × W pending writes)
+- **`.sys`**: **10,000 cy FLOOR** for W≤8 (fabric coord + CCTL.IVALL dominates), then **linear at ~1200 cy/write** above W≥16
+- At W≥32, sc and acq_rel converge
+
+**`fence.acq_rel.sys` is 17-37% SLOWER than `fence.sc.sys` at W=8-16**! The `MEMBAR.ALL.SYS` variant is measurably more expensive in the moderate-load regime (earlier light-load tests missed this because 1 write/thread × 148 CTAs is too light). At very light (W=1-4) or very heavy (W≥32) loads, they converge.
+
+**Cross-check**: earlier "19,107 cy" matches the W=16 `sc.sys` = 18,910 — consistent across benches. The "140K" heavy case also matches W=128 range.
+
+### Granular (warps/SM × writes/thread) sweep — threshold is ~16 fence-units
+
+| bs (warps/SM) | W=1 | W=2 | W=3 | W=4 | W=6 | W=8 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 128 (4 warps) | 5090 | 5083 | 5135 | **10,147** ← step @ W=4 | 5086 (noise) | 10,136 |
+| 256 (8 warps) | 5098 | **10,124** ← step @ W=2 | 10,688 | 10,145 | 10,175 | 10,173 |
+| 384 (12 warps) | 10,156 (over chan limit) | 10,193 | 10,163 | 10,162 | 10,172 | 10,175 |
+
+**The step threshold is `warps/SM × writes/thread ≈ 16`**:
+- 4 warps × W=4 = 16 → steps to 10K ✓
+- 8 warps × W=2 = 16 → steps to 10K ✓
+- 12 warps/SM: already over 8-channel banking limit, always 10K
+
+Equivalent to ~512 pending stores per SM (16 × 32 lanes).
+
+### fence.sc vs fence.acq_rel — ptxas mapping is counter-intuitive!
+
+| PTX semantic | PTX | SASS emitted | HW behavior |
+|---|---|---|---|
+| stronger (total order) | `fence.sc.sys` | `MEMBAR.SC.SYS` | fences writes |
+| weaker (pair-wise acq/rel) | `fence.acq_rel.sys` | `MEMBAR.ALL.SYS` | fences **ALL** memory ops (reads+writes) |
+
+**On Blackwell, `MEMBAR.ALL` is HEAVIER than `MEMBAR.SC` in HW cost** — because it drains read AND write queues, while SC only needs write-side coherence.
+
+This creates a semantic-vs-cost mismatch:
+- PTX-level: `acq_rel` is SEMANTICALLY WEAKER than `sc`
+- SASS-level: `MEMBAR.ALL` (from acq_rel) is STRONGER drain than `MEMBAR.SC` (from sc)
+
+**Why the measured cost ordering looks "backwards"**: `acq_rel.sys` (17-37% slower at moderate load) isn't paying for stronger ordering — it's paying for a stricter SASS drain that ptxas chose. 
+
+**Practical takeaway**: on B300, **always prefer `fence.sc.*` over `fence.acq_rel.*`** even when you only need acq/rel semantics. The SASS mapping makes `sc` faster.
+
+### Complete warps/SM × W/thread matrix (148 SMs, median cy)
+
+| warps \ W | W=1 | W=2 | W=3 | W=4 | W=5 | W=6 | W=8 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| aw=1 | 5089 | 5143 | 5084 | 5077 | 5086 | 5074 | — |
+| aw=2 | 5109 | 5083 | 5082 | 5090 | 5077 | 5085 | **5092** |
+| aw=3 | 5072 | 5076 | 5093 | 5094 | 5094 | 5093 | **10,175** |
+| aw=4 | 5081 | 5098 | 5094 | **10,145** | 5097 | 5083 | **10,100** |
+| aw=5 | 5094 | 5090 | 5075 | **10,163** | **10,129** | **10,150** | **10,155** |
+| aw=6 | 5081 | 5061 | 5095 | **10,159** | **10,176** | **10,167** | **10,172** |
+| aw=8 | 5088 | **10,164** | **10,161** | **10,171** | **10,164** | **10,176** | **10,169** |
+| aw=12 | **10,145** | **10,163** | — | **10,166** | **10,156** | **10,141** | **10,244** |
+
+**Step rules (from observation):**
+- aw ≤ 2: stays at 5K base for W ≤ 8
+- aw = 3: steps at W = 8 only (~aw×W = 24)
+- aw = 4-6: steps at W ≥ 4 (aw×W ≥ 16-24)
+- aw = 8: steps at W ≥ 2 (aw×W ≥ 16)
+- aw ≥ 12: always stepped (channel-banking regardless of W)
+
+The step is **NOT a simple threshold on `aw × W`** — there are sub-regions that behave differently. Likely involves multiple factors:
+1. 8-channel warp-fence banking
+2. Per-SMSP store-pipe congestion
+3. Fence-queue drain latency
+
+Design recommendation: aim for aw ≤ 2 OR W ≤ 3 to stay in 5K tier.
+
+### Warp distribution matters even at same total writes!
+
+Same 256 total writes per CTA, varying (active_warps × W/thread) distribution:
+
+| warps × W/thread | cy |
+|---:|---:|
+| **8 × 1** | **4088** ← cheapest |
+| 1 × 8 | 5092 |
+| 2 × 4 | 5092 |
+| **4 × 2** | **10,167** ← 2.5× slower! |
+
+**The distribution affects fence cost even with same total writes.** Specifically:
+- 8 warps × 1 write is CHEAPEST (4088 cy) — better than doing less work with fewer warps
+- 4 warps × 2 writes is SLOWEST (10,167 cy) — much worse than 2×4 or 8×1
+
+This suggests a complex interaction between warp-dispatch pattern and fence-channel banking. The earlier "warps × W > 16" rule is an oversimplification. Even 4×2=8 can hit the 10K tier.
+
+### Mixed-load SM subsets — per-SM fence cost is LOCAL (big finding)
+
+**Asymmetric test**: N "heavy" SMs (bs=1024, 1024 threads × 16 writes = 32-warp banking + 16K writes) + (148-N) "light" SMs (bs=32, 1 thread × 1 write = 5K tier).
+
+| HEAVY_SMs | Heavy median cy | Light median cy |
+|---:|---:|---:|
+| 0 | — | **5078** |
+| **16** | **23,367** | **5077** ← unchanged! |
+| **74** | **24,161** | **5096** ← unchanged! |
+| 148 | 24,377 | — |
+
+**MASSIVE FINDING**: each SM's fence cost depends on ITS OWN local load — NOT on global chip state. Light SMs stay at 5K cy **even when 147 other SMs are simultaneously doing 24K-cy fences**.
+
+### Practical design pattern — "dedicated sync SM"
+
+You can **reserve a few SMs for lightweight coordination work** (fence + small writes → 5K cy) while other SMs do heavy compute with many pending writes (their fences → 20K+ cy).
+
+**The sync SMs' fence costs stay FAST regardless of how heavy the compute SMs are.** This is the opposite of what you'd expect if the fabric scaled with chip-wide traffic — each SM has an independent drain path + fixed fabric coord tax.
+
+**Use case**: producer-consumer patterns where a few SMs serve as "ordering coordinators" — they can run fast while compute SMs do the heavy lifting. Keep the coordinator SMs at 1 warp × 1 write to stay in 5K tier.
+
+### Mixed-load SM subsets — REFINED with per-fence timing (no steady-state coupling, small ramp-up transient)
+
+Per-iteration timing (not averaged) on 1 LIGHT SM paced to overlap heavy's full runtime window. Light samples at every iter so we can see any spikes.
+
+| heavy config | heavy median cy | light samples | light median | light p99 | light max |
+|---|---:|---:|---:|---:|---:|
+| 8 heavy × W=64, 140 light (no pacing) | 73,335 | 70,000 | 5,033 | 5,566 | **6,245** |
+| 147 heavy × W=128, 1 light paced | 158,788 | 250 | 5,562 | 10,812 | **12,281** |
+| 147 heavy × W=256, 1 light paced | **311,889** | 300 | 5,278 | 9,826 | **14,265** |
+
+**Refined conclusions:**
+1. **Steady-state: light SMs stay at 5,100-5,500 cy** even when heavy is at 311K cy (up to 59× the light cost, entirely local to heavy SMs)
+2. **Ramp-up transient**: during heavy's first 2-4 iterations when fabric is filling, light sees occasional spikes up to ~14K cy (≤5% of heavy's cost). Concentrated in the earliest iters.
+3. **No catastrophic outliers**: across 300 paced samples at 311K heavy cost, no light fence exceeded 14.3K — i.e. the coupling is bounded and small.
+
+Per-SM fence.sc.sys cost is **genuinely local** to each SM; there is no proportional fabric-contention scaling between SMs.
+
+### Multi-GPU atomic & load latency (warm L2, 1 SM, pointer-chase pattern)
+
+Each batch = 8 serial atomic adds (or .cg loads) with true data dependency between operations. Per-operation average over 64 batches. Atomics chain `x ← atomicAdd(addr, x | 1)`, loads chain `x ← A[x]` with A initialised to a closed pointer chain.
+
+**Atomic add (`atom.global.add.u32` = `ATOMG.E.ADD.STRONG.GPU`):**
+
+| | min | median | p90 | max |
+|---|---:|---:|---:|---:|
+| LOCAL | 242 | 589 | 618 | 666 |
+| REMOTE via NVLink | 2,716 | 2,966 | 3,022 | 3,173 |
+
+**Chained `ld.global.cg.u32` loads (true pointer chase):**
+
+| | min | median | p90 | max |
+|---|---:|---:|---:|---:|
+| LOCAL | 238 | 282 | 598 | 606 |
+| REMOTE via NVLink | 2,677 | 2,947 | 2,998 | 3,358 |
+
+Both show strong **bimodal distributions** matching the L2 side-aware finding: ~250 cy for same-L2-side hits, ~600 cy for wrong-L2-side hits. Remarkably, the same ~250 cy L2-side variance survives the cross-GPU traversal — REMOTE .cg loads split cleanly between ~2700 cy and ~2950 cy buckets. The round-trip over NVLink adds roughly +2,400 cy on top of the local-memory baseline, regardless of which side of the remote L2 hits.
+
+Cache-hint sensitivity on REMOTE pointer chase is minimal:
+- `ld.global.cg` (cache-global): median 2,917 cy
+- `ld.global.ca` (cache-all): median 2,953 cy
+- `ld.global.cv` (cache-volatile): median 2,907 cy
+
+Even `.ca` sometimes completes in 36 cy (L1-hit lucky case), but the median is unchanged — the chained pattern defeats speculation.
+
+### Multi-GPU fence.sys cost — cross-GPU writes pay ~18K cy NVLink drain
+
+System: 2× B300 SXM6 AC connected by NV18 (18 NVLinks × 53.125 GB/s = 956 GB/s peer BW). Standalone tool `multigpu/MGFenceBench.cpp` allocates buffer A on a remote GPU via P2P, then launches kernel on primary GPU that writes to remote A, then fences. Clock placed after writes to isolate pure-fence time.
+
+**Fence scope × LOCAL vs REMOTE A (148 SMs, aw=32, W=16 CL/warp):**
+
+| Scope | LOCAL A (GPU 0) | REMOTE A (GPU 1 via NVLink) | delta = cross-GPU drain |
+|---|---:|---:|---:|
+| `fence.sc.cta` | 495 | 5,786 | +5,291 |
+| `fence.sc.gpu` | 1,852 | 19,645 | +17,793 |
+| `fence.sc.sys` | 8,952 | 26,738 | +17,786 |
+
+**SM-count scaling (W=16 coalesced, REMOTE A):**
+
+| SMs | LOCAL cy | REMOTE cy | ratio |
+|---:|---:|---:|---:|
+| 1 | 3,953 | 6,860 | 1.74× |
+| 8 | 5,261 | 8,397 | 1.60× |
+| 16 | 8,975 | 16,766 | 1.87× |
+| 74 | 8,968 | 21,191 | 2.36× |
+| 148 | 8,934 | 27,111 | 3.03× |
+
+**W-scaling at 148 SMs:**
+
+| W | LOCAL cy | REMOTE cy | ratio |
+|---:|---:|---:|---:|
+| 1 | 10,326 | 14,475 | 1.40× |
+| 16 | 8,944 | 27,374 | 3.06× |
+| 32 | 6,688 | 45,194 | 6.76× |
+| 128 | 9,092 | 88,196 | 9.70× |
+
+**Asymmetric cross-GPU — LIGHT SMs DO pay the drain** (unlike LOCAL!):
+
+| HEAVY_SMs (W=64 REMOTE) | HEAVY cy | LIGHT cy (W=1 REMOTE) |
+|---:|---:|---:|
+| 0 | — | 6,843 |
+| 8 | 11,217 | 6,708 |
+| 74 | 27,586 | 15,402 |
+| 140 | 39,644 | 23,946 |
+| 147 | 42,923 | 26,361 |
+
+**Compare same sweep LOCAL**: LIGHT stays flat at 5,026 cy regardless of how many SMs are doing heavy writes.
+
+**Interpretation**: the NVLink egress queue is a *shared chip-wide resource*. When many SMs are streaming remote writes, the queue fills; any SM's `fence.sc.sys` has to drain that shared queue before completing. Unlike the LOCAL case where each SM's L2/fabric drain is independent, REMOTE drains couple all SMs together. A light SM with 1 CL/iter cross-GPU still waits ~24K cy when 140 other SMs are pushing heavy remote traffic.
+
+**Design implication**: you cannot reserve a "fast sync SM" for cross-GPU fence coordination the way you can for local — any SM's cross-GPU fence cost rises with chip-wide NVLink pressure.
+
+**Cross-GPU concurrency WITHOUT cross-writes does NOT interfere**:
+- GPU 0 LOCAL fence, GPU 1 idle: 8,857 cy (baseline)
+- GPU 0 LOCAL fence, GPU 1 doing LOCAL fences: 8,865 cy
+- GPU 0 LOCAL fence, GPU 1 doing HEAVY cross-GPU (W=128 remote to GPU 0): 8,931 cy
+- GPU 0 REMOTE fence (W=16), GPU 1 idle: 27,111 cy
+- GPU 0 REMOTE fence, GPU 1 ALSO doing heavy cross-GPU (bidirectional saturation): 26,285 cy
+
+The NVLink has enough bidirectional capacity (~956 GB/s per direction) that saturating one direction doesn't hurt the other. Fences only pay cross-GPU cost when THEIR writes go across — not when OTHER GPU's writes cross.
+
+**Effective NVLink drain rate**: 9.7 MB transfer in 18K cy (9.4 µs) ≈ **1.03 TB/s**, consistent with 956 GB/s peer-link peak. At W=128 REMOTE, 77.6 MB transfer in 46 µs ≈ 1.69 TB/s, indicating some overlap between fence's drain and the kernel's own store-pipe issue.
+
+**Even `fence.sc.cta` is affected** (495 → 5,786 cy when A is remote) because the cta-scope barrier still waits for local outgoing STRONG.SYS writes to reach their ack, and remote stores have much longer turn-around.
+
+### DEFINITIVE pure fence costs (coalesced stores, clock after writes)
+
+Measured with clock placed *after* the store burst so `t1 − t0` = pure fence time (no store-issue overhead); coalesced stores (1 `STG.E.STRONG.SYS` per warp-instruction).
+
+**By scope at 148 SMs, aw=32, W=16 CL/warp pre-load:**
+
+| Scope / PTX | pure fence cy |
+|---|---:|
+| `fence.sc.cta` / `membar.cta` | **337** |
+| `fence.sc.gpu` / `membar.gl` | **1,679** |
+| `fence.acq_rel.gpu` | 1,684 |
+| `fence.sc.sys` / `membar.sys` | **8,869** |
+| `fence.acq_rel.sys` | 8,897 |
+
+**By SM count for `fence.sc.sys`**:
+
+| SMs | pure fence cy |
+|---:|---:|
+| 1 | 3,960 |
+| 2 | 5,249 |
+| 4 | 5,200 |
+| 8 | 5,228 |
+| 16 | 8,924 |
+| 32 | 8,913 |
+| 74 | 8,980 |
+| 148 | 8,843 |
+
+Three tiers: 1 SM solo = **4K**, 2-8 SMs = **5.2K**, 16+ SMs = **8.9K** (flat to 148). `fence.sc.sys` saturates its fabric-coord cost at ~16 SMs simultaneously fencing.
+
+**SC and ACQ_REL are identical** at the same scope (within 1%). The earlier "17-37% gap" was scatter scheduling noise under uncoalesced stores — no such gap with real coalesced stores.
+
+### BIGGEST CORRECTION — fence cost is ROUGHLY CONSTANT; W-scaling was STORE throughput
+
+The clock measurement brackets `writes + fence` together:
+```
+CS2R t0
+STG.E.STRONG.SYS × W (per warp, each ≈ 1 CL at WIDTH=1)
+MEMBAR.SC.SYS + ERRBAR + CGAERRBAR + CCTL.IVALL
+CS2R t1
+```
+So `t1 − t0` measures **store-pipe time + fence time**. Isolating by toggling the fence:
+
+| W | writes only (no fence) | writes + fence | **Δ = pure fence** |
+|---:|---:|---:|---:|
+| 1  | 4 | 10,319 | **10,315** |
+| 16 | 2,075 | 10,315 | 8,240 |
+| 32 | 4,078 | 10,318 | 6,240 |
+| 64 | 8,379 | 16,027 | 7,648 |
+| 128 | 17,070 | 24,257 | 7,187 |
+| 256 | 40,668 | 38,590 | ~0 (overlap) |
+| 512 | 78,846 | 78,161 | ~0 (overlap) |
+
+**The `fence.sc.sys` overhead stays around 7–10K cy regardless of W.** What looked like "fence cost grows with W" was actually the per-SM STRONG.SYS write pipe draining — the fence overhead gets hidden behind it once writes dominate (W ≥ 256).
+
+**STRONG.SYS write throughput per SM**: 2,075 cy for 16 CL/warp at aw=32 ⇒ **≈32 B/clk/SM sustained** to L2 (1 CL per 4 clocks per SM). At 148 SMs that's ~9.1 TB/s chip-wide store throughput — very high, close to HBM peak. Above this rate, the fence adds nothing because stores are already the bottleneck.
+
+**Revised fence cost model** at 148 SMs full chip, coalesced stores:
+- **Fixed fabric-coord cost**: ~8–10K cy (the `MEMBAR.SC.SYS + ERRBAR + CGAERRBAR + CCTL.IVALL` path)
+- **Plus store drain**: `W × 128 cy` per warp (linear in cache-lines per warp, at ~32 B/clk/SM)
+- These are SEPARATE; the "step at W=16" etc. was actually the store-pipe overtaking the fabric floor
+
+**Measured pure-fence cost (clock placed AFTER writes, before fence)** to isolate from store issue:
+
+| W (CL/warp) | pure fence only cy |
+|---:|---:|
+| 1 | 10,249 |
+| 16 | 8,837 |
+| 32 | 6,717 |
+| 64 | 9,095 |
+| 128 | 8,854 |
+| 256 | 7,711 |
+| 512 | 8,387 |
+
+**Pure `fence.sc.sys` overhead is flat ~7–10K cy regardless of W** at 148 SMs. The fence either drains whatever was in-flight, or — if the pipe is already saturated (W ≳ 256) — it just waits for natural completion and adds ~no extra work on top. Some variability (6.7K at W=32) likely reflects partial overlap between the fence's in-flight drain and the store issue.
+
+Early spikes at W=1,4 are slightly higher (~10K) because the write pipe is empty, so the fence pays full fabric-coord; at W=16-32 there's partial overlap with the STRONG.SYS drain → lower measured fence time.
+
+### RETEST WITH COALESCED STORES — many prior findings need re-reading
+
+**What changed**: the prior "packed" layout (`A + tid*W`, then `my_addr[j]`) was actually scattered at the warp level — each warp store-instruction had 32 threads writing 64 B-strided addresses = 32 independent L2 transactions per store-instruction. Real coalescing (`warp_base[j*32 + lane]`) produces 1 STG transaction per instruction, verified in SASS as `STG.E.STRONG.SYS` at +0x80 increments.
+
+**Coalesced W-scaling matrix (148 CTAs × bs=1024, median cy, fence.sc.sys):**
+
+| aw \ W | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| aw= 1 | 5,133 | 5,109 | 5,121 | 5,111 | 5,140 | 5,150 | 5,160 | 5,185 |
+| aw= 2 | 5,175 | 5,168 | 5,160 | 5,171 | 5,140 | 5,164 | 5,168 | 5,603 |
+| aw= 4 | 5,172 | 5,162 | 5,185 | 5,134 | 5,139 | 5,137 | 5,587 | 7,684 |
+| aw= 8 | 5,111 | **10,149** | 10,193 | 9,496 | 10,246 | 10,304 | 10,302 | 10,320 |
+| aw=16 | 4,338 | 10,279 | 10,274 | 10,228 | 4,498 | 10,310 | 10,344 | 15,041 |
+| aw=32 | 10,299 | 10,357 | 10,302 | 10,265 | 10,281 | 10,264 | 10,163 | **24,122** |
+
+**Revised rules (coalesced)**:
+- aw=1: **flat ~5,140 cy up to W=128** — single-warp-per-SM fences are cheap regardless of how many cache lines written
+- aw=2-4: flat to W=32, small rise at W=64-128
+- aw=8 is the cliff: steps to 10K tier at W≥2
+- aw=32 with W≥128: 24K tier
+
+So the **"step at W=16"** and "step at W=8 with aw=8" rules were valid FOR the uncoalesced pattern. Coalesced, the step moves:
+- aw=4 is the true "safe" tier — W up to 32 stays in 5K floor
+- aw=8 saturates the fence-channel banking
+- Full 32-warp CTA with W=128 = 24K (vs 149K uncoalesced)
+
+### RETEST — SC vs ACQ_REL are IDENTICAL with coalesced stores
+
+With coalesced: `sc.sys` ≈ `acq_rel.sys` ≈ same cost (<1% diff across all W):
+
+| W | sc.sys | acq_rel.sys | sc.gpu | acq_rel.gpu |
+|---:|---:|---:|---:|---:|
+| 1  | 10,318 | 10,295 | 1,141 | 1,141 |
+| 8  | 10,299 | 10,226 | 1,941 | 1,941 |
+| 16 | 10,226 | 10,205 | 2,551 | 2,552 |
+| 32 | 10,261 | 10,348 | 4,672 | 4,668 |
+| 64 | 16,217 | 16,343 | 9,413 | 9,399 |
+| 128 | 24,143 | 24,208 | 18,808 | 18,783 |
+| 256 | 38,226 | 38,237 | 37,069 | 37,087 |
+
+**The earlier "acq_rel.sys is 17-37% slower at W=8-16" gap was an artifact of uncoalesced scatter**, not a real SC-vs-ACQ_REL cost difference. With clean coalescing, the SASS-level `MEMBAR.SC.SYS` vs `MEMBAR.ALL.SYS` variants measure the same chip-coherence cost. No practical preference between `sc` and `acq_rel` at this scope — use whichever reads best in source.
+
+**GPU-scope stays much cheaper** than SYS at low W (`sc.gpu` W=1 = 1,141 cy vs `sc.sys` = 10,318) — the ~9K fabric-coord floor only applies to `.sys`. Above W=256, SYS and GPU converge because store-drain dominates over the fixed coordination tax.
+
+### CRITICAL CAVEAT — most prior W-scaling data was UNCOALESCED
+
+Earlier kernels in this section used `my_addr = A + tid * W; my_addr[j] = …` as the "packed" layout. Within a single warp-instruction (one value of `j`), threads 0..31 wrote to addresses `A[0+j], A[W+j], A[2W+j], …, A[31W+j]` — **32 different cache lines per store-instruction, scattered at stride W dwords apart**. This is the OPPOSITE of coalescing: each store-instruction produced 32 independent L2 transactions instead of 1.
+
+Re-running with a **properly coalesced** layout (`warp_base[j*32 + lane]`, verified in SASS as 1 `STG.E.STRONG.SYS` per `j`-iter, offsets +0x80 apart) gives very different numbers at full chip (148 SMs × 1024 threads):
+
+| W | uncoalesced (prior) | **coalesced** |
+|---:|---:|---:|
+| 1  | 10,292 | 10,313 |
+| 16 | 19,385 | **10,310** (no step!) |
+| 32 | 42,698 | **10,317** (no step!) |
+| 64 | 78,364 | **16,215** |
+| 128 | 149,770 | **24,183** |
+
+**Key realisation**: fence cost scales with **unique L2-transaction count**, and uncoalesced-scatter inflates that by **32×** per store-instruction. The "5K → 10K → 20K" step pattern is a property of *scattered per-thread-strided stores*, not a fundamental scaling law of `fence.sc.sys` vs W.
+
+With true coalescing, even W=32 stays at the 10K floor. Real code should coalesce via lane-stride layout.
+
+The "per-SM is local" result survives the correction: with coalesced W=512 heavy (71,507 cy), light still maxes at 6,456 cy — essentially baseline. So the CONCLUSION is preserved; only the absolute W-cost curves need re-reading.
+
+### Write WIDTH — 128-bit stores do NOT reduce fence cost 4×
+
+Swapping `st.volatile.global.u32` ↔ `st.volatile.global.v4.u32` before `fence.sc.sys` (148 SMs × 1024 threads):
+
+| W | 32b | 64b | 128b |
+|---:|---:|---:|---:|
+| 1  | 10,306 | 10,259 | 10,253 |
+| 8  | 11,164 | 10,605 | 10,489 |
+| 16 | 21,493 | 21,570 | 21,300 |
+| 32 | 44,075 | 44,261 | 42,225 |
+| 64 | 329,320 | 326,500 | **222,087** (-32%) |
+| 128 | 737,636 | 724,097 | **486,682** (-34%) |
+
+**Takeaway**: below the saturation point (W ≤ 32), widening stores does **nothing** — step thresholds are defined by **count of store instructions**, not bytes. Above saturation (W ≥ 64), 128b helps ~30% (not 4×) — there's a small byte-throughput component but the drain is dominated by per-transaction bookkeeping.
+
+### Rotating fence — cross-warp coupling within a single SM
+
+`membar_rotating_v2.cu`: 148 CTAs × 32 warps, each warp writes W=16 volatiles every iter, but only **one warp per iter** issues `fence.sc.sys` (rotating across warps). Compared to all-warps-fence.
+
+| mode | fencing warp cy | non-fencing warp cy |
+|---|---:|---:|
+| MODE=0 (all warps fence every iter) | 19,312 | — |
+| MODE=1 (1 warp/iter fences, rotating) | **25,494** | **17,848** |
+
+**Non-fencing warps in the same CTA still pay 93% of the fence cost** even though they never issue the fence themselves. The fence drains the SM-local write queue and invalidates the SM-local L1; all warps sharing that SM stall on the drain.
+
+**Inside-SM coupling is strong; between-SM coupling is weak.** The mental model: fence.sc.sys is (roughly) a per-SM operation with a small fixed fabric-coordination tax — not a global chip-wide stall.
+
+### SM-count flat region (4 SMs → 148 SMs)
+
+Testing active SM counts of 18, 36, 74, 148 (covering fractions of GPC boundaries):
+
+| Active SMs | cy |
+|---:|---:|
+| 1 | 2880 |
+| 2 | 3310 |
+| 4 | ~5075 |
+| 18 | 5056 |
+| 36 | 5033 |
+| 74 | 5077 |
+| 148 | 5083 |
+
+**FLAT ~5050 cy from 4 SMs to 148 SMs**. The fabric coord tax is fully paid at 4 SMs and doesn't scale further. **No visible L2-side dependency** — 18 SMs (≈1 GPC), 36 SMs (2 GPCs), 74 SMs (4 GPCs) all cost the same.
+
+### SMID-controlled N-SM topology tests
+
+| SMID set | Count | Topology notes | cy |
+|---|---:|---|---:|
+| (0,1) | 2 | same TPC | **3310** |
+| (0,2) | 2 | diff TPC, same GPC | **2952** |
+| (0,16) | 2 | diff GPC | 3290 |
+| (0,74) | 2 | far diff GPC | 3270 |
+| (0,1,16,17) | **4** | 2 GPCs × 2 TPC pairs | **3279** |
+| (0,1,2,3) | 4 | same GPC, 2 TPCs | 5079 |
+| (0..7) | 8 | same GPC, 4 TPCs | 5084 |
+| (0..15) | 16 | 8 TPCs | 5084 |
+| (0-3, 20-23) | 8 | 2 TPC clusters | 5094 |
+
+**Key takeaways** (corrected from earlier over-interpretation):
+- **2 SMs cost ~3000 cy regardless of topology** (2952-3310 spread is likely noise — same tier)
+- **Topology variance is small** — same-TPC, diff-TPC, diff-GPC all land in the 2940-3310 range
+- **The step to 5K tier happens around 4 SMs in same GPC** (but 4 SMs split 2+2 across GPCs stay at 3.3K!)
+- At ≥8 SMs: flat ~5050 cy regardless of layout
+
+**Refined model**:
+- 1 SM: 2880 cy
+- 2 SMs (any topology): **~3000 cy**
+- 4 SMs **if split across 2 GPCs**: ~3300 cy (still in 2-SM tier!)
+- 4+ SMs **in same GPC**: 5050 cy
+- 8+ SMs: 5050 cy (saturated)
+
+This is actually a more interesting topological effect — the fabric coord cost isn't "N-SM count" but "complexity of broadcasting across GPCs". 2 SMs in same GPC + 2 in another GPC = same-as-2-SMs because the 2-per-GPC pattern parallelizes across the GPC fabric.
+
+### Clean 2D cost surface — SM count × warps/SM × writes/thread
+
+**Granular measurements at 1 / 74 / 148 SMs**:
+
+| Active SMs | warps/SM | W=1 | W=2 | W=3 | W=4 | W=6 | W=8 |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| **1** | 4 | 1673 | 2916 | 2959 | **5307** ← step | 3037 | 2895 |
+| **1** | 8 | 2883 | **5297** ← step | 5280 | 5307 | 5309 | 2942 |
+| **1** | 12 | 5290 | 5301 | 2894 | 5304 | 5305 | 5343 |
+| **74** | 4 | 5063 | 5040 | 5067 | **10,166** ← step | 1883 | 10,110 |
+| **74** | 8 | 1744 | **10,122** | 10,109 | 10,129 | 10,125 | 10,129 |
+| **74** | 12 | 10,113 | 10,124 | 10,133 | 10,127 | 10,118 | 10,131 |
+| **148** | 4 | 5079 | 2301 | 5059 | **10,111** | 5077 | 10,113 |
+| **148** | 8 | 5058 | **10,122** | 10,103 | 10,124 | 10,134 | 10,137 |
+| **148** | 12 | 10,126 | 10,117 | 10,147 | 10,146 | 10,133 | 10,156 |
+
+**Clean model**:
+- **Base cost depends on active SM count**:
+  - 1 SM: ~2,900 cy (no inter-SM fabric coord)
+  - 2 SMs: ~3,300 cy
+  - 4+ SMs (up to 148): **flat ~5,080 cy** (fabric coord doesn't scale further)
+- **Threshold step**: when `warps/SM × W > 16` (i.e., ~512 pending stores per SM), cost doubles:
+  - 1 SM tier: 2900 → 5300 cy
+  - 74+ SM tier: 5080 → 10,120 cy
+- **At very high writes (W ≥ 64)**: linear drain dominates, cost grows proportionally
+
+### membar.sys cost model — SASS-exposed & multi-variable
+
+**SASS inner-loop for `write + fence + clock diff`**:
+```
+CS2R.32 R_t0, SR_CLOCKLO ;           ← t0 captured (ALU pipe, ~8 cy latency)
+STG.E.STRONG.SYS [addr], Rw ;        ← pending write(s)  — N copies for NWRITES
+MEMBAR.SC.SYS ;                       ← fence proper
+ERRBAR;                               ← error barrier (part of fence expansion)
+CGAERRBAR ;                           ← cluster-GA error barrier
+CCTL.IVALL ;                          ← cache invalidate all — **MAIN COST DRIVER**
+CS2R.32 R_t1, SR_CLOCKLO ;            ← t1 captured
+IADD3 R_diff, ..., R_t1, -R_t0 ;     ← delta
+BRA loop                              ← back to top
+```
+
+Cost = max(5K baseline, 10K if >8 warps/SM, + drain time for stores).
+
+**The 10K step appears when EITHER**:
+1. **>8 warps/SM issue fence concurrently** (channel banking, confirmed in W=0 test)
+2. **Enough stores pending per SM** to push drain time > CCTL.IVALL baseline (confirmed bs=256 W=4)
+
+They are orthogonal: each can push into 10K tier independently.
+
+### membar.sys cost is driven by warps/SM (8-channel limit), NOT total writes
+
+**CORRECTION of earlier "3-tier total-writes" claim.** Proper dissection with explicit (warps/SM × writes/thread) sweep at 148 CTAs:
+
+**W=0 (NO writes at all, pure fence cost)**:
+
+| warps/SM | cy/membar.sys |
+|---:|---:|
+| 1  | 5087 |
+| 2  | 5086 |
+| 4  | 5087 |
+| 8  | 5095 |
+| 9  | 5067 (at 8-channel limit) |
+| **12** | **9994** ← step! |
+| 16 | 10,140 |
+| 24 | 10,142 |
+| 32 | 10,154 |
+
+**The step at 9-12 warps/SM is the 8-channel fabric limit**. Above 8 concurrent warps doing membar.sys, the fabric 2-way banks → 2× cost.
+
+**With writes added**:
+- At ≤8 warps/SM: 5K cy base + extra for very heavy writes (W≥64 → 7-8K)
+- At ≥12 warps/SM: 10K cy base + extra drain cost linear in writes
+- The `.sys` fence always pays the 5K/10K floor; writes add incremental drain on top
+
+**This resolves the "5K vs 10K" discrepancy correctly**:
+- Original light-load test (bs=32 → 1 warp/SM): 5078 cy ✓
+- Recent heavy-load test (bs=1024 → 32 warps/SM): 10K cy ✓
+- **The step is warps/SM crossing 8, NOT total pending writes**
+
+**Design rule**: keep `≤8 warps/SM` issuing `membar.sys` concurrently to stay in the 5K tier. Beyond 8, cost doubles regardless of write count.
+
+**Cross-check**: earlier "8-channel fabric limit" finding (bench_membar_many_warps) showed exactly this — 8 warps/SM = 5083 cy, 9 warps = mixed (some overflow), 16 warps = 10,156 cy. Consistent!
+
+### Very heavy load fence sweep (full chip × many writes per iter)
+
+| W/thread | sc.gpu | acq_rel.gpu | sc.sys | acq_rel.sys |
+|---:|---:|---:|---:|---:|
+| 8 | 8500 | 8530 | **8798** | **10,346 (+17.6%)** |
+| 16 | 18,400 | 18,434 | 19,113 | 17,609 (-7.9%) |
+| 32 | 42,954 | 43,005 | 40,965 | 41,040 |
+| 64 | 79,843 | 79,666 | 78,031 | 78,205 |
+| 128 | 149,479 | 149,537 | 149,406 | 148,630 |
+
+**Refined claim**:
+- At **high write load (W ≥ 32)**: sc vs acq_rel converge within 1% — fence is drain-bound, ordering-strength irrelevant.
+- At **moderate load (W = 8-16)**: noisy; sometimes `acq_rel.sys` is 17% slower, sometimes 8% faster. Variance is higher than at high W.
+- At **W = 128**: all 4 fence variants cost ~149K cy — dominated by the need to drain 128 × 1024 × 148 = 19.4M pending writes.
+
+**The W=16 sc.sys = 19,113 cy matches the earlier "19107 cy" number from the fence_validate kernel** — that was with 1024 threads × 4 writes × 4 unrolled iters.
+
+**Actionable insight**: at high write load, fence cost scales linearly with pending write count, **regardless of fence scope or sc/acq_rel**. The fence is essentially drain-time.
+
+**Note on "+4 own writes" measurement (10,105 cy)**: the 4 own writes are BEFORE the membar.sys. With 16 writer warps/CTA continuously writing in the background, the observer's 4 own writes are negligible compared to the chip-wide write traffic. That's why "+4 own writes" is essentially same as "no own writes" (10,113 → 10,105): the fence drains the WRITER WARPS' traffic regardless of observer's own writes.
+
+**Key insights:**
+1. **Fence + pending writes = 3-4× empty fence cost** (must wait for writes to drain). The drain time is dominated by L2/HBM round-trip, not the actual fence inst.
+2. **Number of pending writes doesn't scale fence cost** — 1, 4, 16 writes all ~770-830 cy for `membar.gl`. The fence is "drain-up-to-now" semantics, not "drain-N-writes".
+3. **CTA-scope fence stays cheap (~47 cy) even with writes** — only drains to L1, no inter-SM coordination needed.
+4. **GPU-scope fence at full chip = 1166 cy with writes** — 4× single-warp because all 148 SMs' write queues must coordinate.
+5. **SYS-scope fence at full chip = 19107 cy with writes** — 66× single-warp because system fabric (PCIe + memory) must drain too.
+
+**Lesson**: 
+- Use `fence.cta` instead of `fence.gpu` whenever data only needs to be visible within the CTA (10-30× cheaper).
+- Be aware that fences after stores cost much more than fences in isolation.
+- Avoid `membar.sys` on hot paths at full chip occupancy — 19k cycles is a serious price.
+
+## 30.E cp.async legacy + cluster sync (audited)
+
+**`cp.async` legacy (16-byte / inst):**
+
+| variant                                       | cy/iter | per-cp.async | notes |
+|-----------------------------------------------|--------:|-------------:|-------|
+| `cp.async.cg + commit_group + wait_all` (1)   |   376   | 376          | synchronous wait round-trip |
+| 4× `cp.async.cg + commit_group + wait_all`    |   417   | **104** | batched amortizes per-op cost; 4× cheaper |
+| `cp.async + commit + wait_group 1` (non-block)|   192   | 192          | non-blocking — last group still in-flight |
+| **synchronous `ldg.v4 + sts.v4`**             |  **11.7** | n/a       | **32× faster than cp.async** when data is L1/L2-resident — only use cp.async if you actually need async semantics for overlap |
+
+**Cluster sync barriers** (CGA, `__cluster_dims__(2,1,1)`):
+
+| op                                            | cy/iter | notes |
+|-----------------------------------------------|--------:|-------|
+| `barrier.cluster.arrive + barrier.cluster.wait` | **373** | full sync RTT across cluster |
+| `barrier.cluster.arrive.relaxed + wait`        | **102** | **3.7× faster** — relaxed semantics drop ordering guarantees |
+
+**Lesson**: prefer `barrier.cluster.arrive.relaxed` when you don't need release-acquire semantics. Saves ~270 cy per cluster sync.
+
+## 30.D Warp primitives latency + throughput (1-warp test, audited)
+
+**Latency** (single-op chain, 1 op per loop iter, dep through `v`):
+
+| primitive (`__*_sync`)             | SASS              | cy (latency) | notes |
+|------------------------------------|-------------------|---:|-------|
+| `__shfl_sync` (const dist)         | `SHFL.IDX`        |   42    | identical to BFLY when index is constant |
+| `__shfl_sync` (computed dist)      | `SHFL.IDX` + IMAD |   54    | **+12 cy from IMAD** for index compute, not from SHFL itself |
+| `__shfl_xor_sync`                  | `SHFL.BFLY`       |   42    | best for reductions (no IMAD needed) |
+| `__shfl_up_sync` / `__shfl_down_sync` | `SHFL.UP/DOWN` |   42    | scan-friendly |
+| `__ballot_sync`                    | `VOTE.ANY` (mask) |   28    | fast, returns 32-bit mask |
+| `__any_sync`                       | `VOTE.ANY`        |   32    | predicate-only |
+| `__all_sync`                       | `VOTE.ALL`        |   32    | — |
+| **`__activemask`**                 | `VOTE.ANY` impl   | **23**  | **cheapest warp primitive** |
+| `__reduce_add_sync`                | `REDUX.SUM`       |   54    | HW reduction; saves a SHFL chain |
+| `__reduce_min_sync`                | `REDUX.MIN`       |   29    | **fastest reduce** — beats add by 2× |
+| `__syncwarp`                       | `WARPSYNC` impl   |   23    | same cost as `__activemask` |
+
+**Throughput** (8 independent SHFLs in parallel per loop iter, no dep chain):
+
+| primitive | total cy / 8 ops | per-op throughput |
+|-----------|---:|---:|
+| 8× `SHFL.BFLY` parallel | 69 | **8.6 cy/SHFL** (one SHFL every ~9 cy from a single warp) |
+| 8× `SHFL.IDX`  parallel | 69 | **8.6 cy/SHFL** (identical to BFLY) |
+
+**Lessons:**
+- `SHFL.IDX` and `SHFL.BFLY` have **identical latency (42 cy) AND throughput (8.6 cy)** when index/distance is constant. Earlier "52 cy IDX" was IMAD overhead from `(i+1) & 31` index calculation, not the SHFL itself. Use whichever is most natural — there is no perf difference.
+- `REDUX.MIN`/`MAX` are 2× faster than `REDUX.SUM` on B300; if you only need extrema, use the dedicated op.
+- `__activemask` and `__syncwarp` are 23 cy — essentially free for divergence detection.
+
+### Best pattern: "find lane with min, only winner runs" (5 variants tested)
+
+Common idiom: among all lanes, find the lane with the smallest `x` value, optionally tie-break by laneid, and have ONLY that lane execute compute+store.
+
+| variant | total insts to `EXIT` | warp-sync ops | notes |
+|---------|---:|:-:|-------|
+| 2× `CREDUX.MIN` (naive) | 14 | 2 | user's original idea: `mn=credux_min(x); is_min=(x==mn); y=is_min?lane:~0; winner=credux_min(y); if(lane==winner){...}` |
+| `CREDUX.MIN` + `VOTE.ANY` + ffs | 14 | 2 | `mn=credux_min(x); mask=ballot(x==mn); if(lane==ffs(mask)-1){...}` |
+| Pack x\|lane, 1× `CREDUX.MIN` (extract lane) | 13 | 1 | `packed=(x&~0x1F)\|lane; w=credux_min(packed); if(lane==(w&0x1F)){...}` |
+| **Pack x\|lane, compare packed (no extract)** | **11** | **1** | **WINNER**: `packed=(x&~0x1F)\|lane; w=credux_min(packed); if(packed==w){...}` |
+| Pack + compare lane only | 12 | 1 | similar but extracts lane bits — 1 inst more |
+
+**Best SASS** (variant 4, 11 insts to EXIT, single warp-sync op):
+```
+/*0030*/  S2R R3, SR_LANEID ;                            ← read laneid
+/*0040*/  IMAD R0, R0, -0x61c88647, RZ ;                  ← compute x (placeholder)
+/*0050*/  LOP3.LUT R0, R0, UR4, RZ, 0x3c, !PT ;           ← compute x cont.
+/*0060*/  LOP3.LUT R2, R3, 0xffffffe0, R0, 0xf8, !PT ;    ← packed = (x&~0x1F) | lane (1 LOP3!)
+/*0070*/  CREDUX.MIN UR4, R2 ;                            ← uniform-pipe HW min (single warp-sync)
+/*0080*/  IMAD.U32 R3, RZ, RZ, UR4 ;                      ← move UR → R for compare
+/*0090*/  ISETP.NE.U32.AND P0, PT, R2, R3, PT ;           ← compare packed (only winner matches)
+/*00a0*/  @P0 EXIT ;                                      ← non-winners exit
+```
+
+**Insights:**
+1. **Pack the entire decision into ONE `CREDUX.MIN`** by stuffing `lane` in the low 5 bits of `x`. The min over packed values is the same as (min x, smallest lane with that x).
+2. **Compare the packed value, NOT lane==winner_lane.** Each lane already knows its packed value; only one lane will match `winner`. Saves 1 LOP3 (extract lane bits).
+3. **CREDUX.MIN is a uniform-pipe instruction** that returns a UR (uniform reg). The IMAD.U32 to copy UR→R is needed to feed ISETP. (Cost ~1 cy — uniform pipe.)
+4. The whole pattern uses **3 productive ops + 1 reg-shuffle + 1 predicate test + EXIT**. There's a lane-id read (S2R) at 7.4 cy and a CREDUX.MIN that uses uniform-pipe min hardware.
+5. **Caveat**: this LOSSES 5 bits of `x` precision (bits 0-4 are overwritten with laneid). If your x is small (< 2^27) or you only need approximate min, that's fine. For exact 32-bit min, fall back to the 2× CREDUX.MIN pattern (or build a 64-bit packed version using shfl-based min, which there's no native CREDUX for).
+
+**MAX with MIN-lane tiebreak** (i.e. find max x; on tie, smallest lane wins): same 11-inst pattern but **invert the lane bits**:
+```cuda
+unsigned packed = (x & 0xFFFFFFE0u) | ((~lane) & 0x1Fu);
+unsigned winner = __reduce_max_sync(0xFFFFFFFF, packed);
+if (packed == winner) { ... }    // I won
+```
+SASS: 1 extra LOP3.LUT (the ptxas couldn't fold `(x & ~0x1F) | (~lane & 0x1F)` into a single 3-input LOP3 like the min version, but used the `0x34` LUT for `OR with NOT`). Total: 11 insts to EXIT, 1 CREDUX.MAX. Same cost as MIN+min-lane.
+
+**Top-K extension** (e.g. top-6 of 256 values across 1 warp, 8 vals/lane): see "30.F Top-K patterns" below — best lossy = 658 cy, best full-precision = 967 cy (using 2× CREDUX with MIN sentinel-trick).
+
+## 30.A ldmatrix / stmatrix (single-CTA, BS=128, L1/smem-resident)
+
+| PTX form                                   | GB/s/SM | inst/warp/clk |
+|--------------------------------------------|--------:|--------------:|
+| `ldmatrix.x1.m8n8.shared.b16`              |   198   |  0.80 |
+| `ldmatrix.x2.m8n8.shared.b16`              |   396   |  0.81 |
+| `ldmatrix.x4.m8n8.shared.b16`              | **661** |  0.67 |
+| `ldmatrix.x4.trans.m8n8.shared.b16`        |   666   |  0.68 |
+| `ldmatrix.x1.trans.m8n8.shared.b16`        |   199   |  0.81 |
+| `stmatrix.x1.m8n8.shared.b16`              |   101   |  0.41 |
+| `stmatrix.x4.m8n8.shared.b16`              |   117   |  0.12 |
+
+**Observations:**
+- `ldmatrix.x4` saturates at ~666 GB/s/SM — the warp-cooperative smem-read-to-register path is much wider than ordinary `ld.shared.v4` (≈ 104 GB/s/SM) or `ld.shared.v8` (~153 GB/s/SM).
+- `.trans` variant is free (no cost over non-trans).
+- **stmatrix is severely slower than ldmatrix** — `stmatrix.x4` peaks at 117 GB/s vs `ldmatrix.x4` 666 GB/s. If you need to write a tile back to smem from registers, batch via `st.shared.v4` instead.
+- **Blackwell `ldmatrix.b8x16.b6x16_p32` (fp8/fp6 LDSM)** has the **same BW as `.b16`**: 664 GB/s/SM for x4 variant. Pipe throughput is independent of per-lane type width; the bottleneck is the warp-cooperative smem read bandwidth.
+
+## 30.C Timer registers on B300
+
+| timer              | semantics                       | resolution | notes |
+|--------------------|---------------------------------|-----------:|-------|
+| `%clock64`         | cycles since SM boot (u64)      |   12 cy    | back-to-back reads; use for instruction-level timing |
+| `%clock` (u32)     | low 32 bits of a clock counter — **not** low 32 of `%clock64` | 1 cy reads | different counter than clock64; verified via simultaneous reads |
+| `%globaltimer`     | **ns since Unix epoch** (u64)   |   32 ns    | wall-clock, verified returns ~1.776e18 = April 2026 |
+| `SR_CLOCKLO` (SASS)| same as `%clock` u32            |   via CS2R.32 (20 cy emit) | fastest timestamp emit in catalog |
+
+**Cross-check**: at 1.92 GHz the expected `globaltimer / clock64 = 1/1.92 = 0.521 ns/cy`. Over a coarse kernel (milliseconds) this works out. Over microsecond spans, `globaltimer` may not tick (0 ns deltas).
+
+**SM clock synchronization** (audited 2026-04-15): All 148 SMs run at PERFECTLY identical frequency. Same work (4096-iter LCG chain) gives `clock64` delta = 94 216 cy on EVERY SM (zero variation). However, **`clock64` counters are per-SM and NOT synchronized** — `c0` spread across SMs at any moment is up to **14.7 G cycles (~7.7 sec)** because each SM's counter starts ticking at its own power-on time. `globaltimer` IS chip-wide synchronized (matches across SMs to within ~250 ns — likely measurement jitter, not real skew).
+
+**Implication**: to compare timestamps across SMs (e.g., for cross-SM ordering analysis), **use `globaltimer`, NOT `clock64`**. For within-SM intervals (single thread or warp's elapsed cycles), `clock64` is fine and 1500× higher resolution than `globaltimer`.
+
+**SM boot-phase clustering (NEW)**: B300's 148 SMs cluster into **8 distinct boot-phase groups** of 12-20 SMs each. Each group's `clock64` counters started ticking together; groups are staggered ~6-7 seconds apart at chip power-on. **The 8 groups correspond to B300's 8 GPCs** (Graphics Processing Clusters) — SMs within a GPC boot together, GPCs are powered up in sequence.
+
+| group | size | smids (sample) | c0 offset (s) |
+|------:|-----:|----------------|--------------:|
+| 1     | 12   | 0,1,16,17,32,33,...,142,143 | 0 (earliest) |
+| 2     | 20   | 14,15,30,31,46,...,140,141 | +6.21 |
+| 3     | 20   | 10,11,26,27,42,...,136,137 | +6.57 |
+| 4     | 20   | 12,13,28,29,44,...,138,139 | +6.86 |
+| 5     | 18   | 2,3,18,19,34,...,122,123 | +7.40 |
+| 6     | 20   | 6,7,22,23,38,...,144,145 | +7.57 |
+| 7     | 20   | 8,9,24,25,40,...,146,147 | +7.60 |
+| 8     | 18   | 4,5,20,21,36,...,124,125 | +7.69 |
+
+Total: 12+20+20+20+18+20+20+18 = **148 SMs across 8 GPCs**. SMs come in consecutive pairs (even-odd → 1 TPC = 2 SMs sharing some resources). This boot-phase data is observable post-startup via `clock64` differences.
+
+**Read-cost per SREG (per-read, serial-chain, triple-audited):**
+
+| SREG            | cy/read | notes |
+|-----------------|--------:|-------|
+| `%laneid`       |   7.4   | cheapest |
+| `%nsmid`        |   7.8   | cheap |
+| `%smid`         |  13.5   | — |
+| **`%clock64`**  |  **15.7** | **preferred timestamp** (CS2R.32, ALU-pipe) |
+| `%globaltimer`  |  15.4   | same cost as clock64 |
+| `%warpid`       |  35.2   | expensive |
+| `%clock` (u32)  |  44.8   | **NVRTC code-gen artifact, NOT a HW limit** — see note below |
+
+**Clock SASS deep-dive (TRIPLE-AUDITED via subagent investigation):**
+
+The compiler **picks SASS encoding based on the CONSUMER, not the producer** — `mov.u32 %clock;` can emit either `CS2R.32` (fast, ALU pipe) or `S2UR + NOP` (slow, uniform pipe), depending on how the result is used.
+
+| PTX form | Consumer | Emitted SASS | Solo cy/read |
+|---|---|---|---:|
+| `mov.u64 %c, %%clock64;` | u64 acc (both halves used) | `CS2R Rx, SR_CLOCKLO` (writes Rx **AND** Rx+1) | **7-8 cy** |
+| `mov.u64 %c, %%clock64;` | only low 32 bits used | **demoted to** `S2UR + NOP` | 25 cy |
+| `mov.u32 %c, %%clock;` | u64/xor-acc int consumer | `S2UR + NOP` | 25 cy |
+| `mov.u32 %c, %%clock;` | FFMA / float ALU input | `CS2R.32 R, SR_CLOCKLO` | ~8 cy |
+| `mov.u32 %c, %%clock;` + BREV.u32 | int consumer | `S2UR + NOP` | 25 cy |
+| `mov.u32 %lo` + `mov.u32 %hi` | manual 64-bit assembly | 2× `S2UR + NOP` | 50 cy |
+
+**Pipe parallelism is BACK-END, not front-end.** Subagent confirmed: single warp's scheduler issues 1 inst/cy regardless of pipe. So S2UR takes a dispatch slot just like CS2R; the uniform-pipe back-end is **not free** in parallel with FFMA.
+
+**The "S2UR tax" (~30 cy)** is scoreboard latency between S2UR and its consumer. It can be hidden by trailing ALU work:
+
+| FMAs after clock read | FFMA-only | + 1 S2UR | + 1 CS2R | Δ S2UR | Δ CS2R |
+|---:|---:|---:|---:|---:|---:|
+| 0 (read at end) | 76 cy | **120** | 90 | +44 | +14 |
+| 8  | 76 | 104 | 84 | +28 | +8 |
+| 16 | 76 | 95  | 83 | +19 | +7 |
+| 32 | 76 | 80  | 79 | **+4** | **+3** |
+| 64 (read at start) | 76 | 80 | 79 | +4 | +3 |
+
+**Conclusion:** S2UR is NEVER faster than CS2R. It's only par when ALU work hides the result-use latency. **Prefer `mov.u64 %x, %%clock64;` + force full-64-bit use** (`acc += c`) as default — gives `CS2R Rx, SR_CLOCKLO` (writes Rx **and** Rx+1, both halves), 14 cy overhead at end-of-region.
+
+**The u64→low-32 demotion is a silent gotcha**: `unsigned t = (unsigned)full_clock64;` causes ptxas to rewrite to S2UR + NOP (120 cy) instead of CS2R (90 cy). Always use the u64 value in full (`acc += c` or `acc ^= c; acc ^= (c>>32);`).
+
+**Avoid 8×S2UR profile patterns** — each chained read serializes to ~25 cy due to uniform-pipe throughput. Single CS2R at region boundary is 3× cheaper per-sample.
+
+**Tip — fine-grain profiling:** put the CS2R read *between* two blocks of ALU work (not at the end). Reduces overhead from +14 cy to +3 cy. Investigation kernels saved at `/tmp/clock_pipe_*.cu`; full report at `/tmp/clock_pipe_FINDINGS.md`.
+
+### S2UR NOP behaviour — the NOP isn't always emitted
+
+The "mandatory NOP after S2UR" is actually conditional on the **NEXT instruction's pipe**:
+
+| Next instruction               | NOP emitted? |
+|--------------------------------|:------------:|
+| Another S2UR (uniform pipe)    | **YES**      |
+| UIADD3 / ULOP3 (uniform consumer of S2UR result) | **YES**  |
+| CS2R.32 (ALU pipe)             | **NO**       |
+| FFMA, IADD3, S2R (any non-uniform-pipe inst) | **NO** |
+
+Confirmed: at N_FMA=0 between two clock reads, the compiler emits `S2UR UR6 ; CS2R.32 R5` — no NOP between, since CS2R.32 is on the ALU pipe. With 2 S2URs back-to-back (e.g., reading SR_CLOCKLO and SR_CLOCKHI for full 64-bit), NOPs ARE emitted.
+
+### Uniform-register clock-diff-store pattern (NEW — minimal SASS)
+
+For the common "capture clock, do work, capture clock, store difference" idiom, the compiler produces this **5-instruction** pattern (using `lane==0` predicate):
+
+```
+S2R R0, SR_LANEID ;                              <-- 1 inst, 7.4 cy SREG
+ISETP.NE.U32.AND P0, PT, R0, RZ, PT ;           <-- predicate
+@P0 EXIT ;                                       <-- exit lanes 1-31
+S2UR UR6, SR_CLOCKLO ;                          <-- clock1 → uniform reg
+CS2R.32 R5, SR_CLOCKLO ;                        <-- clock2 → vector reg (no NOP!)
+IADD3 R5, PT, PT, R5, -UR6, RZ ;               <-- diff: vector ALU consumes uniform input
+STG.E desc[UR4][R2.64], R5 ;                   <-- store from vector
+```
+
+**Key tricks the compiler does automatically:**
+1. **Mixes pipes**: clock1 → S2UR (uniform), clock2 → CS2R.32 (ALU) — saves 1 vector reg + avoids the post-S2UR NOP.
+2. **`-UR6` operand on IADD3**: vector ALU can consume uniform-reg operands directly. So the diff happens in vector pipe but uses URegs as input, eliminating an extra MOV.
+3. **Per-lane filter via `lane==0`** is cheaper than `threadIdx.x==0`: SR_LANEID is 7.4 cy (cheapest SREG); SR_TID.X reads cost more. Same SASS structure though (`S2R R0, SR_X`).
+
+**No `USTG` (uniform-pipe store) exists on B300** — all per-thread global stores go through STG.E (vector pipe), so the data must transit a vector reg before the store. The minimum vector-data-reg footprint for a clock-diff-store is **1 register** (the diff itself). For u64 timing, both clocks emit CS2R (no S2UR available for full 64-bit), so the cost is **4 vector regs** + STG.E.64.
+
+**However, `UBLKCP.S.G`** (uniform-pipe `cp.async.bulk`/TMA) and **`UBLKPF.L2`** (`cp.async.bulk.prefetch.L2`) DO exist — these route through the uniform pipe (ADU). So *bulk* global-memory operations can be uniform-pipe, but scalar per-thread stores cannot. This is part of why TMA is so cheap on B300: it doesn't compete with vector ALU for warp-scheduler issue slots.
+
+**To force UIADD3 emission (uniform-pipe sub):** accumulate **3+ clock samples**. Compiler then keeps everything in URegs and emits 3-input UIADD3 chains:
+```
+S2UR UR4, SR_CLOCKLO ;   NOP ;
+S2UR UR5, SR_CLOCKLO ;   NOP ;
+S2UR UR6, SR_CLOCKLO ;   NOP ;
+UIADD3 UR4, UPT, UPT, UR6, UR5, UR4 ;   <-- 3-input uniform add: UR4 = UR6 + UR5 + UR4
+```
+With 10 clocks: emits ~5 UIADD3s in a chain — saves 10 vector regs vs the all-CS2R path. With FFMAs interleaved, FFMAs and UIADD3s run in parallel back-ends but front-end dispatch is still serial.
+
+**Recommendation for low-overhead clock-diff in heavy compute kernels:** use u32 with `lane==0` predicate — the compiler will pick S2UR + CS2R.32 + IADD3-with-uniform-input automatically, holding only 1 vector reg for the diff. Saves register pressure vs the u64 path (which holds 4 vector regs). For multi-sample profiling: accumulate ≥3 u32 clocks — compiler emits UIADD3 chains keeping the entire accumulation in URegs.
+
+## 31. Methodological notes
 
 - **DCE is aggressive.** Sequences of XORs with constant masks fold to zero or to a single XOR. LOP3.LUT is 3-input, so the compiler can fuse two XORs into one SASS. To force `N × UNROLL` SASS instructions for bitwise ops, use either `PRMT` (byte permute, cannot be expressed as a 3-input bit LUT) or loop-carried runtime mask updates.
 - **Metric aliasing:** `pipe_fmaheavy` and `pipe_fmalite` BOTH report 2.00 for a single packed op (FFMA2, HFMA2) because that one instruction occupies both sub-pipes for the cycle. For scalar FFMA, they report disjoint fractions summing to ≈2.0. IMAD reports only fmaheavy. These are not aliases; they're correctly reporting distinct sub-unit utilisation.
