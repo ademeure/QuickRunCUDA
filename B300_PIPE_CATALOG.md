@@ -7112,3 +7112,32 @@ For per-warp privatization (typical histogram pattern), use:
 - `counter[blockIdx.x * 32 + warpIdx + base]` to give each warp a UNIQUE cacheline
 - NEVER pack multiple counters into one cacheline if they're hot atomics
 
+
+## Atomic Ordering × Scope (Asymmetric Cost!)
+
+Tested in cluster-launched context, single-warp:
+
+| Op | cy/atom | × relaxed |
+|----|---------|-----------|
+| atom.add (relaxed baseline) | 34 | 1.0× |
+| **atom.release.cta** | **36** | **1.06× (basically FREE!)** |
+| atom.release.cluster | 892 | 26× |
+| atom.release.gpu | 892 | 26× |
+| atom.acquire.cta | **797** | 23× |
+| atom.acquire.cluster | 799 | 24× |
+| atom.acquire.gpu | 800 | 24× |
+| atom.acq_rel.cta | 810 | 24× |
+| **atom.acq_rel.cluster** | **1646** | **48×** |
+
+**Key asymmetry**:
+- **`release.cta` is FREE** (just needs intra-CTA fence-out which is implicit in CTA execution)
+- **All `acquire.*` are expensive** (must drain all preceding loads, even within CTA)
+- **`release.{cluster,gpu}`** suddenly expensive (needs cross-CTA coherence)
+
+**Lock-free queue design**:
+- **Producer** publishes via `atom.release.cta.add.u32` head pointer: ~36 cy ← cheap!
+- **Consumer** reads tail via `ld.acquire.cta.u32`: ~800 cy (expensive)
+- Better consumer pattern: spin on `ld.relaxed` + `__threadfence_block()` in loop (cheaper if data is hot)
+
+For cross-cluster queues: minimize ordered ops. Use mbarrier (which has built-in release semantics for free, ~24 cy).
+
