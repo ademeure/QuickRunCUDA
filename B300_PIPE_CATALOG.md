@@ -6824,3 +6824,14 @@ This indirectly tells us: **the warp-level memory access "footprint" per `ld.glo
 
 L2 hit latency in this test: ~316 cy (matches our earlier 28-91 cy at smaller WS, and 144-199 at large WS).
 
+
+## Cluster Launch Overhead
+
+| Launch type | μs/launch |
+|-------------|-----------|
+| Single CTA | 5.7 |
+| Cluster of 2 CTAs | 5.7 |
+| Cluster of 8 CTAs | 5.6 |
+
+**Cluster launch overhead is identical to single-CTA launch (~5.7 μs).** No additional cost for cluster setup. So clusters are essentially free at the launch level — use freely when you need cross-CTA communication.
+
