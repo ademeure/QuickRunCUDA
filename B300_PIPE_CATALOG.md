@@ -4984,3 +4984,25 @@ HFMA2 doubles FP throughput by packing 2 half-precision ops per instruction, at 
 **FADD, FMUL, FABS** all run on pipe_fma at same rate as FFMA (~34 TFLOPS). The FMA pipe handles add, mul, abs, and fma at the same cycle rate.
 
 **FMIN/FMAX** run on pipe_alu at ~99% saturation → **can run in parallel with FFMA**! Unlike add/mul which compete with FMA, FMIN parallels with compute. Useful for clipping/clamping operations that can overlap with FFMA.
+
+### Vote / Ballot under various masks (1 warp × 1000 iters)
+
+| ballot mask | cy/iter |
+|---|---:|
+| full 0xFFFFFFFF | 28 |
+| half 0x0000FFFF | 28 |
+| alternate 0x55555555 | 28 |
+| single-lane 0x00000001 | 28 |
+| vote.uni.pred | 36 |
+
+**Ballot cost is independent of active mask size** — HW processes all 32 lanes the same way. `vote.uni.pred` (check uniform) is 8 cy more expensive due to setp+vote+selp sequence.
+
+### cp.async size sensitivity (100 issues, single wait at end)
+
+| transfer size | cy/issue |
+|---:|---:|
+| 4 B  | 51.6 |
+| 8 B  | 57.0 |
+| 16 B | 48.5 |
+
+cp.async issue cost is **~50 cy regardless of size**. Total BW scales with transfer size per issue. 16 B per issue × 100 issues × 128 threads / 2.5 µs ≈ **82 GB/s per SM** = ~12 TB/s chip-wide cp.async→smem throughput.
