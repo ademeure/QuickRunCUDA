@@ -4387,3 +4387,20 @@ Compiler often replaces simple `i * k + c` with IADD+LOP3 when it can — check 
 With FFMA + integer math interleaved, the FFMA pipe still hits 98.4% of peak — nearly identical to pure FFMA. Integer work happens in parallel on pipe_alu (IADD3) with some IMAD on pipe_fma's idle slots. **Index arithmetic is essentially free alongside FP compute.**
 
 Design rule: don't worry about integer work in inner loops — it hides behind FFMA. If your hot loop is IMAD-bound (not FFMA), that's a different story and pipe_fma will be the limit.
+
+### MUFU (special-function) relative throughput
+
+ncu `smsp__inst_executed.sum.per_second` (inst/ns chip-wide), 148×256 threads × 8-chain × 64×100 iters:
+
+| MUFU op | inst/ns | relative |
+|---|---:|---|
+| `__frsqrt_rn` (rsqrt) | 727 | 1× (fastest MUFU) |
+| `__fsqrt_rn` (sqrt)   | 623 | 1.16× slower |
+| `__sinf`              | 284 | 2.56× slower |
+| `__cosf`              | 284 | 2.56× slower |
+| `__log2f`             | 143 | 5.08× slower |
+| `__exp2f`             | (metric failed)  | — |
+
+Versus FFMA at 34,355 inst/ns: MUFU ops are **47× to 240× slower** than FFMA. rsqrt is the "cheapest" MUFU; log/sin/cos are heavier due to internal Newton-Raphson polish steps.
+
+Design: precompute MUFU results where possible; don't put MUFU in a tight inner loop unless throughput target is very relaxed.
