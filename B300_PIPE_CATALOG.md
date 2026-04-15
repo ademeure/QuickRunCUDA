@@ -4126,3 +4126,22 @@ REMOTE atomic uses ~2× link BW (request + response = full-duplex). u64 approach
 |---|---:|---:|---:|---:|
 | atomicAdd | **1.51 TB/s** | 279 GB/s | **2.94 TB/s** | 539 GB/s |
 | atomicCAS | 1.46 TB/s | 259 GB/s | 2.21 TB/s | 283 GB/s (u64 CAS slower both sides) |
+
+### NVLink direction usage by op type (ncu metrics)
+
+`l1tex__t_bytes` = "logical" BW (data payload). `nvltx__bytes` + `nvlrx__bytes` = actual wire bytes.
+
+| op type | L1 BW | NVLink TX | NVLink RX | ratio (TX+RX)/L1 | direction pattern |
+|---|---:|---:|---:|---:|---|
+| READ W=128 | 546 GB/s | 100 | **600** | 1.28× | RX-heavy (data arrives) |
+| WRITE W=128 | 515 GB/s | **836** (93% peak) | 2.23 | 1.63× | TX-only (write streams out, tiny ACK) |
+| ATOMIC u32 | 283 GB/s | 388 | 350 | **2.61×** | both directions equal |
+| ATOMIC u64 | 543 GB/s | 749 | 674 | **2.62×** | both directions equal |
+
+**Key insight**: atomics don't have per-byte wire overhead — they use BOTH NVLink directions simultaneously. Reads & writes primarily use one direction; atomics use both ~1.3× L1 BW. Total "budget" per op: atomic = read + write. If you concurrently run reads AND writes on the same pair, they can share the link (reads use RX, writes use TX, no conflict). But atomics compete with themselves for BOTH directions.
+
+**Cross-GPU write steady-state** (WRITE W=128 coalesced, no fence): 836 GB/s NVLink TX = **93% of 900 GB/s NVLink5 peak**. Highest efficiency across op types.
+
+**Cross-GPU read steady-state** (READ W=128 cache-defeat): 600 GB/s NVLink RX = **67% of peak**. Each read needs a small request packet going out, so the efficiency is lower than writes.
+
+Above measurements via `ncu --metrics` on 148 × aw=32 × W=128 coalesced kernels.
