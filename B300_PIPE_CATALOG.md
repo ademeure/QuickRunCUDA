@@ -4519,3 +4519,19 @@ Pairs well with HMMA/tcgen05.mma: `ldmatrix → register → HMMA` is the canoni
 - `__threadfence_block` is cheap (local-only) — near `__syncthreads` cost.
 
 Design: for CTA-local sync use `__syncthreads` or `__threadfence_block`; avoid `__threadfence` unless you need chip-wide memory ordering (280+ cy).
+
+### Register bank conflicts (FP32 FMA, ncu-verified)
+
+Blackwell has 2 register banks (odd/even). Instructions reading 3 register operands may conflict.
+
+| pattern | pipe_fma % |
+|---|---:|
+| 8 indep chains, `v = fmaf(v, 1.01, 0.5)` (2-reg + 2 const) | **98.66%** |
+| 8 indep chains, `v = v * 1.01f + 0.5f` (2-reg + 2 const) | 98.65% |
+| `v0 = fmaf(v0, v1, v2)` etc. (3 reg operands, collided) | **64.04%** |
+
+**Register-register-register FMA costs ~35% throughput** relative to constant-operand FMA. Blackwell's 2-bank register file can't read 3 registers in one cycle when all from same bank.
+
+**Design**: when compiler has a choice, prefer constants as multiplier/addend inputs. Keep accumulator chains independent. For hand-tuned SASS, stagger register bank allocation (`.reg .f32 %R0<even>, %R1<odd>, …`) to minimize 3-operand bank conflicts.
+
+Compiler already does register-bank-aware allocation in most cases — this 35% gap only shows when you force all-register 3-operand FMA chains with dependency.
