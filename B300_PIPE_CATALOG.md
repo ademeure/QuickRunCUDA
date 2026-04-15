@@ -7240,6 +7240,71 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# Stream priority — ordering hint only, NO preemption
+
+B300 stream priority range: **[0 (low) .. -5 (high)]** (6 levels).
+
+Test: launch two 148-block × 512-thread kernels on streams, one after another. If priority preempts, reversing the HIGH/LOW order should not change total runtime (HIGH goes first regardless).
+
+| Ordering | Priorities | Total runtime |
+|----------|-----------|--------------:|
+| LO-first then HI | set [0, -5] | 22.96 ms |
+| LO-first then HI | default (equal) | 22.89 ms |
+| HI-first then LO | set [-5, 0] | 22.90 ms |
+| Solo (one kernel) | — | 13.05 ms |
+
+All three pair configurations run in ≈ 2× solo time = **serial execution**. The high-priority stream does NOT preempt the low-priority one — both kernels run to completion in issue order.
+
+**Conclusion**: on B300, `cudaStreamCreateWithPriority` only affects **which stream's next kernel gets submitted to the device first** when both streams have pending work. It does NOT preempt an in-flight kernel. If kernel A (low pri) is already on the SMs, kernel B (high pri) waits for A to finish.
+
+(This matches documented NVIDIA behavior going back to Kepler — compute preemption is only for context switching / debugger attach, not stream-priority scheduling.)
+
+
+# Partial barrier (bar.sync 0, N) — cheap warp-specialized sync
+
+Single CTA, 1024 threads, 100 barrier iterations:
+
+| Barrier form | Participants | cy/bar |
+|--------------|-------------:|-------:|
+| `__syncthreads()` (bar.sync 0, 1024) | 1024 thr (32 warps) | **86** |
+| `__syncwarp` (bar.warp.sync) | 32 thr (1 warp) | 36 |
+| `bar.sync 0, 32` | 32 thr (1 warp) | **26** (cheaper than __syncwarp!) |
+| `bar.sync 0, 64` | 64 thr (2 warps) | 26 |
+| `bar.sync 0, 128` | 128 thr (4 warps) | 30 |
+| `bar.sync 0, 256` | 256 thr (8 warps) | 38 |
+| 2× `bar.sync 0|1, 512` (producer/consumer split) | 16 warps each | 69 |
+
+**Findings:**
+1. **Partial barrier cost scales with warp count**: ~26 cy for 1-2 warps, ~86 cy for all 32 warps.
+2. **`bar.sync 0, 32` (26 cy) beats `bar.warp.sync` (36 cy)** by 28 % — counterintuitive, but the PTX `bar.sync` with a fixed count is handled by a different HW barrier than the intrinsic warp-sync.
+3. **Warp-specialized kernels benefit massively**: a producer/consumer split using two barrier IDs (69 cy total when alternating) is much cheaper than a full __syncthreads (86 cy) if you only need to sync half the CTA at a time.
+
+**Design rule**: when a CTA is split into warp-specialized roles (producer/consumer, decoder/filter, compute/TMA), use `bar.sync barrier_id, N` with the right thread count rather than full __syncthreads. Save ~60 cy per barrier × many barriers = significant speedup.
+
+
+# Block scheduling — 16-CTA/SM wave cadence
+
+Launched 10 000 blocks × 128 threads (4 warps/CTA), each doing 50 K sequential FFMAs (~150 µs of work). Observed globaltimer when each block's thread 0 started:
+
+| Wave # | Approx arrival | Blocks in wave | Cumulative |
+|-------:|---------------:|---------------:|-----------:|
+| 0 (initial) | 0 µs    | 1 184 (= 8/SM) | 1 184 |
+| 1 | 230 µs | 2 368 (= 16/SM) | 3 552 |
+| 2 | ≈ 390 µs | 2 368 | 5 920 |
+| 3 | ≈ 540 µs | 2 368 | 8 288 |
+| 4 | ≈ 690 µs | 1 712 | 10 000 |
+
+**Findings:**
+1. **First wave is half-occupancy (8 CTAs/SM).** Probably reflects scheduler latency between kernel launch and full fill.
+2. **Subsequent waves are full-occupancy (16 CTAs/SM × 148 = 2 368).** Cadence ≈ 150 µs = exactly the per-CTA runtime.
+3. **10 000 blocks require 5 waves** (expected: ceil(10000/2368) = 5). Total latency 690 µs.
+4. **Scheduler is predictable**: CTAs launch in blockIdx order, in waves, once SM slots free up.
+
+**Implications:**
+- For persistent kernels, avoid half-occupancy first wave by using exactly 1 CTA/SM on persistent grids.
+- CTA runtime variance causes ragged wave fills — trailing CTAs can leave SMs idle. Mitigate with larger grids (more waves = more overlap) or persistent kernel patterns.
+
+
 # CAS spinlock under contention (atomicCAS acquire)
 
 Each CTA's warp-0 repeatedly acquires a single global lock (atomicCAS 0→1), increments a counter, releases (atomicExch 0). 100 lock cycles per CTA, varying CTA count:
