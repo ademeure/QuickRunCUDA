@@ -4487,3 +4487,19 @@ Near-empty kernel, 1000 launches averaged:
 - Comparable to a 1-element cudaMemcpy via driver
 
 **Design implication**: kernels shorter than ~10 µs are launch-overhead-bound. Use CUDA graphs or persistent kernels for very fine-grained work. For QuickRunCUDA server mode, re-launches on the same compiled cubin still pay this 2 µs floor per iteration.
+
+### ldmatrix variant throughput (LDSM via bench_ldmatrix_extended.cu)
+
+148 × 128 threads × 1024 iters, coalesced smem read via ldmatrix.sync:
+
+| shape / dtype | cy/ldmatrix per warp |
+|---|---:|
+| x4 b16 (standard HMMA feed) | **2.30** |
+| x4.trans b16 (transposed) | 2.30 |
+| x8 b16 (larger) | REJECTED by ptxas |
+| b8x16.b6x16_p32 (FP6 LDSM, Blackwell) | 2.30 |
+| b8x16.b4x16_p64 (FP4 LDSM, Blackwell) | 2.30 |
+
+All supported shapes issue at ~2.3 cy per warp-instruction. FP8/FP6/FP4 LDSM variants run at the same rate as standard FP16 ldmatrix — Blackwell uses the same HW path for smem→register tile loads regardless of element width. Per-warp issue rate = 0.43 ldmatrix/cy.
+
+Pairs well with HMMA/tcgen05.mma: `ldmatrix → register → HMMA` is the canonical tile-load path.
