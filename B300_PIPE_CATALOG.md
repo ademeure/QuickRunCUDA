@@ -7240,6 +7240,85 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# Shared memory limits + dynamic vs static performance
+
+```
+cudaDeviceProp attributes (B300):
+  MaxSharedMemoryPerBlock (default):    48 KB
+  MaxSharedMemoryPerBlockOptin:        227 KB   (via cudaFuncAttributeMaxDynamicSharedMemorySize)
+  MaxSharedMemoryPerMultiprocessor:    228 KB   (hardware pool per SM)
+```
+
+**Dynamic vs static smem — IDENTICAL throughput**:
+
+Test: 512 threads, 100 iter × 8 ILP loads over a power-of-two-size smem:
+
+| smem kind | Size | cy/iter (100-iter avg) |
+|-----------|-----:|-----------------------:|
+| static | 16 KB | 1 024.6 |
+| **dynamic** | 1 KB | 1 024.5 |
+| dynamic | 4 KB | 1 024.5 |
+| dynamic | 16 KB | 1 024.6 |
+| dynamic | 64 KB | 1 024.7 |
+| dynamic | 128 KB | 1 024.5 |
+| dynamic | 227 KB max opt-in | — |
+
+**Dynamic smem is FREE** — identical latency/throughput to static. The only cost is that large dynamic allocations reduce occupancy (fewer blocks per SM) because each block claims its full smem allocation.
+
+**Opt-in to 227 KB smem** (vs default 48 KB) costs nothing — just call `cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, 227*1024)`.
+
+**The 228 KB / 227 KB split**: 228 KB is total per-SM smem pool, 227 KB is max usable per block (leaves 1 KB reserved for metadata/driver use).
+
+
+# MIN / MAX / RELU / packed min — all run on pipe_alu at standard rate
+
+32 warps × 16 ILP chains × 1000 iters:
+
+| Instruction | inst/cy/SM |
+|-------------|-----------:|
+| `min.u32` | 62 |
+| `max.s32` | 62 |
+| `max.s32 %0, %0, 0;` (relu) | 64 (slightly faster — immediate zero folded) |
+| `min.f16x2` (packed) | 61 |
+
+All min/max variants — 32-bit int, packed fp16, relu — run at **~62 inst/cy/SM = 2 warp-inst/cy/SM**, the same as all other pipe_alu ops (IMAD, XOR, etc.). No dedicated MIN/MAX pipe on B300.
+
+**Practical**: min/max are cheap, but don't expect special-case speedup vs regular ALU ops.
+
+
+# Unified memory (cudaMallocManaged) on B300
+
+`cudaDevAttrConcurrentManagedAccess = 1` — B300 supports CPU+GPU concurrent managed access without forced migration.
+
+Test: 1 GB UM buffer, 148 blocks × 128 threads (under-occupied → HBM at ~675 GB/s here):
+
+| Phase | BW (GB/s) | Notes |
+|-------|----------:|-------|
+| **First access from GPU (pages on host)** | **8.1** | PCIe migration cost (= host-zero-copy rate) |
+| Warm (pages on GPU) | 675 | HBM rate |
+| After scattered CPU touch (1/32 pages) | 674 | **No migration triggered** — coherent concurrent access |
+| After `cudaMemPrefetchAsync` to GPU | 677 | same as warm |
+
+**Key findings**:
+
+1. **First-time GPU access on a CPU-allocated UM page = 8 GB/s** (essentially PCIe cap). Migrating all 1 GB takes 132 ms — slow.
+
+2. **After migration, UM = HBM BW** (no residual overhead vs cudaMalloc).
+
+3. **Concurrent managed access is coherent** on B300: scattered CPU reads after GPU run did NOT trigger migration back to host. The pages stay on GPU, and future CPU accesses work through PCIe coherently. (Tested here with sparse CPU accesses — dense CPU hot-loop may behave differently.)
+
+4. **`cudaMemPrefetchAsync(ptr, N, {cudaMemLocationTypeDevice, 0}, 0, 0)`** is the reliable way to pre-migrate before a latency-sensitive kernel. One-liner saves the 132 ms cold-first-touch.
+
+**When to use UM on B300**:
+- Prototyping, where unknown/variable access patterns make explicit copies hard.
+- Working sets much larger than GPU memory (system-level paging) — handled transparently.
+- One-writer-one-reader producer/consumer across CPU+GPU where coherency is enough (not needing bulk throughput).
+
+**When NOT to use UM**:
+- Bulk data transfer: prefer `cudaMemcpyAsync` with pinned memory — explicit and predictable.
+- Latency-critical kernels: the 8 GB/s first-touch will destroy a hot loop. Prefetch first.
+
+
 # FFMA rounding modes + fused vs unfused
 
 32 warps × 16 chains × 1000 iter, single-warp chain self-dep:
