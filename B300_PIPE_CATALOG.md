@@ -4338,3 +4338,21 @@ Stride between threads in a warp-wide smem load (`acc ^= smem[lane*STRIDE + i]`)
 Conflict cost ~ linear in conflict-way: **+2 cy per way**. 32-way conflict adds +62 cy on top of 40 cy baseline = 2.55× slowdown. Strides coprime with 32 (1, 3, 5, 7, 9, …, 31, 33, …) are conflict-free.
 
 Blackwell smem bank structure matches Hopper/Ampere: **32 banks × 4 B width** → conflict when `(addr >> 2) % 32` matches across lanes. 32-byte atomic operations can span 8 banks (16B × 0.5 dwords); 128-bit vector load hits 4 banks per element.
+
+### Warp primitive throughput (sm_103a)
+
+1 warp × 1000 iters, chained through `x` to force real execution:
+
+| primitive | cy/iter | notes |
+|---|---:|---|
+| `__ballot_sync`       | 33 | cheapest collective |
+| `__any_sync` / `__all_sync` | 37 | |
+| `__shfl_sync` (bcast) | 41 | |
+| `__shfl_xor_sync`     | 41 | |
+| `__shfl_down_sync`    | 41 | |
+| `__match_any_sync`    | **387** | 9× slower — pairwise compare across warp |
+
+After subtracting ~30 cy loop + clock-read overhead, primitive costs are:
+- shfl: ~10 cy
+- ballot/any/all: ~3-7 cy (near free)
+- match_any: ~350 cy (avoid in hot paths; use atomic+merge instead if possible)
