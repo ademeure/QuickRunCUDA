@@ -4888,3 +4888,14 @@ At 68.7 TFLOPS FP32, FP64 is **72× slower** — B300 is NOT an HPC FP64 device 
 __expf emits ~2 FMA-pipe instructions per call (FMUL by log2(e) + exp2f path). At pure __expf chain, we're ~25% pipe_fma because of MUFU dependency (can't issue next expf until prev result ready).
 
 Adding an intermediate fmaf (`v = __expf(v); v = fmaf(v, 0.99f, 0.01f)`) almost doubles inst rate — because the fmaf fills in slots while the MUFU pipe retires the previous exp. Good pattern for mixed-MUFU code.
+
+### stmatrix variants (sm_103a)
+
+148 × 128 threads × 1024 iters, back-to-back stmatrix of same address:
+
+| variant | cy/inst per warp |
+|---|---:|
+| `stmatrix.sync.aligned.m8n8.x4.shared.b16` | 32.0 |
+| `stmatrix.sync.aligned.m8n8.x4.trans.shared.b16` | 32.0 |
+
+**stmatrix is ~14× slower than ldmatrix** (2.3 cy/warp). Both variants have same cost. Probably due to write-side smem pipeline hazards (consecutive stores to same addresses). For realistic tensor-core output patterns where stores go to different addresses, per-inst cost may drop.
