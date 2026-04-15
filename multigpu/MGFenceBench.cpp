@@ -92,8 +92,9 @@ int main(int argc, char** argv) {
     }
     CHECK_CUDA(cuMemAlloc(&d_C, sizeC));  // C always on primary for result readback
 
-    CHECK_CUDA(cuMemsetD32(d_A, 0, sizeA/4));
-    CHECK_CUDA(cuMemsetD32(d_B, 0, sizeB/4));
+    // Only memset local buffers (cuMemsetD32 may fail on P2P-mapped remote)
+    if (!a_remote) CHECK_CUDA(cuMemsetD32(d_A, 0, sizeA/4));
+    if (!b_remote) CHECK_CUDA(cuMemsetD32(d_B, 0, sizeB/4));
     CHECK_CUDA(cuMemsetD32(d_C, 0, sizeC/4));
 
     // Read kernel file
