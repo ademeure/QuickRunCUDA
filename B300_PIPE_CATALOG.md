@@ -3242,6 +3242,21 @@ With 148 SMs hammering one remote atomic, each SM still perceives ~2,800 cy late
 
 Uncontended (each SM own remote address): same pattern, 2,750-2,970 cy at all SM counts.
 
+**All atomic OP types are equal cost** (warm L2, serial chain, 1 SM × 32 batches × 8 atoms):
+
+| OP | LOCAL cy | REMOTE cy |
+|---|---:|---:|
+| atomicAdd  | 590 | 2,955 |
+| atomicMin  | 588 | 2,970 |
+| atomicMax  | 590 | 2,964 |
+| atomicXor  | 590 | 2,971 |
+| atomicOr   | 590 | 2,980 |
+| atomicAnd  | 590 | 2,967 |
+| atomicExch | 590 | 2,968 |
+| atomicCAS  | 591 | 2,980 |
+
+Within 1% across all ops. The L2 atomic unit processes every operation in one cycle; round-trip latency (NOC + potential NVLink + memory) dominates per-op cost.
+
 **Atomic throughput (bulk, 32 threads × 148 SMs × 256 atomics/thread, NOT serial-chained):**
 
 | pattern | LOCAL Matomic/s | REMOTE Matomic/s | slowdown |
