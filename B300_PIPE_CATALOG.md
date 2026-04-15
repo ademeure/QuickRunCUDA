@@ -3147,7 +3147,7 @@ Per-SM fence.sc.sys cost is **genuinely local** to each SM; there is no proporti
 | **WRITE** (W=1024, 620 MB-4.8 GB) | **763 GB/s** | **768 GB/s** | **767 GB/s** | **768 GB/s** |
 | **READ** (W=16-256, 9.7-620 MB/iter) | **810-821 GB/s** | — | **833-837 GB/s** | **784-834 GB/s** |
 
-- **Write steady state ≈ 766 GB/s** = **85% of 900 GB/s NVLink5 peak**
+- **Write steady state ≈ 720 GB/s via CUDA events (whole-kernel wall time)** = **80% of 900 GB/s NVLink5 peak**. (The in-kernel-fence measurement showed ~766 GB/s; the 6% gap is kernel-launch/sync overhead not included in per-iter cycle counts.)
 - **Read steady state ≈ 820 GB/s** = **91% of 900 GB/s peak**
 - **Methodology note on BW measurement**: cross-checked against CUDA event wall-time to verify. At W ≥ 16 no-fence, clock64-derived BW and event-wall-time agree within 10% (e.g. W=128 no-fence: clock64 = 196,478 cy/iter, wall = 207,821 cy/iter). At W=1 no-fence, the warp's STG instructions don't backpressure — 1,272 cy clock64 vs 2,381 cy wall (1.9× mismatch), so clock64 underestimates. With fence.sc.sys, agreement is tighter (1.04×) at all W. DCE is not an issue (STGs emit `STG.E.STRONG.SYS` in SASS; every iter writes to fresh unique addresses). At W ≥ 16 no-fence, clock64 is accurate because STG-queue backpressure stalls instruction issue at the NVLink drain rate. With fence, accurate at all W.
 - Reads saturate much faster (W=16 suffices) because each load directly pulls from remote
@@ -3158,6 +3158,21 @@ Per-SM fence.sc.sys cost is **genuinely local** to each SM; there is no proporti
 - Writes need ACK from peer L2 → commit confirmation adds round-trip latency to each request
 
 **Bidirectional saturation**: running read/write in both directions simultaneously does NOT degrade either direction — the two links are electrically separate.
+
+### NVLink saturates at ~32 SMs — no need for full chip
+
+SM-count sweep shows linear per-SM scaling up to 32 SMs, then flattens at the NVLink cap:
+
+| SMs | WRITE BW (W=128 fenced) | READ BW (W=32 cache-defeat) |
+|---:|---:|---:|
+| 1   | 44 GB/s  | 36 GB/s  |
+| 8   | 324 GB/s | 284 GB/s |
+| 16  | 473 GB/s | 553 GB/s |
+| 32  | **669 GB/s** | **792 GB/s** (saturated) |
+| 74  | **765 GB/s** (saturated) | 801 GB/s |
+| 148 | 763 GB/s | 817 GB/s |
+
+Per-SM NVLink egress rate when unsaturated: ~36-40 GB/s. Above 32 SMs the chip-wide NVLink5 cap becomes the bottleneck and extra SMs don't help. **Design implication**: reserve ~32 SMs for cross-GPU I/O, leave the other 116 SMs for compute without losing any BW.
 
 ### Multi-GPU atomic & load latency (warm L2, 1 SM, pointer-chase pattern)
 
