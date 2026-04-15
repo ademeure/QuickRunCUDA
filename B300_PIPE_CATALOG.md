@@ -7211,6 +7211,127 @@ This means: ONE warp doing pipelined loads is enough to hit ~20 GB/s. To hit HBM
 
 ---
 
+# Compute-memory overlap at FULL occupancy (refined)
+
+Earlier finding "FFMAs free when interleaved with cold load" was measured with 1 warp. Re-test at 32 warps × 1 CTA (full occupancy), persistent grid (1 CTA/SM), cold DRAM loads:
+
+| MODE | pattern | 1 warp | 8 warps | **32 warps** |
+|------|---------|-------:|--------:|-------------:|
+| 1 | load only                | 345 | 341 | **398** |
+| 2 | 16 FMAs → load           | 331 | 334 | 382 |
+| 3 | load → 16 FMAs           | 332 | 331 | 384 |
+| 4 | 8 FMAs ↓ load ↓ 8 FMAs  | 337 | 334 | 386 |
+
+**With 16 FMAs per load, overlap is FREE at all occupancy levels** (1→32 warps). The load latency (~340-400 cy) completely absorbs 16 FMAs. Good news: the earlier 1-warp finding holds at full occupancy.
+
+But the free-lunch isn't infinite. Re-test at 32 warps with **64 FMAs per load** (higher compute density):
+
+| MODE | pattern | cy/iter |
+|------|---------|---------:|
+| 1 | load only | 383 |
+| 2 | 64 FMAs → load | **615** |
+| 3 | load → 64 FMAs | **612** |
+| 4 | 32 FMAs ↓ load ↓ 32 FMAs | 620 |
+
+With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — they start costing once the compute density exceeds what fits in the load-latency shadow.
+
+**Threshold**: somewhere between 16 and 64 FMAs per load. At 4 warp-insts/cy/SM peak dispatch, 32 warps × N FMAs fit in N × 32 / 4 = 8N cycles. For full overlap, need 8N ≤ load_latency (~340 cy), i.e. **N ≤ 42 FMAs per load**. Matches the observation.
+
+**Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
+
+
+# L2 replacement policy — LRU-like (NOT random)
+
+B300 L2 = 126.5 MB (cudaDeviceProp.l2CacheSize = 132 644 864 B).
+
+Test kernel: 296 CTAs × 512 threads, 8-way ILP per thread. Repeatedly stream a working set W MB (warmed up, then timed).
+
+**Part 1 — single set BW vs W:**
+
+| W (MB) | BW (GB/s) | Notes |
+|-------:|----------:|-------|
+| 4   | 991  | small WS, kernel launch overhead dominates |
+| 16  | 3 844  | |
+| 32  | 5 333  | |
+| **64** | **8 382** | **peak L2-hit BW** — all in L2 |
+| 100 | 7 330 | |
+| **126 (= L2)** | **5 345** | capacity threshold |
+| 130 | 5 930 | |
+| 160 | 5 788 | ~DRAM rate |
+| 256 | 6 121 | |
+| 1 024 | 6 900 | |
+| **2 048** | **7 037** | matches 92 % of 8 TB/s HBM spec |
+
+The L2-hit peak is at ~64 MB (half-capacity, no thrashing) at **8.4 TB/s**. At exactly-L2-capacity, BW falls to ~5.3 TB/s (cache thrash start). Above L2, it climbs back to ~7 TB/s DRAM peak.
+
+**Part 2 — alternating A+B streams** (LRU signature test):
+
+| A_MB + B_MB = sum | BW (GB/s) | × DRAM |
+|-------------------|----------:|-------:|
+| 32 + 32 = 64    | 11 290 | 1.53× |
+| **64 + 64 = 128** | **11 290** | 1.53× (BOTH fit in L2 together!) |
+| **64 + 96 = 160** | **6 613** | 0.89× (just over L2 → DRAM rate) |
+| 96 + 96 = 192   | 6 671 | 0.90× |
+| 128 + 128 = 256 | 6 782 | 0.92× |
+| 1 024 + 1 024 = 2 048 | 7 078 | 0.96× |
+
+**Sharp cliff from 128→160 MB sum**: BW drops 11.3 TB/s → 6.6 TB/s, a 42 % drop for a 25 % working-set increase. That's the **LRU/FIFO signature** — when A+B > L2, all A is evicted before re-reading.
+
+If replacement were **pseudo-random** (as on some ARM GPUs), we'd expect a **smooth** decay: at 160 MB, hit rate would be ~L2/WS = 126/160 = 79 %, so BW would be a mix of L2 and DRAM — not pure DRAM. Instead we see pure DRAM rate immediately past L2 → strict LRU (or sequential FIFO — indistinguishable for streaming access).
+
+**Practical design rules from this:**
+1. **Keep working set ≤ L2 / 2 (≈ 64 MB)** for maximum cache BW (8.4 TB/s). Above 64 MB starts thrashing due to set-associativity.
+2. For two related streams, total A+B should stay below L2 — partition temporal locality aggressively.
+3. There's **no random-replacement safety net** — if WS overflows L2 by even 1 MB, expect DRAM rate until you reduce WS.
+4. Use `cp.async.bulk` with L2 eviction-policy hints (`evict_first`) for one-shot loads you don't want polluting L2.
+
+
+# MEMBAR / fence intrinsic cost (SASS-verified, no contention)
+
+Single warp in a 2-CTA cluster, no memory traffic — just back-to-back fences:
+
+| PTX fence                                  | SASS                    | cy/iter (no prior store) | cy/iter (+ preceding relaxed.cta store) |
+|--------------------------------------------|-------------------------|--------------------------:|----------------------------------------:|
+| (none)                                     | —                       | 0 | 41 (store cost alone) |
+| `membar.cta`                               | `MEMBAR.ALL.CTA`        | **27** | 45 (+4) |
+| `fence.acq_rel.cta`                        | `MEMBAR.ALL.CTA`        | 29 | 47 (+6) |
+| `fence.sc.cta`                             | `MEMBAR.SC.CTA`         | 27 | 45 (+4) |
+| `fence.mbarrier_init.release.cluster`      | (no MEMBAR emitted)     | **23** | — |
+| `fence.proxy.async.shared::cta`            | `FENCE.VIEW.ASYNC.S`    | 36 | — |
+| `fence.proxy.async.global`                 | `FENCE.VIEW.ASYNC.G`    | 36 | — |
+| `fence.proxy.tensormap::generic.acquire.cta` | (mem-read fence)      | 85 | — |
+| `membar.gl`                                | `MEMBAR.ALL.GPU`        | **292** | **819 (+527 drain)** |
+| `fence.acq_rel.cluster`                    | `MEMBAR.ALL.GPU`        | 292 | — |
+| `fence.sc.cluster`                         | `MEMBAR.SC.GPU`         | 292 | — |
+| `fence.acq_rel.gpu`                        | `MEMBAR.ALL.GPU`        | 292 | 816 |
+| `fence.sc.gpu`                             | `MEMBAR.SC.GPU`         | 292 | 819 |
+| `membar.sys`                               | `MEMBAR.ALL.SYS`        | **3 517** | 3 517 |
+| `fence.acq_rel.sys`                        | `MEMBAR.ALL.SYS`        | 3 512 | 3 510 |
+| `fence.sc.sys`                             | `MEMBAR.SC.SYS`         | ~3 500 | ~3 500 |
+
+**Key findings:**
+
+1. **CTA-scope fence = 27 cy intrinsic.** All three forms (`membar.cta`, `fence.acq_rel.cta`, `fence.sc.cta`) emit the same SASS (MEMBAR.ALL.CTA or MEMBAR.SC.CTA) and cost 27-29 cy. `.sc` vs `.acq_rel` does NOT change cost, only the ordering semantics.
+
+2. **GPU-scope fence = 292 cy intrinsic.** ~11× CTA scope. That's the inherent cost of publishing to the chip-global coherence point.
+
+3. **SYS-scope fence = 3 500 cy** regardless of whether there's traffic to drain. This is essentially a trap to a system-level fence mechanism. Avoid in hot paths.
+
+4. **With a preceding store, fence cost ≈ intrinsic cost + drain cost.** The .cta store-then-fence adds only 4-6 cy (the store is already propagating by the time the fence issues). The .gpu store-then-fence adds 527 cy drain — the store must reach L2 globally before the fence completes.
+
+5. **`fence.proxy.async.{global,shared::cta}` is CHEAP at 36 cy** — specialised for switching generic↔async proxies (TMA / tcgen05 ops). `fence.proxy.tensormap` is 85 cy (needs pre-fetched descriptor read).
+
+6. **`fence.mbarrier_init.release.cluster` is cheapest at 23 cy** and emits NO MEMBAR in SASS — ptxas knows mbarrier init has strong intrinsic ordering.
+
+7. **Reconciles the earlier atomic-acquire finding**: atom.acquire.cta = 734 cy (contended) = 27 cy (fence) + ~700 cy (drain of outstanding atomics from 2 CTAs × 32 lanes contending). The fence itself is cheap; the drain is expensive.
+
+**Practical guidance:**
+- Intra-CTA ordering: `fence.*.cta` is ~30 cy. Use it freely.
+- Cross-CTA / cross-cluster: `fence.*.cluster` / `fence.*.gpu` = ~292 cy + drain. Batch multiple writes before each fence.
+- Cross-GPU / host-visible: `fence.*.sys` = 3 500+ cy. Use only at sync points (kernel end, explicit sync primitives).
+- For async ops (TMA, tcgen05.cp): use the cheap `fence.proxy.async.*` (36 cy) rather than `membar.gl`.
+
+
 # cudaGraph launch latency vs direct launches
 
 Host C++ harness (`/tmp/bench_graph.cu`), empty and tiny (32-thread clock-read) kernels, N launches in sequence:
@@ -7238,6 +7359,41 @@ Host C++ harness (`/tmp/bench_graph.cu`), empty and tiny (32-thread clock-read) 
 Capture mode used: `cudaStreamBeginCapture(s, cudaStreamCaptureModeGlobal)`, builds graph implicitly from a sequence of kernel launches on the stream.
 
 
+# Cooperative kernel launch + grid.sync() scaling
+
+cudaDevAttrCooperativeLaunch = 1 on B300. Max cooperative occupancy is ~half the non-cooperative limit:
+
+| threads/CTA | max coop blocks/SM | max coop grid |
+|-------------:|--------------------:|---------------:|
+| 128 | 16 | 2 368 |
+| 1024 | 2 | 296 |
+
+(vs non-coop max 32 blocks/SM; cooperative reserves scheduler resources for grid-wide sync.)
+
+**grid.sync() cost vs grid size** (1000 syncs, median cy from CTA0):
+
+| blocks | grid.sync cy | µs/sync @ 1.92 GHz |
+|-------:|-------------:|-------------------:|
+| 1      | 2 579 | 1.34 |
+| 8      | 2 465 | 1.28 |
+| 32     | 2 436 | 1.27 |
+| **148** (1/SM) | **2 371** | **1.24** |
+| 256    | 2 376 | 1.24 |
+| 512    | 2 967 | 1.55 |
+| 1 024  | 4 326 | 2.25 |
+| 2 048  | 9 802 | 5.11 |
+| 2 368  (max) | 11 770 | 6.13 |
+
+Thread count inside the CTA (32→1024) doesn't affect sync cost — scaling is ~linear in block count beyond 1 block/SM.
+
+**Compare to earlier "persistent + atom-counter" sync** (148 blocks): 2.2 µs/sync → **cooperative grid.sync() at 148 blocks = 1.24 µs, 1.8× faster**. HW grid-sync beats hand-rolled atomics.
+
+**Practical:**
+- For persistent-sized grids (1 block/SM), grid.sync() = 1.24 µs — basically free.
+- For larger cooperative grids (>1/SM), cost grows ~linearly; avoid unless you need the occupancy.
+- Non-cooperative persistent kernel with atom-counter sync costs 2.2 µs; grid.sync is faster BUT costs half the occupancy.
+
+
 # Host pinned (zero-copy) memory access from GPU
 
 Host C++ harness (`/tmp/bench_pinned.cu`), 1 GiB working set read from 148 blocks × 128 threads:
@@ -7260,4 +7416,19 @@ Pointer-chase latency through pinned memory (single warp, random-shuffled indire
 - Zero-copy is only sensible for **small, pointer-chased, write-combining** patterns where the DMA path is overkill (e.g., doorbell registers, rare control updates).
 - For bulk H2D: use `cudaMemcpyAsync` with pinned memory and overlap with compute (gets 58 GB/s cleanly).
 - For back-and-forth (not just push): **multi-GPU NVLink (820 GB/s measured)** is 15× the PCIe-to-host link, so if you can stage data on another B300 you skip the host entirely.
+
+**Follow-up: pinned memory WRITES from GPU** (same harness, 1 GiB working set, 4 iters):
+
+| Path | BW (GB/s) | notes |
+|------|----------:|-------|
+| HBM write (cudaMalloc) | **6 179** | 77 % of 8 TB/s (148×128 is not full occupancy; peak is 7.4 TB/s with more blocks) |
+| Pinned default, GPU write | 52.8 | PCIe cap |
+| **Pinned WC flag, GPU write** | **52.8** | NO measurable difference from default! |
+| Pinned default, GPU read  | 53.8 | ~PCIe cap |
+| Pinned WC flag, GPU read  | 53.8 | same as default — WC flag doesn't affect GPU-side path |
+| `cudaHostRegister` (malloc + register) write | 52.8 | identical to cudaHostAlloc |
+
+**Key finding: on B300, `cudaHostAllocWriteCombined` has NO effect on GPU-side read or write.** The flag only changes CPU-side attributes; from the GPU's perspective, both map through the PCIe root complex identically. Don't bother setting WC for GPU paths.
+
+`cudaHostAlloc` and `cudaHostRegister` also give identical GPU-side BW — both establish the same PCIe-mapped page table entries.
 
