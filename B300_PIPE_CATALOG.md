@@ -5006,3 +5006,19 @@ HFMA2 doubles FP throughput by packing 2 half-precision ops per instruction, at 
 | 16 B | 48.5 |
 
 cp.async issue cost is **~50 cy regardless of size**. Total BW scales with transfer size per issue. 16 B per issue × 100 issues × 128 threads / 2.5 µs ≈ **82 GB/s per SM** = ~12 TB/s chip-wide cp.async→smem throughput.
+
+### shfl_xor reduction tree cost (depth-wise)
+
+Manual shfl_xor-based reduction, depth = # of levels:
+
+| depth | shfls | cy/iter | marginal cost |
+|---:|---:|---:|---:|
+| 1 | 1 | 42 | (42) |
+| 2 | 2 | 69 | +27 |
+| 3 | 3 | 104 | +35 |
+| 4 | 4 | 127 | +23 |
+| 5 | 5 | 162 | +35 |
+
+Average marginal cost per shfl_xor in a chain: **~30 cy** (serial dependency via add-reduction).
+
+Compare CREDUX `__reduce_add_sync` = **56 cy for full 5-level equivalent** (2.9× faster than 162 cy manual tree). This is why CREDUX HW is a clear win when available.
