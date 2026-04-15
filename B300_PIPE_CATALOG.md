@@ -5993,3 +5993,22 @@ FP64 FMA per warp saturates at ~16 chains (= ~125 cy latency, fully pipelined). 
 - Bulk FP64 GEMM is unsuitable — use FP32 with mixed-precision tricks
 - Scientific computing workloads should target H100/H200 (FP64 = 67 TFLOPS) not B300
 
+
+## red.* (write-only atomics) vs atom.*
+
+Coalesced per-lane add to global:
+
+| Op | cy/iter |
+|----|---------|
+| atom.add.u32 (returns value) | 34 |
+| red.add.u32 (default) | 34 (same as atom) |
+| **red.relaxed.gpu.add.u32** | **24 (28% faster!)** |
+| red.add.f32 | 86 |
+
+Surprising: `red.relaxed.gpu` is FASTER than default `red` — opposite of `ld.relaxed.gpu` which was slower than default `ld`. The .relaxed qualifier signals to hardware that no ordering is needed, allowing optimal handling for write-only atomics (no coherence wait). For atomics that **return a value**, this advantage doesn't apply.
+
+**Design rule for write-only atomics**:
+- If you don't need the return value: use `red.relaxed.gpu.add.*` (24 cy)
+- If you need the return value: use `atom.*` without ordering (34 cy)
+- NEVER use `.acquire/.release/.acq_rel` (15-31× slower)
+
