@@ -6657,3 +6657,36 @@ Practical guidance:
 - Cluster of 8 = max DSMEM bandwidth = 8× shared smem (1 MB+ effective per cluster)
 - Multicast TMA peaks at cluster of 8 (= 8× source BW savings)
 
+
+---
+
+# printf Cost (kernel debug primitive)
+
+| Pattern | cy/iter |
+|---------|---------|
+| baseline (just a store) | 51 |
+| **printf "%d\n"** | **151,217 (3000× slower)** |
+| printf "%d %d %x\n" | 150,184 |
+| printf with %f | 150,801 |
+
+**Each printf call from a kernel costs ~150,000 cy = ~78 μs on B300.** This is because the kernel must:
+1. Format the args into a per-thread buffer
+2. Push to a shared device-side queue
+3. Wait for kernel to finish then host serializes and prints
+
+**Cost in seconds**: 1 printf = 78 μs. 1000 printfs = 78 ms. **NEVER use printf inside loops** — even 100 calls add 8 ms to your kernel.
+
+For kernel debugging:
+- Use `printf("Bug: %d\n", val)` for one-shot fault traces
+- For repeated state dumps: write to a global memory ringbuffer, dump from host post-kernel
+- Use a flag pattern: `if (rare_condition) printf(...)` keeps debug printf out of hot path
+
+Comparison ladder:
+- Memory store: 51 cy
+- atom.add: 34 cy
+- __syncthreads (128t): 30 cy
+- bar.warp.sync: 23 cy
+- ld.global: 115 cy
+- DRAM access: 199 cy (104 ns)
+- **printf: 150,000 cy (78 μs)** ← ~750× a DRAM access
+
