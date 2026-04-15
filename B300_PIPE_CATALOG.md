@@ -4199,3 +4199,32 @@ The 75% HBM efficiency gap may be due to row-buffer conflicts / access pattern s
 - See ncu output above
 
 At ITERS=100, wall / ncu time converge, so measurements are stable. My earlier "546 GB/s L1 BW" at ITERS=5 was launch-overhead inflated — real peak is ~765 GB/s useful.
+
+### Cross-GPU NVLink pipelining (deep per-thread outstanding loads)
+
+Single thread pointer-chase cross-GPU. Multiple independent chains let HW overlap round-trips:
+
+| N_CHAINS/thread | total cy (64 iters × N chains) | per-load cy | speedup |
+|---:|---:|---:|---:|
+| 1  | 209,743 | 3,277 | 1× |
+| 2  | 217,060 | 1,696 | 1.93× |
+| 4  | 220,520 | 861 | 3.81× |
+| 8  | 234,646 | 458 | 7.15× |
+| 16 | 226,893 | 222 | 14.76× |
+| 32 | 233,527 | **114** | **28.7×** |
+
+Total kernel time barely grows (210K → 234K, just 11%) — NVLink pipeline absorbs parallel outstanding requests nearly perfectly up to 32 deep per thread.
+
+**Implication**: the "3,300 cy REMOTE atomic/load latency" is the serial round-trip ceiling. Real software with independent pointer chases can approach the NVLink BW-limited rate instead (~114 cy/load ≈ 58 ns), a ~29× improvement over serial.
+
+**Outstanding loads ceiling**: single thread can keep ~32 in flight. 32 threads per warp × 32 = 1024 outstanding per warp. Depth likely ends at NVLink's own request queue capacity.
+
+### Cache-policy sensitivity on cross-GPU pointer chase
+
+All uncached load policies essentially identical (true round-trip dominates):
+- `ld.global.cg` REMOTE: 3,310 cy/load
+- `ld.global.ca` REMOTE: 3,318 cy/load (cache-all hint; doesn't help — remote not cacheable)
+- `ld.global.cv` REMOTE: 3,311 cy/load (volatile)
+- `ld.global.lu` REMOTE: 3,765 cy/load (+14%, last-use hint hurts cross-GPU)
+
+LOCAL pointer chase: 403-405 cy/load for .cg/.ca/.cv, 404 for .lu. Policies are equivalent on hot L2.
