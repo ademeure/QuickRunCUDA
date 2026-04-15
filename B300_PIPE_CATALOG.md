@@ -4857,3 +4857,34 @@ bar.sync IDs: 0-15 usable per CTA. Can coordinate independent subsets (e.g. warp
 | rotate through IDs 0-3 | 150 (+64 branch) |
 
 Different barrier IDs don't add to HW cost — the overhead is the conditional branch that chooses which ID. When barriers are unconditional (no runtime branching), multiple IDs are free. Useful for producer/consumer warpgroup kernels that want independent sync between stages.
+
+### Shared memory STORE throughput (STS)
+
+`st.volatile.shared.v4.u32` (148 × 1024 thds × 32 unrolled × 100 iters):
+
+| WIDTH | wavefronts/ns | chip BW |
+|---:|---:|---:|
+| 1 (32b scalar) | 267.42 | 34.2 TB/s |
+| 4 (128b vector) | 238.08 | 30.5 TB/s |
+
+Matches smem read (~35 TB/s). Both STS and LDS deliver ~240 GB/s/SM. At this BW, smem can support a warp's worth of FMA operands indefinitely.
+
+### FP64 DFMA peak (throttled on B300)
+
+`fma(v, a, b)` for double, 8-chain unrolled:
+- pipe_fp64: **84.2%** of peak sustained
+- Thread-inst DFMA: 478 inst/ns (chip-wide per-thread)
+- = **0.96 TFLOPS FP64**
+
+At 68.7 TFLOPS FP32, FP64 is **72× slower** — B300 is NOT an HPC FP64 device (consumer/AI focus). Use FP32 or tensor path for numerical-heavy work when possible.
+
+### __expf vs fmaf mix
+
+| kernel | inst/ns | pipe_fma % |
+|---|---:|---:|
+| __expf chained | 565 | 24.9% |
+| __expf + fmaf chained | 780 | 45.9% |
+
+__expf emits ~2 FMA-pipe instructions per call (FMUL by log2(e) + exp2f path). At pure __expf chain, we're ~25% pipe_fma because of MUFU dependency (can't issue next expf until prev result ready).
+
+Adding an intermediate fmaf (`v = __expf(v); v = fmaf(v, 0.99f, 0.01f)`) almost doubles inst rate — because the fmaf fills in slots while the MUFU pipe retires the previous exp. Good pattern for mixed-MUFU code.
