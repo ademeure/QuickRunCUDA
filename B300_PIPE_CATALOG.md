@@ -5169,3 +5169,36 @@ for (int j = 0; j < N; j++) {
 ```
 
 Do NOT mix in FMIN/FMAX or CLZ without budgeting for 20-50% throughput loss.
+
+## tcgen05.mma peak TFLOPS — preliminary attempt (incomplete)
+
+Attempted to measure `tcgen05.mma.cta_group::1.kind::f16` peak with proper smem descriptors for 128×128×16 matrix multiply. Raw attempt:
+
+```cu
+__shared__ unsigned smem_A[128*16/2];  // 128×16 FP16
+__shared__ unsigned smem_B[16*128/2];  // 16×128 FP16
+// descriptor = addr >> 4 | (LBO >> 4) << 16 | (SBO >> 4) << 32 | swizzle << 52
+tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [tmem_slot], 128;
+tcgen05.mma.cta_group::1.kind::f16 [tmem_addr], a_desc, b_desc, idesc, P;
+tcgen05.commit.cta_group::1.mbarrier::arrive::one.b64 [...];
+tcgen05.wait::ld.sync.aligned;
+```
+
+**Result**: 6951 cy per tcgen05.mma (ITERS=100), then **illegal instruction at dealloc** — indicates malformed descriptors / idesc field. With correct descriptors the expected rate should be much lower (a 128×128×16 FP16 MMA at ~5 PFLOPS peak would be ~25 cy/inst).
+
+**What's needed for proper measurement**:
+1. Correct **matrix descriptor** encoding (14-bit smem_addr>>4, LBO, SBO for swizzle layout)
+2. Correct **instruction descriptor (idesc)** — encodes m/n/k dimensions, A/B/D data types, scale factors
+3. Proper **matrix swizzle pattern** in smem that matches the declared swizzle mode
+4. Ensure the warpgroup of 128 threads is correctly aligned (only warp 0 initiates, broadcast to others)
+
+Full tcgen05.mma characterization deferred — requires building out proper descriptor helpers (equivalent of CUTLASS `SmemDescriptor` / `InstrDesc`). Alternative path: use NVIDIA CUTLASS sample as reference.
+
+For now the B300 published specs are:
+- FP16 (kind::f16): ~2.5 PFLOPS dense
+- FP8 (kind::f8f6f4): ~5 PFLOPS dense
+- FP4 + scaling (kind::f4): ~10 PFLOPS with scaling
+
+These are 40× higher than the mma.sync `HMMA.16816` peak of 577 TFLOPS — the async tensor memory path is essential for hitting B300's full tensor throughput.
+
+**Listed in FUTURE_IDEAS.md** as the #1 remaining high-value gap.
