@@ -7240,6 +7240,88 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# Divergent branch reconvergence cost
+
+Single warp, 1000 iters per pattern. Inside the branch: two dependent IMAD ops.
+
+| Divergence pattern | cy/iter | × no-div |
+|--------------------|--------:|---------:|
+| No divergence | 23 | 1.00 |
+| **Predicated** `cond ? A : B` | 24 | **1.04** (free) |
+| 2-way `if / else` | 28 | 1.22 |
+| **4-way if-chain** | **112** | **4.87** |
+| 8-way switch | 271 | 11.8 |
+| **32-way switch (one case per lane)** | **1 311** | **57** |
+
+**Scaling is near-linear past 4 ways**: each additional distinct branch group serializes. A 4-way → 8-way → 32-way progression gives ~5× / ~12× / ~57× — roughly `N × single-path cost`.
+
+**2-way is anomalously cheap (1.22× not 2×)** — the compiler converts simple 2-way if/else into predicated execution. 4-way and above use real branches (BRA in SASS).
+
+**Predicated form (`?:`)** = 24 cy = essentially free. No reconvergence overhead.
+
+**Practical**:
+- Use `?:` (predicated) when branches are trivial.
+- 4-way branches already serialize 5×; avoid in hot loops.
+- For tables (lookup by lane), prefer `cmem[lane]` (≈3 cy per-lane) or shfl_sync (5 cy) over switch-per-lane (40× cost).
+
+
+# __ldcs / __ldca / __ldcg / __ldcv cache-hint intrinsics
+
+296 × 512 threads × 1000 iters at varying WS:
+
+| Intrinsic | 1 MB (L1) | 16 MB (L2) | 128 MB (L2 cap) | 512 MB (DRAM) |
+|-----------|----------:|-----------:|----------------:|--------------:|
+| default `ld.global` | 0.088 | 0.177 | 0.430 | 0.427 |
+| `__ldg` (read-only) | 0.087 | 0.177 | 0.429 | 0.427 |
+| `__ldca` (cache all) | 0.089 | 0.177 | 0.429 | 0.428 |
+| **`__ldcs` (streaming / evict-first)** | 0.091 | **0.237 (+34 %)** | 0.430 | 0.440 |
+| **`__ldcg` (L2-only, skip L1)** | **0.176 (2.0×)** | 0.178 | 0.427 | 0.428 |
+| **`__ldcv` (non-cached)** | **0.175 (2.0×)** | 0.176 | 0.427 | 0.427 |
+
+**Findings (matches earlier `evict_*` hint sweep):**
+- **default, `__ldg`, `__ldca` are equivalent at every WS size.**
+- **`__ldcs`** (evict-first) hurts at 16 MB (mid-L2) by 34 % — forces early eviction of lines that would otherwise be reused.
+- **`__ldcg` and `__ldcv`** bypass L1 — 2× slower when WS fits in L1.
+- All hints equivalent once WS ≥ L2 cap (bandwidth-bound, not cache-bound).
+
+**Practical**: stick with default loads (or `__ldg` for read-only intent). Only use `__ldcg`/`__ldcv` when you explicitly don't want L1 pollution; only use `__ldcs` for confirmed one-shot reads.
+
+
+# cudaFuncGetAttributes — kernel metadata dump
+
+Example kernel attributes (B300 sm_103a, nvcc 13):
+
+```
+simple kernel (no smem, no launch_bounds):
+  sharedSizeBytes          = 0
+  constSizeBytes           = 0
+  localSizeBytes           = 0
+  maxThreadsPerBlock       = 1024
+  numRegs                  = 8
+  ptxVersion               = 103             # PTX 10.3
+  binaryVersion            = 103             # compiled for sm_103
+  cacheModeCA              = 0
+  maxDynamicSharedSizeBytes = 49152          # 48 KB (default opt-in limit)
+  preferredShmemCarveout   = -1
+  clusterDimMustBeSet      = 0
+  requiredClusterWidth/Height/Depth = 0
+  clusterSchedulingPolicyPreference = 0
+  nonPortableClusterSizeAllowed = 0
+
+with launch_bounds(1024, 2) + 4 KB static smem:
+  sharedSizeBytes          = 4096
+  maxDynamicSharedSizeBytes = 45056          # 49152 - 4096 (static smem consumed budget)
+  — rest identical
+
+Occupancy results (from cudaOccupancyMaxActiveBlocksPerMultiprocessor):
+- simple kernel @ 128 thr:           16 CTAs/SM (= 64 warps / 4 warps-per-CTA)
+- launch_bounds(1024,2) @ 1024 thr:   2 CTAs/SM (respects launch_bounds ceiling)
+- +16 KB dynamic smem @ 128 thr:     13 CTAs/SM (smem-limited: 228 KB pool / ~17 KB)
+```
+
+**Key insight**: `maxDynamicSharedSizeBytes` tracks the per-CTA budget **after subtracting static smem**. If you static-allocate 4 KB, only 44 KB remains for dynamic (up to the default 48 KB opt-out cap — can raise to 227 KB via `cudaFuncSetAttribute`).
+
+
 # GPU-side atomic on host-pinned memory — works and is cheap
 
 | Target | cy/atom (single thread, chained 100 atomicAdds) |
