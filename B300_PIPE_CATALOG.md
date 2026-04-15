@@ -4467,3 +4467,23 @@ SASS verified: inner loop has `LDC R5, c[0x3][R5]` per iter — real runtime-ind
 - FFS: ~13% alu → slowest bit op (split across pipes)
 
 Use `__brev` or `__clz` over `__popc` when either works. For multi-bit extract, prefer `(x >> n) & mask` (LOP3-foldable) over explicit `__ubfe`.
+
+### Kernel launch overhead (B300, CUDA 13.0, via cuLaunchKernel + events)
+
+Near-empty kernel, 1000 launches averaged:
+
+| config | us/launch |
+|---|---:|
+| 1 thread × 1 block | 2.05 µs |
+| 32 × 1 | 2.05 µs |
+| 1024 × 1 | 2.05 µs |
+| 32 × 32 | 2.05 µs |
+| 1024 × 32 | 2.05 µs |
+| 1024 × 148 | 2.05 µs |
+
+**2.05 µs = ~3,936 cy** launch floor, consistent regardless of launch config (for trivial kernels). This is the per-launch API + event-synchronize cost. For performance comparison:
+- ~25× a cross-GPU atomic round trip (~78 ns)
+- ~40× a REMOTE fence.sc.sys with minimal data
+- Comparable to a 1-element cudaMemcpy via driver
+
+**Design implication**: kernels shorter than ~10 µs are launch-overhead-bound. Use CUDA graphs or persistent kernels for very fine-grained work. For QuickRunCUDA server mode, re-launches on the same compiled cubin still pay this 2 µs floor per iteration.
