@@ -7240,6 +7240,28 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# cuBLAS init + GEMM real-world throughput (4096³ matrices)
+
+Single 4 K × 4 K × 4 K GEMM = 137.4 GFLOPs of work (2 × M × N × K). Timed with cudaEvents:
+
+| Operation | Time | Achieved TFLOPS |
+|-----------|------|----------------:|
+| `cublasCreate` (1st call) | 2.17 ms | — |
+| **First SGEMM** (includes JIT/cache lookup) | **43.7 ms** | 3.1 (unrepresentative) |
+| Warm SGEMM (FP32 non-tensor) | 2.10 ms | **65.4 TFLOPS** (matches our 72 peak at 90 %) |
+| Warm HGEMM (FP16 tensor core) | **0.09 ms** | **1 450 TFLOPS** (62 % of 2 325 theoretical) |
+| Warm SGEMM with TF32 tensor | 0.16 ms | **850 TFLOPS** |
+
+**Findings:**
+1. **cublasCreate = 2.17 ms** — cheap, vs 326 ms cuInit cold-start (already paid by the first CUDA call).
+2. **First SGEMM has large overhead (43 ms)** — cuBLAS does kernel lookup, JIT, possibly runtime tuning. **Always warm up with 1-2 dummy calls** before measurement.
+3. **FP32 SGEMM** hits 65 TFLOPS, matches our 72 TFLOPS peak at 90 % utilization — tracks the non-tensor peak limit.
+4. **FP16 HGEMM** at 1 450 TFLOPS = **62 % of 2 325 TFLOPS tensor peak**. At 4 K matrices the tensor core isn't fully saturated — more warm-up and larger K would help.
+5. **TF32 SGEMM** = 850 TFLOPS — useful middle ground for training precision.
+
+Practical: at these matrix sizes, cuBLAS achieves real peaks of **65 TFLOPS FP32-scalar / 850 TFLOPS TF32 / 1450 TFLOPS FP16**. Larger matrices (16 K, 64 K) get closer to theoretical peaks.
+
+
 # Bit-manipulation intrinsics — 3 speed tiers
 
 32 warps × 16 chains × 1000 iter (self-dep):
