@@ -6592,3 +6592,15 @@ Different SASS opcode. The HMMA path = legacy Hopper-style tensor core (slow on 
 
 These are uniform-path tcgen05 control instructions.
 
+
+## tcgen05.mma cross-warp interference
+
+| Pattern | cy/MMA |
+|---------|--------|
+| 1 warp issuing MMA, no other work | 128.21 |
+| 1 warp issuing MMA + 1 warp doing FFMA | 128.27 |
+
+**FFMA work in other warps does NOT slow down the MMA.** The tensor pipe and FFMA pipe are fully independent — concurrent compute on different pipes. This means real GEMM kernels with TMA loads + register data shuffling + FFMA preprocessing can overlap freely with tensor MMAs.
+
+(Larger multi-warp tests hit tcgen05.alloc per-CTA semantics — one warp must own allocation lifecycle.)
+
