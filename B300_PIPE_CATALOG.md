@@ -6604,3 +6604,38 @@ These are uniform-path tcgen05 control instructions.
 
 (Larger multi-warp tests hit tcgen05.alloc per-CTA semantics — one warp must own allocation lifecycle.)
 
+
+## Cluster barrier costs
+
+| Operation | cy/op |
+|-----------|-------|
+| barrier.cluster.arrive.aligned only | 298 |
+| **barrier.cluster.{arrive,wait}.aligned (full sync)** | **379** |
+| barrier.cluster (no aligned) | 380 |
+
+**Cluster sync = ~380 cy** (~200 ns at 1.92 GHz). Position in sync-cost ladder:
+
+| Sync | cy |
+|------|-----|
+| bar.warp.sync | 23 |
+| __syncthreads / bar.sync 0 | 30 |
+| __threadfence_block | 40 |
+| **barrier.cluster (cluster-wide)** | **380** |
+| __threadfence (gpu-wide) | 305 (from earlier — note: less than cluster!) |
+| Grid sync (atom-counter persistent) | 4245 |
+
+Interesting: cluster barrier is **~25% MORE expensive than __threadfence(gpu)** (305 cy). The cluster barrier waits for arrival from N CTAs while __threadfence just waits for memory ordering — different semantics.
+
+For applications targeting H100→B300 migration: **cluster sync is the new "fast cross-CTA primitive"** (380 cy / 200 ns). Use it freely between cluster-shared kernel phases.
+
+## Atomic scope on global memory (cluster-launched)
+
+| Scope | cy/atom |
+|-------|---------|
+| .cta | 34 |
+| .cluster | 34 |
+| .gpu | 34 |
+| .sys | 34 |
+
+**Atomic scope qualifier is FREE.** Any of cta/cluster/gpu/sys gives same 34 cy when L2-coherent. The cost is in the memory ordering qualifier (.acq_rel = 31× slower) — never in the scope.
+
