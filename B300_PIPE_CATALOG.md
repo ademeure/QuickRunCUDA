@@ -4654,3 +4654,23 @@ Compare to earlier warps/SM sweep (8 warps × 1 ILP = 294 GB/s). **ILP and warps
 **HW `CREDUX` path beats shfl-tree by 2.9-5.6×.** min/max are 2× faster than add — the reduce HW has a dedicated compare unit that's faster than the adder. Use `__reduce_*_sync` over shfl-xor patterns whenever possible.
 
 Note: `__reduce_*_sync` requires SM 80+ (Ampere+), and only compiles to real CREDUX on SM 90+ (Hopper/Blackwell). On older cards it falls back to shfl trees.
+
+### Shared vs global atomic (148 × bs × 1000 atomicAdd chain)
+
+| config | cy/atom |
+|---|---:|
+| **Shared memory atomic** (bs=32) | **24.0** |
+| Shared memory atomic (bs=1024) | 35.7 |
+| Shared memory atomic, all-contend A[0] bs=1024 | 35.7 (same as unique) |
+| Global atomic, unique addrs, bs=32 (148 × 32 = 4736 thd) | 564.6 |
+| Global atomic, unique addrs, bs=1024 (148K threads) | 2,320.8 |
+| Global atomic, contend A[0], bs=32 | 174.8 (coalesced) |
+| Global atomic, contend A[0], bs=1024 | 5,881.7 |
+
+**Shared memory atomic is 20-70× faster than global atomic** for CTA-local state. Always prefer shared atomics when possible.
+
+The shared atomic path (ATOMS) is in-SM — no L2/NVLink traversal. Even for CTA-wide contention, smem stays at 36 cy because HW serializes within the SM efficiently.
+
+Global atomic contended-to-A[0]: performance splits sharply — at bs=32 with warp-coalescing, only 1 HW packet per warp, so 175 cy/op is warp-serialized. At bs=1024, 32 warps per CTA × 148 CTAs = 4736 warps all queueing at the single L2 slice → 5882 cy/op.
+
+For **in-kernel counters**, reducing-shared → single global-atomic of the final count is far cheaper than N global atomics.
