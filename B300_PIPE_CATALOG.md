@@ -6930,3 +6930,27 @@ This confirms why the compiler aggressively predicates 2-way `if` branches — i
 - 2-way branches → predicated; only 3+ way branches actually serialize warps
 - For lane-conditional updates (e.g., "only even lanes write"), predicated stores are perfect — no overhead
 
+
+## Register Spilling Cost
+
+Test: vary `__launch_bounds__(threads, MIN_CTAS_PER_SM)` to constrain reg/thread:
+
+| MIN_CTAS/SM | Avail regs/thread | N_LIVE=16 | N_LIVE=32 | N_LIVE=64 | N_LIVE=128 |
+|-------------|-------------------|-----------|-----------|-----------|------------|
+| 1 | ~232 | 2.25 | 1.79 | 1.68 | 1.61 |
+| 2 | ~116 | 2.25 | 1.79 | 1.68 | 1.61 |
+| 4 | ~58 | 2.25 | 1.79 | 1.68 | 1.61 |
+| 8 | ~29 | 2.25 | 1.79 | 1.68 | 1.61 |
+| **16** | **~14** | 2.25 | 1.79 | 1.68 | **2.44 (spill!)** |
+
+**Spilling penalty: ~50% slowdown** (1.61 → 2.44 cy/FFMA) when the compiler can't fit all live values in registers.
+
+For N_LIVE ≤ 64, spilling doesn't appear regardless of `MIN_CTAS` hint — the 64K total reg pool / 32 threads = 2K regs/thread maximum (compiler picks based on its needs).
+
+For N_LIVE = 128 with high occupancy hint, the compiler is forced to spill.
+
+**Practical guidance**:
+- Don't aggressively use `MIN_CTAS_PER_SM` higher than 8 unless you've verified low register pressure
+- Spilling = local memory access (slower than RF) ≈ 50% throughput hit
+- Use `nvcc --ptxas-options=-v` to see actual register count
+
