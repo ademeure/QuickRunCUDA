@@ -7345,6 +7345,42 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# CUB library throughput (heavily optimized reductions + scans)
+
+Using `cub::DeviceReduce::Sum` and `cub::DeviceScan::ExclusiveSum` on u32 arrays:
+
+| N (elems) | CUB Reduce GElem/s | CUB Scan GElem/s | Thrust Reduce |
+|----------:|-------------------:|-----------------:|--------------:|
+| 1 M | 71 (API floor) | 81 | 7.5 |
+| 16 M | 1 128 | 353 | 137 |
+| 64 M | 1 249 | 442 | 322 |
+| **256 M** | **1 662** | **474** | 455 |
+
+**Key findings:**
+- **CUB reduce at 256 M = 1 662 G elem/s = 6.65 TB/s** — approaches HBM peak (7.4 TB/s, **90 % efficient**).
+- **CUB is 3.6× faster than Thrust** for reduce at large N. Thrust has host-side / template overhead.
+- **Scan is memory-bound** at 474 G elem/s = 1.9 TB/s (1 GB read + 1 GB write).
+- Small N (1 M): API floor dominates (~15 µs) — use fused kernels for small reductions.
+
+**For any new code**: use CUB directly (not Thrust) for best throughput. Thrust is great for prototyping, CUB is the production path.
+
+
+# Thrust sort + reduce throughput
+
+`thrust::sort` (reversed u32):
+
+| N (elems) | Time | M elems/s |
+|----------:|-----:|----------:|
+| 1 M | 0.19 ms | 5 641 |
+| 16 M | 0.54 ms | 30 897 |
+| 64 M | 1.84 ms | 36 389 |
+| 256 M | 6.90 ms | **38 925** |
+
+`thrust::reduce` same sizes: 7.5, 137, 322, 455 G elem/s (see CUB comparison above).
+
+Thrust sort scales well: 38.9 G elem/s at 256 M (1 GB). Internal uses a radix-sort with CUB kernels; the overhead vs raw CUB is tolerable here.
+
+
 # Driver + runtime versions + P2P topology (observed)
 
 Driver/runtime version query:
