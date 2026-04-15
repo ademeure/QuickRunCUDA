@@ -4686,3 +4686,16 @@ For **in-kernel counters**, reducing-shared → single global-atomic of the fina
 **cvta is essentially free** — the compiler automatically inserts it when needed and it's folded into the LSU instruction. Explicit cvta and implicit (compiler-resolved) generic→shared loads have identical cost.
 
 No performance benefit to manually using `__cvta_*` intrinsics vs just writing `smem[i]` directly.
+
+### Vector store width vs DRAM write BW (local writes, 148 × 1024 threads × 32×100 iters)
+
+| WIDTH | store size | DRAM write BW | L1 store BW |
+|---:|---|---:|---:|
+| 1 (32-bit scalar) | 4 B | 819 GB/s | 841 GB/s |
+| 2 (64-bit v2) | 8 B | 811 GB/s | 868 GB/s |
+| 4 (128-bit v4) | 16 B | 916 GB/s | 1,000 GB/s |
+| 8 (256-bit v8) | 32 B | **2,190 GB/s** | 2,340 GB/s |
+
+At this test config, wider stores give progressively higher BW. WIDTH=8 (STG.E.ENL2.256) reaches 2.2 TB/s DRAM write (below the 6.1 TB/s theoretical HBM peak — more iters / longer kernel would push higher).
+
+**Rule**: use widest vector store your alignment allows. WIDTH=4 (uint4) is nearly universal; WIDTH=8 (256b) is Blackwell-only (sm_100+) and reduces instruction count.
