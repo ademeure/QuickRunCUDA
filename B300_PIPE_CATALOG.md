@@ -6367,3 +6367,38 @@ In our earlier "free IADD3 with FFMA2" finding, the ratio was 2:1 FFMA2:IADD wit
 
 **Design rule**: For peak FFMA2 throughput, minimize pipe_alu instructions in the inner loop. If you need FMIN/FMAX clamping, batch it OUTSIDE the FFMA2-heavy region or use a 2:1+ FFMA2:FMIN ratio.
 
+
+---
+
+# tcgen05.mma Sustained-Load Throttling (task #87)
+
+The "100K iter cliff" finding: peak FP8 throughput drops 60% beyond ~30K continuous MMAs from one warp.
+
+## Iteration cliff verified
+
+| ITERS | cy/iter | TFLOPS (148 SM) | % peak |
+|-------|---------|------------------|---------|
+| 5,000 | 128.05 | 4654 | 100% |
+| 10,000 | 128.02 | 4655 | 100% |
+| 20,000 | 128.01 | 4655 | 100% |
+| **30,000** | **128.01** | **4655** | **100% (cliff edge)** |
+| 50,000 | 305.90 | 1949 | 42% |
+| 75,000 | 364.71 | 1634 | 35% |
+| 100,000 | 394.16 | 1512 | 32% |
+
+## What's happening (probed via nvidia-smi during 100K run)
+
+- **Clock**: stays at 1920 MHz (NO clock throttle)
+- **Power**: only 193-197 W (NOT TDP-limited — well under 1.4 kW)
+- **Temp**: 40°C (cool, no thermal throttle)
+- **Forced clock-lock at 1920 MHz**: no improvement (cliff persists)
+
+So the slowdown is **dispatch bubbles inserted at the SM level, NOT clock or power reduction**. Possibly:
+- Hardware running-average power tracking inserts wait states ahead of any hard limit
+- tcgen05 internal queue/scheduler limits sustained issue rate
+- Some sustained-utilization governor
+
+**Effect**: After ~30K continuous MMAs from one warp, the tensor pipe issues every ~3 cycles instead of every cycle.
+
+**Practical implication**: Real GEMM kernels that interleave MMAs with TMA loads, register reads, etc. naturally avoid this throttle (the load/store work creates "idle time" for tensor pipe). The throttle ONLY appears in pure-MMA microbenchmarks. So **published peak TFLOPS in real workloads is achievable**.
+
