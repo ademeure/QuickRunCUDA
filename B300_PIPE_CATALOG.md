@@ -6434,3 +6434,24 @@ DSMEM **loads** are free, but DSMEM **atomics** are 2× slower (51 cy) due to cr
 | Load (v4) | 170 GB/s/SM | 169 GB/s/SM | **0%** |
 | Atomic add | 24 cy | 51 cy | 2.1× |
 
+
+---
+
+# TMA Multicast (cp.async.bulk.multicast::cluster) — WORKS on sm_103a
+
+Despite cccl headers gating multicast to SM_90a/100a/110a, the underlying PTX **DOES work on sm_103a (B300)**. Wait latency per CTA after multicast load:
+
+| Cluster | Bytes | Wait cy | Effective BW (total bytes delivered) |
+|---------|-------|---------|---------------------------------------|
+| 2 | 1 KB | 1405 | ~3 GB/s |
+| 2 | 4 KB | 1134 | ~14 GB/s |
+| 2 | 16 KB | 1485 | ~42 GB/s |
+| 4 | 16 KB | 1178 | ~107 GB/s |
+| **8 (max)** | **16 KB** | **1158** | **~211 GB/s** |
+
+**Key insight**: Wait latency is ~1200-1500 cy independent of cluster size. So for a single multicast issuing 16 KB to 8 CTAs (= 128 KB total destination bytes), the effective "delivered BW" is 211 GB/s — equivalent to 8 separate 16 KB TMA loads but using the source memory bandwidth ONCE.
+
+**Use case**: GEMM kernels where multiple CTAs in a cluster compute different output tiles using the SAME B matrix tile. Multicast loads the B tile once, distributes to all N CTAs → **N× DRAM bandwidth savings**.
+
+For B300 with cluster of 8 (max), this is **8× DRAM bandwidth savings** for shared inputs.
+
