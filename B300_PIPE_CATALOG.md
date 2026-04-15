@@ -3326,6 +3326,24 @@ Both remote modes hit the same ~1.13 TB/s ceiling — thread-scaling helps but N
 
 **Unique atomic peak = 137.6 Gatomic/s LOCAL** (at 151,552 threads, each hitting its own CL). This exceeds my earlier "22.7 Gatomic/s" claim — that was with 256 atoms/thread serial chain, and `atomicAdd` with return value forced serialization. With fire-and-forget REDG + no chain, we hit full L2 parallel-unit throughput.
 
+### Axis-separated atomic — REMOTE (1,000 serial atoms per thread)
+
+| SMs | warps/SM | thd/warp | threads | unique Matom/s | contended Matom/s |
+|---:|---:|---:|---:|---:|---:|
+| 1   | 1  | 1  | 1       | 1       | — |
+| 1   | 32 | 32 | 1,024   | 483     | — |
+| 32  | 32 | 32 | 32,768  | 8,628   | — |
+| 148 | 1  | 1  | 148     | 72      | 80 |
+| 148 | 32 | 1  | 4,736   | 2,264   | 513 |
+| 148 | 1  | 32 | 4,736   | —       | 2,533 (coalesces) |
+| 148 | 32 | 32 | 151,552 | **9,152** | **16,345** |
+
+**Remote surprising twist**: contended (16,345) is HIGHER than unique (9,152) at full occupancy — warp coalescing reduces NVLink packet count, so more semantic atomics fit in the same link BW. Unique atomics saturate at ~9 Gatom/s because each is a separate NVLink packet.
+
+**LOCAL vs REMOTE gap at 148×32×32**:
+- unique: 137,649 LOCAL vs 9,152 REMOTE → **15× slower remote** (NVLink packet-rate bound)
+- contended: 49,173 LOCAL vs 16,345 REMOTE → **3× slower remote** (coalesce saves NVLink)
+
 ### Single-address atomic throughput (all SMs, all threads hit A[0] with atomicAdd, 10,000 atoms/thread)
 
 | config | threads | Matomic/s LOCAL | Matomic/s REMOTE | LOCAL payload BW | REMOTE payload BW |
