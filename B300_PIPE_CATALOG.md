@@ -7345,6 +7345,50 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# CUDA IPC (Inter-Process Communication) handles
+
+| Operation | µs/call |
+|-----------|--------:|
+| `cudaIpcGetMemHandle` | **7.75** |
+| `cudaIpcGetEventHandle` | 1.00 |
+| `cudaIpcOpenMemHandle` (same process) | — (fails with "invalid device context"; designed for cross-process) |
+
+**B300 supports IPC** (cudaDevAttrIpcEventSupport = 1). IPC lets separate processes share GPU memory and events for producer/consumer across multiple processes on the same machine.
+
+**Typical use**:
+- Server A calls `cudaIpcGetMemHandle(&h, d_buf)` → 64-byte OS-level handle
+- Serializes `h` to pipe / socket
+- Server B calls `cudaIpcOpenMemHandle(&d_view, h, cudaIpcMemLazyEnablePeerAccess)` to map the same device memory into its process.
+- Both processes now read/write shared device memory coherently.
+
+IPC is typically used for multi-process inference servers (e.g., TensorRT-LLM's MPI setup) where each process owns a GPU slice.
+
+
+# cudaGraphExecKernelNodeSetParams (per-node) vs cudaGraphExecUpdate (whole graph)
+
+10-node graph, parameter updates per node vs bulk:
+
+| API | µs/call |
+|-----|--------:|
+| `cudaGraphExecKernelNodeSetParams` (one node) | 0.297 |
+| **`cudaGraphExecUpdate` (all 10 nodes from template)** | **0.147** |
+
+**Bulk update wins** — updating the whole graph via `cudaGraphExecUpdate(gx, template_g, &info)` is 2× faster per node than updating each node individually. For 10 nodes: 0.147 µs total (bulk) vs 2.97 µs total (per-node) = **20× savings** for large graphs.
+
+**Pattern**:
+```cpp
+// Build a template graph with new values via stream capture each iter
+cudaStreamBeginCapture(s, cudaStreamCaptureModeGlobal);
+for (...) kernel<<<...,s>>>(new_args);
+cudaStreamEndCapture(s, &template_g);
+// Update the persistent exec from template
+cudaGraphExecUpdate(gx, template_g, &info);
+cudaGraphLaunch(gx, s);
+```
+
+Avoid per-node `SetParams` when you have > 3 nodes to update — use whole-graph update.
+
+
 # cuModuleLoadData + cuModuleGetFunction
 
 Loading a 23 KB cubin from memory and retrieving kernel symbol:
