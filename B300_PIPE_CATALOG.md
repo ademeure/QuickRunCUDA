@@ -7167,3 +7167,31 @@ This corrects our earlier "ld.acquire = 3× slower" finding — that was for `.g
 
 For cross-CTA: must pay the 3-14× tax. Use mbarrier (24 cy with built-in release) instead of explicit ordered atomics whenever possible.
 
+
+## HBM3e Peak Bandwidth (Verified)
+
+Cold DRAM reads (4 GB working set, no L2 reuse), 32 CTAs/SM × 148 SMs:
+
+| Blocks | Total GB | Cold BW (GB/s) |
+|--------|----------|----------------|
+| 148 | 0.08 | 162 |
+| 444 | 0.23 | 488 |
+| 1480 | 0.76 | 1,635 |
+| **4736 (max occupancy)** | **2.42** | **5,158** |
+
+**B300 HBM3e measured peak: ~5.2 TB/s** (cold reads, 64% of 8 TB/s spec).
+
+The remaining 3 TB/s (36%) is hard to extract due to:
+- L2 hit latency (~300 cy) limits in-flight requests per SM
+- L2 partition imbalance (some SMs farther from data)
+- Cache line transfer overhead between L2 slices
+
+For comparison (warm/L2-hit reads):
+- L2 read peak (data fits in 64 MB partition): ~17.5 TB/s with 4736 blocks
+- Smem ldmatrix peak (per-SM): 250 GB/s × 148 = 37 TB/s
+
+Practical guidance:
+- For cold-streaming kernels, expect ~5 TB/s sustained
+- Use TMA (cp.async.bulk) for the most efficient cold reads
+- L2 working set ≤64 MB: enjoy 3× the BW (17 TB/s)
+
