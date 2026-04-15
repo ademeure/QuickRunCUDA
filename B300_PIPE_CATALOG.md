@@ -6993,3 +6993,27 @@ For peak smem throughput, use:
 - **ldmatrix.x4** for tensor-core feed patterns (8x8 tiles, transposed)
 - Plain ld.shared.u32 only for scalar reads
 
+
+## Multi-warp FFMA throughput (occupancy effect)
+
+| Warps/CTA | FFMA/cy/SM | % of theoretical 128 |
+|-----------|------------|---------------------|
+| 1 | 10.2 | 8% |
+| 2 | 20.4 | 16% |
+| 4 | 40.9 | 32% |
+| 8 | 63.9 | 50% |
+| 16 | 77.1 | 60% |
+| 32 (max CTA size) | **85.1** | **67%** |
+
+Single-CTA scaling plateaus at 32 warps (max thread block size = 1024 threads).
+
+**Chip-wide FFMA peak**: 85 × 148 × 1.92 GHz × 2 FLOP/FMA = **~48 TFLOPS scalar FP32**
+
+This compares to:
+- tcgen05.mma FP16: 2,325 TFLOPS (49× more)
+- tcgen05.mma FP8: 4,651 TFLOPS (97× more)
+
+**Conclusion**: Scalar FFMA peaks at ~67% of theoretical hardware max even with full SM occupancy (32 warps in 1 CTA). Tensor core (UTCQMMA) hits ~93% of its theoretical peak. The MMA path is 1.4× more efficient at hardware utilization in addition to being orders of magnitude faster.
+
+For real workloads needing scalar compute (not GEMM), expect 30-50 TFLOPS chip-wide for FFMA — a fraction of tensor core peak. AI workloads should always use tensor cores when possible.
+
