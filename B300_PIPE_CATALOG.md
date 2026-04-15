@@ -4899,3 +4899,20 @@ Adding an intermediate fmaf (`v = __expf(v); v = fmaf(v, 0.99f, 0.01f)`) almost 
 | `stmatrix.sync.aligned.m8n8.x4.trans.shared.b16` | 32.0 |
 
 **stmatrix is ~14× slower than ldmatrix** (2.3 cy/warp). Both variants have same cost. Probably due to write-side smem pipeline hazards (consecutive stores to same addresses). For realistic tensor-core output patterns where stores go to different addresses, per-inst cost may drop.
+
+### Atomic ordering/scope costs (1 thread × 1000 chained atomicAdd)
+
+| ordering | cy/atom |
+|---|---:|
+| default (strong) | 684 |
+| `atom.relaxed.global.gpu` | 684 |
+| `atom.acquire.global.gpu` | 710 (+26) |
+| `atom.release.global.gpu` | **1,434** (**2.1×**) |
+| `atom.acq_rel.global.gpu` | 1,460 (2.1×) |
+| `atom.relaxed.global.sys` | 684 |
+
+Default and `.relaxed` cost the same at 684 cy (serial chain on own address). `.acquire` adds only ~26 cy for read-side fence. **`.release` and `.acq_rel` double the cost** — they flush all pending stores before the atomic.
+
+Scope (`.sys` vs `.gpu`) doesn't matter for this single-thread single-address test — the atomic round-trip dominates. If you have outstanding remote writes, `.sys` scope would cost more.
+
+Design: use `.relaxed` when you don't need ordering. Use `.acquire` for read-your-writes sync (cheap). Only use `.release`/`.acq_rel` when you genuinely need to flush pending writes.
