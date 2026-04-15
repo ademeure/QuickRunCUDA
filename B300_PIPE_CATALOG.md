@@ -5578,3 +5578,17 @@ Cost is **constant regardless of value** — it's a control register write, not 
 
 **Smem bandwidth saturates at ~16 warps per SM** = ~250 GB/s per SM = ~37 TB/s chip-wide. Beyond 16 warps per SM, no additional throughput. This matches NVIDIA's published smem peak for B300.
 
+
+## tcgen05.cp (smem → TMEM bulk copy) throughput
+
+| Shape | bytes | cy/cp | B/cy/SM | GB/s/SM |
+|-------|-------|-------|---------|---------|
+| **128x256b** | 4096 | 67 | **61** | **117** |
+| 128x128b | 2048 | 52 | 39 | 75 |
+| 32x128b.warpx4 | 512 | 52 | 9.8 | 19 |
+| 4x256b | 128 | 52 | 2.4 | 4.7 |
+
+**Use the largest shape (`128x256b`) for bulk smem → TMEM copies** — the smaller shapes pay the same ~52 cy startup with much less data moved.
+
+Chip-wide peak: 117 × 148 = ~17 TB/s (about half of smem peak, reflecting the asymmetric TMEM write port).
+
