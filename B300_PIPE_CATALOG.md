@@ -4726,3 +4726,21 @@ For **bulk** TMA (cp.async.bulk), see earlier catalog section — much higher BW
 Real benefit only visible in producer/consumer warpgroup kernels where a producer wg can `dec` down to 32 regs while consumer wg `inc`'s up to 240. Not measured here — requires multi-warpgroup kernel with register-pressured consumer path.
 
 See NVIDIA's tcgen05.mma async-producer-consumer template for canonical usage.
+
+### Shared atomic op types (ATOMS, 1 warp × 1000 chained iters, unique per-lane addrs)
+
+| op | cy/iter |
+|---|---:|
+| atomicAdd | **26** (fastest) |
+| atomicOr / atomicXor / atomicExch | 43 |
+| atomicMin / atomicMax | 48 |
+| atomicCAS | 52 (slowest) |
+
+**Different ordering than global atomic!** For shared memory:
+- Add is the cheapest (26 cy)
+- Min/Max slower than Or/Xor (48 vs 43)
+- CAS slowest
+
+For global atomic we saw the opposite: min/max 29 cy, add 56 cy. Shared atomic (ATOMS) uses the LDS/SMEM path with different internal mechanics than the L2-based global atomic REDUX.
+
+Design: in shared memory, `atomicAdd` is always the cheapest atomic. For accumulators prefer it over conditional min/max if the use case allows.
