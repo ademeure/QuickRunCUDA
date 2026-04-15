@@ -4916,3 +4916,21 @@ Default and `.relaxed` cost the same at 684 cy (serial chain on own address). `.
 Scope (`.sys` vs `.gpu`) doesn't matter for this single-thread single-address test — the atomic round-trip dominates. If you have outstanding remote writes, `.sys` scope would cost more.
 
 Design: use `.relaxed` when you don't need ordering. Use `.acquire` for read-your-writes sync (cheap). Only use `.release`/`.acq_rel` when you genuinely need to flush pending writes.
+
+### Persistent kernel vs repeated launches
+
+Same trivial kernel (100 IMAD chain per thread):
+
+| approach | total time for 100 iters |
+|---|---:|
+| Persistent: 1 launch × 100 iters inside | 4.1 µs |
+| Launch-spam: 100 launches × 1 iter | 205 µs |
+
+**50× overhead amplification** when using repeated launches instead of persistent pattern. Each launch has a 2.05 µs floor (measured earlier); if your per-iter work is < 2 µs, almost all time is launch overhead.
+
+Design rules:
+- If iter work ≪ 2 µs: use persistent kernel with inner loop
+- If iter work ≫ 100 µs: launches are fine
+- In between: consider CUDA graphs to amortize launch
+
+For tuning tools like QuickRunCUDA doing `-T N` event-timed iterations, the measured time includes N launches, so per-iter cost is inflated by the 2 µs floor for short kernels.
