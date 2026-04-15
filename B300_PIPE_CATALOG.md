@@ -4960,3 +4960,14 @@ Both run at near-peak ALU while also using half the FMA pipe — ~1,058 warp-ins
 Note: for full-chip int8 peak (~3.96 PTOPS dense on B300), use `tcgen05.mma.kind::i8` (tensor-core path). `__dp4a` is the scalar fallback — ~14× slower than the tensor path but usable when tensor core isn't available.
 
 `vadd4`/`vabsdiff4`/`vmax4` (video SIMD intrinsics): compiler didn't emit on sm_103a — likely mapped to regular ops or not supported at this level. Use `__dp4a`/`__dp2a` or packed-int intrinsics instead.
+
+### HFMA2 (packed FP16 FMA) peak
+
+`fma.rn.f16x2` raw PTX, 8-chain unrolled:
+- pipe_fma: **99.76%** of peak sustained
+
+Same FMA-pipe utilization as FFMA (98.66%). Each HFMA2 instruction produces 2 FP16 results per lane per cycle. At 34.36 warp-inst/ns (FFMA rate):
+- **137.4 TFLOPS FP16** packed (HFMA2)
+- Compare to FFMA: 68.7 TFLOPS FP32
+
+HFMA2 doubles FP throughput by packing 2 half-precision ops per instruction, at same pipe-cycle rate. For FP16 arithmetic workloads where full FP16 precision is fine, HFMA2 is 2× FFMA FLOPS.
