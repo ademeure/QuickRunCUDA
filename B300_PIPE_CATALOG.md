@@ -7345,6 +7345,31 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# Persistent kernel occupancy — 32 CTAs/SM wins for memory-bound
+
+Direct comparison on a 1 GB u128 streaming read, 512 threads per CTA:
+
+| Pattern | # CTAs | CTAs/SM | Time | GB/s | % of 7.4 TB/s peak |
+|---------|-------:|--------:|-----:|-----:|-------------------:|
+| Persistent "1/SM" | 148 | 1 | 0.44 ms | 2 439 | 33 % |
+| Persistent "2/SM" | 296 | 2 | 0.24 ms | 4 427 | 60 % |
+| Grid-full (1 elem/thread) | 131 072 | 886 active waves | 0.23 ms | 4 712 | 64 % |
+| **Persistent "32/SM"** | **4 736** | **32** | **0.17 ms** | **6 305** | **85 %** |
+
+**Finding**: for memory-bound streaming kernels, persistent-size = 1 block/SM is **2.6× slower than 32/SM**. Conventional wisdom says "persistent = 1/SM" but that leaves most of the HBM BW on the table.
+
+**Why it matters**: the L1/LSU/HBM pipeline needs enough in-flight load requests to hide latency. 1 warp × 1 CTA × 1 SM has ~8-ILP; 32 CTAs × 16 warps/CTA × 128 SMs has enormous in-flight request queue.
+
+**Design rule for memory-bound streaming**:
+- **Launch 4 736 blocks × 128-512 threads** (= 32 CTAs/SM × 148 SMs). Works with `-p` flag on QuickRunCUDA, or manually.
+- Use standard grid-stride pattern inside the kernel (loop over work chunks).
+- Grid-full (one block per output element) is nearly as good BUT eats ~880× more launch overhead.
+
+**Only use "persistent 1/SM"** for:
+- Control kernels (persistent producer/consumer with idle periods)
+- When you explicitly need one dedicated worker per SM (e.g., warp-specialized GEMM)
+
+
 # NVDEC / NVENC media engines on B300 SXM6 AC
 
 From `nvidia-smi mig -lgip` profile totals and NVML query:
