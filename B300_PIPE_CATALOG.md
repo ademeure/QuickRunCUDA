@@ -6012,3 +6012,34 @@ Surprising: `red.relaxed.gpu` is FASTER than default `red` — opposite of `ld.r
 - If you need the return value: use `atom.*` without ordering (34 cy)
 - NEVER use `.acquire/.release/.acq_rel` (15-31× slower)
 
+
+---
+
+# Barrier and Fence Costs
+
+## Per-iteration barrier cost (128 threads)
+
+| Op | cy/iter |
+|----|---------|
+| (no barrier) | 0 |
+| **bar.warp.sync 0xFF** (warp barrier) | **23** |
+| **__syncthreads / bar.sync 0** | **30** |
+| __threadfence_block (CTA fence) | 40 |
+| bar.sync split (subset of CTA) | 43 |
+| __threadfence (GPU-wide) | 305 |
+
+## __syncthreads cost vs CTA size
+
+| CTA threads | cy/sync |
+|-------------|---------|
+| 32 | 24 |
+| 64 | 26 |
+| 128 | 30 |
+| 256 | 38 |
+| 512 | 54 |
+| 1024 | 86 |
+
+Each doubling of CTA size adds ~7 cy to barrier cost. **128-thread CTAs hit the sweet spot for barrier-heavy kernels** (30 cy, only 6 cy over 32-thread).
+
+`__threadfence()` (GPU-wide) costs 10× a CTA barrier — only use when sharing data across CTAs.
+
