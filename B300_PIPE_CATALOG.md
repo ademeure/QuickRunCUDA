@@ -5398,3 +5398,21 @@ Per cccl headers, `kind::i8` is gated on `SM_100a, SM_100f, SM_110a, SM_110f` �
 
 Same TFLOPS as FP8 (4.65 PFLOPS) — they all share the K=32 path under `kind::f8f6f4`. The narrow formats are only "sub-byte" in storage; per-MMA throughput is identical. Real FP4/FP6 acceleration needs `kind::mxf4` or `kind::mxf4nvf4` with block scaling (scale_vec::2X).
 
+
+## cta_group::2 with M=256 (cluster of 2 CTAs)
+
+Setup: `__cluster_dims__(2,1,1)` + `tcgen05.alloc.cta_group::2` + `barrier.cluster.{arrive,wait}` between alloc and MMA + `tcgen05.mma.cta_group::2` (8 disable_output_lane operands).
+
+| Pairs (148/2) | cy/iter | Total TFLOPS |
+|---------------|---------|--------------|
+| 1   | 128.29 | 62.7   |
+| 8   | 128.29 | 502    |
+| 64  | 128.29 | 4,017  |
+| 74  | 128.29 | **4,645**  |
+
+**Same total peak as cta_group::1 (4.65 PFLOPS).** cta_group::2 does NOT unlock 2× peak — it lets you process M=256 tiles by spreading across 2 SMs (each SM handles half the rows + larger A descriptor than one SM can hold). Per-SM work rate is identical.
+
+**Use cta_group::2 when**: your A tile doesn't fit in 1 SM's smem, or your kernel requires M=256 tiles for register-sharing reasons.
+
+**Don't use cta_group::2 expecting 2× FLOPS** — peak is set by per-SM tensor pipe throughput, which is unchanged.
+
