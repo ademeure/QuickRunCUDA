@@ -7240,6 +7240,119 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# CUDA process cold-start breakdown (cuInit → first kernel)
+
+Clean process launch, one-time startup costs:
+
+| Stage | Time |
+|-------|------:|
+| **`cuInit(0)`** | **197 ms** (biggest cost — CUDA driver load) |
+| `cuDeviceGet` | 1.75 µs |
+| **`cuCtxCreate`** | **128 ms** (context creation + device state allocation) |
+| `cuStreamCreate` | 20.5 µs |
+| `cudaMalloc` (first) | 209 µs |
+| `cudaMalloc` (second) | 1.5 µs (warm, allocated from pool) |
+| first kernel enqueue | 67.75 µs |
+| cudaDeviceSync after first kernel | 6.5 µs |
+| **total first-kernel latency (enqueue + sync)** | **74.75 µs** |
+| second kernel (enqueue + sync) | 8.5 µs |
+| third kernel | 7.5 µs |
+| **total `cuInit` → first kernel complete** | **326 ms** |
+
+**Rule of thumb:** a fresh CUDA process costs ~326 ms before the first real work — dominated by `cuInit` (197 ms) + `cuCtxCreate` (128 ms). For short-lived kernels, use QuickRunCUDA-style server mode or long-lived daemons to amortize this. Alternatively, fork from a pre-initialized parent.
+
+The **second kernel + sync = 8.5 µs**, which is the steady-state launch overhead once the context is warm.
+
+
+# cudaMallocAsync memory pool — 50× faster than cudaMalloc once warm
+
+| API | µs / op (1 MB blocks, 1 000 reps) |
+|-----|----------------------------------:|
+| `cudaMalloc` (sync) | 17.7 |
+| `cudaFree` (sync) | 19.8 |
+| **`cudaMallocAsync`** | **4.2** (4× faster) |
+| **`cudaFreeAsync`** | **0.24** (83× faster — just enqueues) |
+
+**Pool reuse** — alloc+free cycle with the pool warm:
+
+| Allocation size | µs / cycle |
+|-----------------|-----------:|
+| 256 B | 1.21 |
+| 4 KB | 1.20 |
+| 64 KB | 1.22 |
+| 1 MB | 1.21 |
+| 16 MB | 1.24 |
+| 1 MB (after 1000 warm-up cycles) | **0.40** |
+
+**Key finding: cudaMallocAsync+Free cycle = ~1.2 µs regardless of size**, dropping to 0.40 µs with sustained reuse. Classic cudaMalloc+Free cycle is ~37 µs — **50-100× slower**.
+
+Use `cudaMallocAsync` + `cudaFreeAsync` for any dynamic allocation pattern; the async pool handles sizes from bytes to MB with uniform cost.
+
+
+# SMEM atomics — fast for common ops, slow for 64-bit and FP
+
+Single warp × 1000 iters, unique smem addrs per lane:
+
+| Op | cy/atom |
+|----|--------:|
+| `atom.shared.add.u32` | **24** |
+| `atom.shared.cas.b32` | 25 |
+| `atom.shared.and.b32` | 24 |
+| `atom.shared.or.b32` | 24 |
+| `atom.shared.xor.b32` | 24 |
+| `atom.shared.exch.b32` | 39 |
+| `atom.shared.min.u32` | 39 |
+| `atom.shared.max.u32` | 39 |
+| ld+st non-atomic (baseline) | 41 |
+| **`atom.shared.add.u64`** | **116** (5× slower — 64-bit is bank-wide) |
+| **`atom.shared.add.f32`** | **97** (4× — emulated BSSY+LDS+compare-loop, NOT native) |
+
+**Findings:**
+
+1. **32-bit bitwise + add + cas all run at 24 cy** — single-bank SMEM atomic unit.
+2. **exch, min, max cost 39 cy** (~60 % more than add) due to comparison overhead.
+3. **u64 atomic = 116 cy, 5× slower** — operates across two banks.
+4. **f32 atomic is EMULATED** (no native smem FP32 atomic). It costs 97 cy because it uses a bsync + compare-and-swap loop. **Never use `atomicAdd(smem_fp, ...)` in a hot loop** — cast to int and add manually, or accumulate to float inside a warp lane then store once.
+
+**Comparison to global atomics**: shared `atom.add.u32` = 24 cy; global `atom.add.u32` at 1-CTA contention = 51 cy; at 148-CTA contention = 132 cy. **SMEM atomics are 5× faster than global** when data fits — always privatize to SMEM first.
+
+
+# PTX special registers complete listing (B300 sm_103a)
+
+Dump from a 2-CTA cluster, 128-thread CTA, thread 0:
+
+```
+%tid.x          = 0             (thread ID in CTA)
+%ntid.x         = 128           (CTA size)
+%ctaid.x        = 0             (CTA ID in grid)
+%nctaid.x       = 2             (grid size)
+%smid           = 142           (physical SM, 1-147; SM 0 unused)
+%nsmid          = 148           (total SMs on chip)
+%warpid         = 2             (warp ID within SM)
+%nwarpid        = 64            (max warps/SM)
+%laneid         = 0             (lane within warp)
+%lanemask_eq    = 0x1           (1 << laneid — useful for coop_groups)
+%envreg0        = 0x40632c8     (launch env — undocumented)
+%envreg1        = 0x0
+%clock64        = 67848879653   (SM cycles; NOT synchronized across SMs)
+%globaltimer    = 17762925…ns   (monotonic ns; chip-wide, 256-ns resolution)
+%gridid         = 0x5           (5th launch in this context)
+%clusterid.x    = 0             (cluster index in grid)
+%nclusterid.x   = 1             (# clusters in grid)
+%cluster_ctaid.x   = 0          (CTA index in cluster)
+%cluster_nctaid.x  = 2          (cluster size)
+%cluster_ctarank   = 0          (linear CTA rank in cluster)
+%cluster_nctarank  = 2          (# CTAs in cluster, linear)
+```
+
+**Use notes:**
+- `%smid` gives physical SM ID (1-147 on our 148-SM B300; SM 0 never scheduled).
+- `%clock64` is per-SM and NOT synchronized across SMs — comparing two SM's clock64 is unsafe.
+- `%globaltimer` IS chip-wide synchronized, at 256-ns resolution — use this for cross-SM timing.
+- `%gridid` increments each launch — useful for correlating with host-side logs.
+- `%envreg0` / `%envreg1` appear to encode driver internals (launch parameters). Undocumented.
+
+
 # setmaxnreg.aligned — dynamic register redistribution
 
 `setmaxnreg.{inc,dec}.sync.aligned.u32 N` on B300 sm_103a:
