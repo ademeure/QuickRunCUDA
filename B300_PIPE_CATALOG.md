@@ -4847,3 +4847,13 @@ Varying N (total threads participating):
 Approximately `cy ≈ 22 + N × 0.06` — each extra warp adds ~2 cy. Use subset barriers (`bar.sync 0, N`) when only part of the block needs to sync — cheaper than full `__syncthreads` at BS=1024.
 
 bar.sync IDs: 0-15 usable per CTA. Can coordinate independent subsets (e.g. warp-group producer/consumer patterns using separate bar IDs).
+
+### Multiple bar.sync IDs (producer/consumer patterns)
+
+| pattern | cy/iter |
+|---|---:|
+| always `bar.sync 0` | 86 |
+| alternate IDs 0/1 | 129 (+43 branch) |
+| rotate through IDs 0-3 | 150 (+64 branch) |
+
+Different barrier IDs don't add to HW cost — the overhead is the conditional branch that chooses which ID. When barriers are unconditional (no runtime branching), multiple IDs are free. Useful for producer/consumer warpgroup kernels that want independent sync between stages.
