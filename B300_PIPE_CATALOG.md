@@ -7240,6 +7240,43 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# FFMA rounding modes + fused vs unfused
+
+32 warps × 16 chains × 1000 iter, single-warp chain self-dep:
+
+| Instruction | cy/SM/inst (FMA rate) | Notes |
+|-------------|---------------------:|-------|
+| `fma.rn.f32` (round-nearest-even, default) | **105.30** | baseline |
+| `fma.rz.f32` (truncate) | 104.92 | ±0 % |
+| `fma.rm.f32` (round down) | 104.92 | ±0 % |
+| `fma.rp.f32` (round up) | 104.92 | ±0 % |
+| `fma.rn.ftz.f32` (flush-to-zero) | 104.92 | ±0 % |
+| `fma.rn.sat.f32` (saturate to [0,1]) | 105.34 | ±0 % |
+| **`mul.rn + add.rn` (separate)** | **58.47** | **2× slower** — fusion matters |
+
+**Rounding mode has no throughput effect on B300** — just a 2-bit flag in the FFMA encoding. Use whatever precision you need (typically `rn` = IEEE default).
+
+**Separate mul+add is 2× slower than fused FMA**, as expected. Compilers emit FFMA whenever possible; if you see MUL+ADD pairs in SASS, check whether the compiler lost the fusion (e.g. due to operand reuse or other optimisations).
+
+
+# 16-CTA cluster (opt-in via cudaFuncAttributeNonPortableClusterSizeAllowed)
+
+B300 supports up to **16-CTA clusters** with explicit opt-in. Without the attribute, max is 8. With `cudaFuncSetAttribute(fn, cudaFuncAttributeNonPortableClusterSizeAllowed, 1)`, 16-CTA clusters work.
+
+**Cluster barrier (`cg::cluster_group::sync()`) cost** at 100 barriers per run:
+
+| Cluster size | cy/barrier |
+|-------------:|-----------:|
+| 2 CTAs | 380 |
+| 4 CTAs | 357 |
+| 8 CTAs | 381 |
+| **16 CTAs** (opt-in) | **381** |
+
+**Cluster barrier cost is ~flat from 2 to 16 CTAs** at ~380 cy. The barrier traversal across the hardware cluster network is not sensitive to cluster size within this range. Opt-in 16-CTA clusters thus give you **2× the shared DSMEM pool** (16 × 228 KB = 3.6 MB) with no barrier overhead penalty.
+
+Use case: large TMA multicast patterns where 16 CTAs can cooperatively load and share a 3-MB tile via DSMEM.
+
+
 # Stream priority — ordering hint only, NO preemption
 
 B300 stream priority range: **[0 (low) .. -5 (high)]** (6 levels).
