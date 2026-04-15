@@ -4804,3 +4804,29 @@ L1→L2 step = +243 cy. L2→DRAM step = +518 cy. DRAM latency dominates when wo
 - Instruction rate: 565 inst/ns
 
 Same full-pipe rate as IADD3, LOP3, and shift operations. PRMT is on the fast ALU pipe — essentially free for byte-level manipulation. Useful for FP8/FP6/FP4 packing, byte-wise shuffles, and general byte-level SIMD-like patterns.
+
+### Float conversion throughput (chained, ncu)
+
+| op | inst/ns | primary pipe | utilization |
+|---|---:|---|---:|
+| S32 → F32 (I2F) | **566** | pipe_alu | 99.83% |
+| F32 → S32 (F2I) | 284 | pipe_fma | 12.47% (half rate) |
+| F32 ↔ F16 roundtrip | 846 (~423/conv) | both | 50/50 |
+| F32 ↔ BF16 roundtrip | 284 (~142/conv) | both | 6/13 |
+
+**I2F runs at full ALU peak** — parallel to FFMA, essentially free.
+**F2I uses the FMA pipe at half rate** — competes with FFMA.
+**F16 conversions** use both pipes, approx half rate of IADD.
+**BF16 conversions** are measurably slower than F16.
+
+Mixed-precision design: integer-to-float conversions in FP32 hot paths are cheap (ALU pipe); float-to-int conversions cost half an FFMA slot.
+
+### Shared memory LDS read throughput (ncu-verified)
+
+`ld.volatile.shared.v4.u32` pattern, 148×1024 threads × 32 unrolled × 100 iters:
+
+- **l1tex wavefronts/ns: 277.45** — at 128 B per wavefront = **35.5 TB/s chip-wide** smem read BW
+- Inst rate: 92.48 inst/ns (each v4.u32 issues multiple wavefronts internally)
+- = **240 GB/s/SM** local smem read BW
+
+Matches the ~36 TB/s chip smem read peak noted earlier in catalog. B300 smem delivers 128 B/clk/SM at base clock (1920 MHz).
