@@ -6510,3 +6510,14 @@ Loading from same address across all 32 lanes (uniform) vs unique per lane:
 
 `ldu.global` (the explicit "load uniform" hint) does NOT seem to be faster than plain `ld.global` on B300. The uniform optimization may be auto-applied.
 
+
+## tcgen05.fence costs
+
+| Variant | cy/op |
+|---------|-------|
+| baseline | 0 |
+| **tcgen05.fence::before_thread_sync** | **23** |
+| **tcgen05.fence::after_thread_sync** | **23** |
+
+Both tcgen05.fence variants cost **23 cy** — same as warp barrier or mbarrier.arrive. Cheap to use between MMA phases for ordering.
+
