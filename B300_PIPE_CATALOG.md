@@ -4503,3 +4503,19 @@ Near-empty kernel, 1000 launches averaged:
 All supported shapes issue at ~2.3 cy per warp-instruction. FP8/FP6/FP4 LDSM variants run at the same rate as standard FP16 ldmatrix — Blackwell uses the same HW path for smem→register tile loads regardless of element width. Per-warp issue rate = 0.43 ldmatrix/cy.
 
 Pairs well with HMMA/tcgen05.mma: `ldmatrix → register → HMMA` is the canonical tile-load path.
+
+### Synchronization primitive costs (1 CTA × BS threads × 1000 iters)
+
+| primitive | BS=32 | BS=128 | BS=512 | BS=1024 |
+|---|---:|---:|---:|---:|
+| `__syncthreads` / `bar.sync 0` | 24 cy | 30 | 54 | **86** |
+| `__syncwarp` / `bar.warp.sync` | 23 | 23 | 26 | 33 |
+| `__threadfence` (global memory fence) | **281** | 286 | 292 | **328** |
+| `__threadfence_block` | 23 | 23 | 35 | 64 |
+
+- `__syncwarp` is near-constant (~23-33 cy) — scales with warp-wide barrier only, not with CTA size.
+- `__syncthreads` scales linearly with warp count (2.7 cy per warp at bs=1024).
+- `__threadfence` has a high fixed floor (~280 cy) for global memory coherence — use sparingly.
+- `__threadfence_block` is cheap (local-only) — near `__syncthreads` cost.
+
+Design: for CTA-local sync use `__syncthreads` or `__threadfence_block`; avoid `__threadfence` unless you need chip-wide memory ordering (280+ cy).
