@@ -4421,3 +4421,28 @@ Design: precompute MUFU results where possible; don't put MUFU in a tight inner 
 - Per-kernel constants (1920 values fit in 64 KB cmem pool)
 
 When lanes diverge in their cmem index, cost rises to ~50 cy — still faster than global but not as dramatic a win.
+
+### METHODOLOGY CORRECTION: cmem latency/throughput (with SASS verification)
+
+Earlier "cmem 2 cy/load" figure was WRONG — compiler hoisted `cmem[0]` out of loop. Proper tests with serial dependency chain + SASS verification:
+
+| access pattern | LATENCY (serial chain, cy/load) | THROUGHPUT (8-chain, cy/load) |
+|---|---:|---:|
+| cmem LDC (runtime index via `cmem[x & 1023]`) | **40.8 cy** | **8.5 cy** |
+| global LDG.ca (runtime index) | **52.2 cy** | **11.8 cy** |
+
+- cmem latency ~40 cy (LDC) — 22% faster than L1-cached global (52 cy)
+- cmem throughput ~8.5 cy/load (vs 11.8 for global) — 30% faster
+- 8-chain pipelining yields ~4.8× speedup over serial (cmem) or 4.4× (global)
+
+SASS verified: inner loop has `LDC R5, c[0x3][R5]` per iter — real runtime-indexed cmem read, no hoisting.
+
+**Methodology lesson**: always verify with SASS when measurements look too good. Simple loop-invariant expressions will be hoisted; use a chain dependency (`x = cmem[x & mask]`) to force per-iter execution.
+
+### METHODOLOGY for latency vs throughput (going forward)
+
+- **LATENCY**: serial dependency chain (`x = f(x)`), `#pragma unroll 1`, verify SASS shows chained register deps.
+- **THROUGHPUT**: ≥8 independent chains, verify SASS has ≥8 concurrent ops, measure cy / total ops.
+- Always subtract loop overhead (~5-10 cy/iter for ISETP+BRA+IADD).
+- Cross-check with `ncu --metrics sm__pipe_*_cycles_active.avg.pct_of_peak_sustained_active`.
+- If `pipe_*_cycles_active` < 90%, test isn't saturating the target pipe — either increase chains or check for DCE.
