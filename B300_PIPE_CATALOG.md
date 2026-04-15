@@ -5088,3 +5088,31 @@ Does mixing FFMA2 (half-rate scalar FMA) with ALU ops let us exceed 128 ops/clk/
 **HFMA2 is less tolerant of IADD companion than FFMA2** — at r=1, loses 24% FP16 (vs FFMA2's 5.8%). The half-precision FMA pipe has tighter issue coupling.
 
 **Design rule**: with scalar FFMA2, inserting ~1 IADD per FFMA2 is essentially free (within 6%). With HFMA2, the overhead is higher — budget for ~25% FP throughput loss per inserted ALU op.
+
+### FFMA2/HFMA2 + IADD sweet spot is 2:1, NOT 1:1
+
+Extending the ratio sweep to HFMA2:IADD > 1 (less IADD per FMA):
+
+**HFMA2 + IADD**:
+
+| HFMA2 : IADD | wall | FP16 TFLOPS | IADD T-ops/s |
+|---:|---:|---:|---:|
+| 1:1 | 562 µs | 55.2 (-23%) | 13.8 |
+| **2:1** | **432 µs** | **71.9 (FULL)** | **9.0 (free)** |
+| 4:1 | 431 µs | 72.0 | 4.5 |
+| 8:1 | 431 µs | 72.1 | 2.25 |
+
+**FFMA2 + IADD** (same pattern):
+
+| FFMA2 : IADD | wall | FP32 TFLOPS | IADD T-ops/s |
+|---:|---:|---:|---:|
+| 1:1 | 459 µs | 67.6 (-5.8%) | 16.9 |
+| **2:1** | **433 µs** | **71.7 (FULL)** | **9.0 (free)** |
+| 4:1 | 433 µs | 71.7 | 4.5 |
+| 8:1 | 433 µs | 71.7 | 2.25 |
+
+**Critical correction**: sweet spot is **2 FMA2 per 1 IADD3**, NOT 1:1 as previously noted. At 2:1 ratio, the IADD3 runs completely FREE on pipe_alu while pipe_fma processes 2 FMA2 ops. Beyond 2:1 (i.e. 1:1), ALU pipe starts competing for issue slots and slows the FMA work.
+
+**Design takeaway**: in a loop doing packed-FMA compute, you can insert **1 integer op per every 2 FMA2s at zero cost**. A loop of 8 FMA2 + 4 IADD3 = full 72 TFLOPS + 9 T-IADD/s bonus. This is the B300 dual-issue budget.
+
+For scalar FFMA (not packed), the issue rate is already 2× FFMA2, so ALU pipe is fully utilized by the issue logic — there's no free integer slot alongside scalar FFMA (you'd need to drop to FFMA2 to get dual-issue headroom).
