@@ -6690,3 +6690,27 @@ Comparison ladder:
 - DRAM access: 199 cy (104 ns)
 - **printf: 150,000 cy (78 μs)** ← ~750× a DRAM access
 
+
+## CTA Capacity by Size (queue-supported, not necessarily concurrent)
+
+| CTA size | Warps/CTA | "Max" CTAs/SM | Notes |
+|----------|-----------|---------------|-------|
+| 32 (1 warp) | 1 | 32 | Matches Blackwell 32-warp limit |
+| 64 | 2 | 32 | Suspicious — 64 warps |
+| 128 | 4 | 32 | 128 warps "fit" |
+| 256 | 8 | 32 | 256 warps reported |
+| 512 | 16 | 16 | 256 warps |
+| 1024 | 32 | 8 | 256 warps |
+
+**Caveat**: This test (atomic-spin grid sync) only confirms the scheduler can DRAIN this many CTAs eventually — not that they're all simultaneously executing. NVIDIA's true Blackwell concurrent warps/SM is documented as ~32-64.
+
+What's clearly true:
+- 1-warp CTAs: 32 concurrent CTAs/SM (= 32 concurrent warps)
+- 32-warp CTAs (max thread block size): 8 concurrent CTAs/SM, 256 warp-slots reserved
+- Beyond ~256 effective warps/SM × 148 SM = ~38K queue-able CTAs (matches our earlier "33+ hangs" finding for 1-warp CTAs)
+
+## SM clock & globaltimer (verified)
+
+- SM clock: **1920.0 MHz** exactly (3-trial average matches in 4th-decimal precision)
+- globaltimer resolution: **32 ns** (= 31.25 MHz tick)
+
