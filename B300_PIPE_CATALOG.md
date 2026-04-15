@@ -7240,6 +7240,110 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# Integer scalar throughput peak (32 warps × 16 chains, self-dep)
+
+| Op | SASS pipe | inst/cy/SM | w-inst/cy/SM | TIOPS chip |
+|----|-----------|-----------:|-------------:|-----------:|
+| **IADD3** (add) | alu | 79 | 2.46 | **22.3** |
+| IMAD (mul+add, 32-bit) | alu | 64 | 2.00 | 18.2 |
+| IMAD.WIDE (u32×u32→u64) | alu | 64 | 2.00 | 18.2 |
+| IMUL | alu | 64 | 2.00 | 18.1 |
+| XOR / LOP3 | alu | 64 | 2.00 | 18.1 |
+| SHF.L (shift) | alu | 64 | 2.00 | 18.1 |
+| PRMT (byte permute) | alu | 64 | 2.00 | 18.1 |
+| **POPC** (popcount) | alu | **16** | **0.50** | **4.5** (4× slower) |
+| FFMA (FP32 comparison) | fma H+L | 108 | 3.36 | 30.6 (scalar; 72.3 at SOL) |
+
+**Scalar INT peak = ~18 TOPS chip** for most ops (pipe_alu limit ≈ 2 warp-inst/cy/SM). **IADD is marginally faster (2.46)** because it may partially issue on the heavy/lite FP pipes for the simplest case.
+
+**POPC is 4× slower** than other ALU ops — runs at 0.5 warp-inst/cy/SM. It's a specialized instruction with its own pipe lane. Same for other "complex" bit ops historically (brev, flo, etc. — see earlier audit).
+
+**INT vs FP ratio**: INT throughput is about **60 %** of peak scalar FFMA (18 TOPS vs 30 TOPS in this test). At true SOL (using packed FFMA2/ncu-verified), FP is 72 TFLOPS and int is still 18 TIOPS — so **int is 4× slower than FP at SOL** on B300 scalar compute. Interesting arch choice — int ALU is the bottleneck for most non-FP workloads.
+
+**Practical**:
+- For histogram/indexing-heavy kernels, expect INT to cap throughput.
+- Prefer IADD3 over IMAD when the multiply isn't needed (2.5× vs 2 warp-inst/cy).
+- Avoid POPC in inner loops unless unavoidable.
+- INT tensor cores (tcgen05.mma.kind::i8) would normally hit 3.96 PTOPS on Hopper, but **NOT supported on B300 / sm_103a** (confirmed earlier; only FP8 supported on Blackwell inference chips).
+
+
+# Texture fetch path (still present, ~6 % slower than ld.global)
+
+Texture object + `tex1Dfetch<float4>` streaming 256 MB working set, 296 × 512 threads:
+
+| Variant | SASS | BW (GB/s) | vs plain |
+|---------|------|----------:|---------:|
+| plain `ld.global` | LDG.E.128 | 4 150 | 1.00× |
+| `__ldg` (read-only cache) | LDG.E.128.CONSTANT | 4 165 | 1.00× |
+| `tex1Dfetch<float4>` | **TLD.LZ** | 3 917 | 0.94× (−6 %) |
+
+Texture path still exists and works on B300 but is **marginally slower** for 1D linear fetches. No advantage for streaming.
+
+**Texture is useful on B300 only when**:
+- You need hardware filtering (linear interpolation)
+- You need normalized coordinates / border-mode wrapping
+- Spatial 2D / 3D locality that the texture cache's hash was designed for
+
+For "read-only streaming": use `__ldg` (same throughput as plain, signals read-only hint to the compiler, emits `LDG.E.128.CONSTANT` which can short-circuit coherence probes).
+
+
+# Constant memory — broadcast vs per-lane vs chained
+
+Single warp, 1000 iters:
+
+| Pattern | cy/iter | per-load cost |
+|---------|---------|---------------|
+| Loop overhead only | 23 | — (baseline) |
+| 1 broadcast (all 32 lanes read c[0x3][0]) | 23 | ~0 (free) |
+| 1 per-lane (lane `tid` reads c[0x3][tid·4]) | 26 | ~3 cy |
+| 1 per-lane (stride 128, spread across cachelines) | 33 | ~10 cy |
+| 8-chain ILP broadcasts (8 insts/iter, uniform) | 28 | ~0.6 cy/load |
+| 32-chain ILP broadcasts | 76 | ~1.7 cy/load |
+| 8-deep dependent chain (`c[c[c[...]]]`) | 342 | **42 cy latency / load** |
+
+**Findings:**
+1. **Broadcast is 0 cycles amortized** with ILP — the SM has a broadcast slot for uniform cmem reads.
+2. **Per-lane cmem is only ~3× slower than broadcast** for adjacent offsets (within same cacheline). Not 32× serial as one might assume.
+3. **Stride-128 per-lane** (32 × 128 B = 4 KB range) costs 10 cy/load, still reasonable.
+4. **Chained-cmem load-to-use latency = 42 cy** (1 warp, cmem stays hot).
+
+**Practical**: treat uniform c[] reads as basically free. Don't worry about bank-conflict optimization for cmem — the cost is low even in the worst case.
+
+
+# ld.global load-variant + L1-eviction hint comparison
+
+296 CTAs × 512 threads × 1000 iters, sweeping the working set. Timed ms per pass (full cudaEvent):
+
+| Variant           | 1 MB (L1 hit) | 32 MB (L2 hit) | 128 MB (L2 cap) | 1 GB (DRAM) |
+|-------------------|--------------:|---------------:|----------------:|------------:|
+| default `ld.global`     | **0.098** | **0.196** | 0.452 | 0.477 |
+| `ld.global.ca`          | 0.098 | 0.196 | 0.453 | 0.475 |
+| `ld.global.cg`          | **0.195** (2.0×) | 0.196 | 0.451 | 0.476 |
+| `ld.global.nc`          | 0.099 | 0.196 | 0.451 | 0.476 |
+| `ld.global.L1::evict_first`  | 0.100 | **0.282** (1.44×) | 0.451 | 0.476 |
+| `ld.global.L1::evict_normal` | 0.099 | 0.196 | 0.450 | 0.475 |
+| `ld.global.L1::evict_last`   | 0.097 | 0.196 | 0.453 | 0.475 |
+| `ld.global.L1::no_allocate`  | **0.196** (2.0×) | **0.282** (1.44×) | 0.451 | 0.476 |
+
+**Findings:**
+
+1. **Default = `.ca` = `.nc` = `evict_normal` = `evict_last`** — all identical at every WS. No actual benefit from the "hint to keep" eviction policy (`evict_last`) vs default, at least for this streaming sweep.
+
+2. **`.cg` and `.L1::no_allocate` bypass L1** → 2× slower when WS fits in L1 (1 MB). These are only useful if you genuinely don't want L1 pollution.
+
+3. **`evict_first` and `no_allocate` hurt L2-hit workloads** (32 MB WS): +44% slower. By forcing early eviction, re-reads miss L1 and bounce to L2 repeatedly.
+
+4. **At WS ≥ L2 (128 MB+)**: all variants equivalent. DRAM latency dominates; L1/L2 cache hints don't matter.
+
+5. **`.nc` (non-coherent / read-only / texture-like)** on B300 has NO measurable throughput advantage over default. Legacy from Maxwell/Pascal where non-coherent loads could use a separate cache; no longer differentiated on Blackwell.
+
+**Practical**:
+- Just use default `ld.global` for 99% of cases.
+- Use `.cg` when you explicitly want to avoid L1 pollution (e.g., one-shot streaming of model weights during GEMM prologue).
+- `evict_first` is only useful for *confirmed* one-shot reads. Otherwise it slows 32-MB-ish patterns.
+- Texture cache (`.nc`) is a no-op on B300 — don't bother.
+
+
 # L2 replacement policy — LRU-like (NOT random)
 
 B300 L2 = 126.5 MB (cudaDeviceProp.l2CacheSize = 132 644 864 B).
