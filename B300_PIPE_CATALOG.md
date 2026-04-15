@@ -4830,3 +4830,20 @@ Mixed-precision design: integer-to-float conversions in FP32 hot paths are cheap
 - = **240 GB/s/SM** local smem read BW
 
 Matches the ~36 TB/s chip smem read peak noted earlier in catalog. B300 smem delivers 128 B/clk/SM at base clock (1920 MHz).
+
+### bar.sync 0, N (subset-barrier) cost
+
+Varying N (total threads participating):
+
+| N | cy/iter |
+|---:|---:|
+| 32   | 24 |
+| 64   | 26 |
+| 128  | 30 |
+| 256  | 38 |
+| 512  | 54 |
+| 1024 | 86 |
+
+Approximately `cy ≈ 22 + N × 0.06` — each extra warp adds ~2 cy. Use subset barriers (`bar.sync 0, N`) when only part of the block needs to sync — cheaper than full `__syncthreads` at BS=1024.
+
+bar.sync IDs: 0-15 usable per CTA. Can coordinate independent subsets (e.g. warp-group producer/consumer patterns using separate bar IDs).
