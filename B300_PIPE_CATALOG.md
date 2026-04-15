@@ -3288,6 +3288,18 @@ Throughput per warp: 32 threads do 32 atoms in parallel but each serialized chai
 
 Local atomic contention gets a 2.4× throughput boost from cache-line merging at L2. Remote contention only gets +25% — the NVLink-bound throughput is the ceiling. Peak cross-GPU atomic rate is ~2.3-2.9 Gops/s (≈ 300-370 MB/s effective payload). Linear scaling in SM count up to 148 with no saturation → throughput limit is at the remote L2's atomic unit or NVLink request rate, not per-link BW.
 
+**LOCAL atomic BW (for reference, NOT limited by 900 GB/s NVLink — stays on-chip):**
+
+| pattern | rate | CL-traffic BW |
+|---|---:|---:|
+| ATOMG serial chain, 1 SM | 76 Matom/s | 10 GB/s |
+| ATOMG serial chain, 32 SMs | 1,432 Matom/s | 183 GB/s |
+| ATOMG serial chain, 148 SMs | 5,857 Matom/s | **750 GB/s** |
+| REDG fire-and-forget, 148 SMs × 1024 threads | 22,400 Matom/s | **2,867 GB/s** |
+| Contended to 1 CL (bulk test) | 13,934 Matom/s | 1,780 GB/s |
+
+Local atomics can saturate the on-chip L2 atomic path well above NVLink's 900 GB/s because they don't traverse NVLink at all. The bottleneck is L2 atomic unit capacity (~3 TB/s fire-and-forget saturation).
+
 **Atomic vs write/read BW context (all cross-GPU, % of 900 GB/s NVLink5 peak):**
 
 | operation | effective BW | % peak |
