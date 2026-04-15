@@ -7240,6 +7240,67 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# Green contexts — in-process SM partitioning (CUDA 12.4+)
+
+B300 supports green contexts (`cuGreenCtxCreate`) — partition the 148 SMs across multiple streams **within the same process**, distinct from MIG (process-level partitioning).
+
+```
+Device SM resource: 148 SMs total
+Split into 2 groups (minCount=16 each): 16, 16 SMs
+Split into subset of 64 + remaining 84: 64 + 84 SMs ✓
+Green context creation with 64-SM subset: SUCCESS
+```
+
+**API workflow**:
+1. `cuDeviceGetDevResource` — get total SM resource.
+2. `cuDevSmResourceSplitByCount` — split into chunks.
+3. `cuDevResourceGenerateDesc` — build descriptor.
+4. `cuGreenCtxCreate(&ctx, desc, dev, CU_GREEN_CTX_DEFAULT_STREAM)` — create the partitioned context.
+5. `cuGreenCtxStreamCreate` to get a stream that runs only on that subset.
+
+**Use cases:**
+- Multi-tenant serving inside one process (e.g., one model per 74 SMs, two models concurrent).
+- Isolating high-priority / low-priority workloads without full-chip interference.
+- Finer-grained than MIG (which requires a root-privileged reconfigure); green contexts are a runtime-only split.
+
+Unlike MIG, green contexts **share memory and caches** — they just partition compute.
+
+
+# cuStreamWriteValue32 / cuStreamWaitValue32 (driver API, driver-side stream memops)
+
+Runtime API `cudaStreamWriteValue32` was **removed in CUDA 12+**. Use the driver API variants:
+
+| Call | µs/call |
+|------|--------:|
+| `cuStreamWriteValue32` | 2.47 |
+| `cuStreamWaitValue32` (value already met) | 1.65 |
+
+These operate entirely on the stream (no kernel launch), useful for sync flags and ordering between streams.
+
+**Compare** to kernel-based alternatives:
+- Empty kernel launch: 1.95 µs
+- cudaEventRecord: 0.97 µs
+- cudaStreamWaitEvent: 0.13 µs (just queues dependency)
+
+`cuStreamWriteValue32` writes a 32-bit value to memory **on the GPU as part of the stream's command queue** — it happens at stream-execution time, not host call time. Useful for producer-consumer:
+```
+cuStreamWriteValue32(producer_stream, flag_ptr, 1, 0);  // producer writes 1
+cuStreamWaitValue32(consumer_stream, flag_ptr, 1, CU_STREAM_WAIT_VALUE_EQ);
+```
+
+
+# %pm0..%pm7 performance monitor registers — NOT accessible from user code
+
+B300 ignores `%pm0` through `%pm7` in user code — they always read 0. These counters are enabled only when the profiler (ncu / Nsight) attaches and programs them via a privileged interface.
+
+```
+Performance monitors (%pm0..7): 0 0 0 0 0 0 0 0
+After 10K IMADs: pm0: 0 -> 0 (delta 0), ...
+```
+
+For kernel-internal profiling, use `%clock64` (SM cycles) and `%globaltimer` (ns). For HW-counter readings (issue rates, cache hits, etc.) you must use ncu / nsight-compute which programs the PMs externally.
+
+
 # Warp scheduling order on SM — HIGH warpid starts first
 
 32-warp CTA, each warp records its clock64 at launch. Sorted by arrival time:
