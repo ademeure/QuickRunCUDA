@@ -4356,3 +4356,20 @@ After subtracting ~30 cy loop + clock-read overhead, primitive costs are:
 - shfl: ~10 cy
 - ballot/any/all: ~3-7 cy (near free)
 - match_any: ~350 cy (avoid in hot paths; use atomic+merge instead if possible)
+
+### Integer compute pipe utilization (148 × 256 threads, 8-chain unroll)
+
+via ncu pipe_fma/pipe_alu metrics:
+
+| op | pipe | pipe util % | inst/ns |
+|---|---|---:|---:|
+| IMAD (multiply-add)  | pipe_fma | 49.9% | 565 |
+| IMUL (multiply)      | pipe_fma | 49.95% | 565 |
+| IADD (add)           | pipe_alu | **96.67%** | 521 |
+| ISHF / SHL (shift)   | pipe_alu | 1.8% | 1.15 (compiler likely DCE'd) |
+
+**Key insight**: IADD runs at near-peak 97% on the ALU pipe — *independent* of pipe_fma. This means **IADD + FFMA can issue in parallel** on their separate pipes, so integer index math is ~free when mixed with FP compute.
+
+IMAD/IMUL share pipe_fma with FFMA — each IMAD takes roughly **6-8 cycles** vs FFMA's 1-cycle throughput. Avoid IMAD in hot paths (use IADD + shift or similar where possible). When an IMAD is emitted, it blocks subsequent FFMAs on the same pipe for several cycles.
+
+Compiler often replaces simple `i * k + c` with IADD+LOP3 when it can — check SASS to confirm IMAD vs IADD.
