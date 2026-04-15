@@ -4094,3 +4094,35 @@ Each thread hits its own `sizeof(T)` slot at consecutive addresses → warp writ
 | atomicCAS  | 362,565 | 1.45 | **267,760** | **2.14** (-26%) |
 
 **Peak LOCAL atomic payload BW**: **u32: 1.5 TB/s**, **u64: 2.9 TB/s**. All atomic ops (add/min/max/xor/or/and/exch) coalesce uniformly when threads hit consecutive addresses in same warp. Only **atomicCAS u64 is slower** — CAS requires per-thread old-value comparison before swap, limiting the coalesce factor. u32 CAS still matches others (~1.45 TB/s).
+
+### ncu validation of atomic BW (clean consecutive addresses, full chip)
+
+Profiled with Nsight Compute 2026.1.1 (`ncu --metrics l1tex__t_bytes_pipe_lsu_mem_global_op_atom, lts__t_bytes, nvltx__bytes, nvlrx__bytes`):
+
+**LOCAL atomicAdd** (confirms my wall-clock measurement):
+| | u32 | u64 |
+|---|---:|---:|
+| my wall-clock measurement | 1.50 TB/s | 2.91 TB/s |
+| **ncu L1 atomic BW** | **1.56 TB/s** | **2.98 TB/s** |
+| ncu L2 BW (R+W) | 2.34 TB/s | 4.47 TB/s |
+| DRAM read BW | 1.56 GB/s | 2.99 GB/s (essentially zero — L2-resident) |
+
+Tool-measured matches my rate within 4%. Atomics stay in L2 cache (DRAM BW is ~0), so the bottleneck is L2 atomic unit rate — not memory bandwidth.
+
+**REMOTE atomicAdd** (NVLink traffic via ncu):
+| | u32 | u64 |
+|---|---:|---:|
+| my wall-clock measurement | 279 GB/s | 539 GB/s |
+| ncu L1 atomic BW | 283 GB/s | 543 GB/s |
+| NVLink TX (outgoing requests) | 388 GB/s | 749 GB/s |
+| NVLink RX (incoming responses) | 350 GB/s | 674 GB/s |
+| Total NVLink (bidirectional) | 738 GB/s | **1,423 GB/s** (79% of 1,800 GB/s aggregate) |
+
+REMOTE atomic uses ~2× link BW (request + response = full-duplex). u64 approaches the 1,800 GB/s bidirectional ceiling. u32 has room to grow — L2 atomic unit rate at peer is the limiter there.
+
+**Final clean coalesced peaks (148×1024 threads, consecutive addresses, warp = 128B u32 or 256B u64 contig):**
+
+| op | u32 LOCAL | u32 REMOTE | u64 LOCAL | u64 REMOTE |
+|---|---:|---:|---:|---:|
+| atomicAdd | **1.51 TB/s** | 279 GB/s | **2.94 TB/s** | 539 GB/s |
+| atomicCAS | 1.46 TB/s | 259 GB/s | 2.21 TB/s | 283 GB/s (u64 CAS slower both sides) |
