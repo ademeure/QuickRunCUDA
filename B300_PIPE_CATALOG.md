@@ -5220,3 +5220,16 @@ This contradicts the earlier "MUFU on pipe_alu" simplification. Under real FFMA2
 **Design rule**: Do not insert MUFU ops (rsqrt, exp, sin, cos, log) into FFMA2-bound hot loops. They cost ~5-10× a single FFMA2 slot.
 
 For mixed MUFU+FMA workloads (e.g., softmax normalization), place MUFU in a separate phase of the computation rather than interleaved with the GEMM inner loop.
+
+### Warp scheduler stall reasons (ncu) for FFMA2 2:1 IADD
+
+| stall reason | warps/issue |
+|---|---:|
+| math_pipe_throttle | **3.92** (primary bottleneck) |
+| wait (dependency) | 0.99 |
+| long scoreboard (L1/L2 latency) | 0 |
+| short scoreboard (smem) | 0 |
+| membar | 0 |
+| warps_active | 31.20% of peak |
+
+In compute-bound kernels, `math_pipe_throttle` dominates. For memory-bound kernels, expect `long_scoreboard` to dominate instead. The `smsp__average_warps_issue_stalled_*` family of metrics is the best way to diagnose what's slowing a kernel.
