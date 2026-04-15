@@ -7218,3 +7218,28 @@ This is significantly better than `ld.global` cold reads (5.16 TB/s = 64%). TMA'
 - For repeated access (attention KV cache reload): warm L2 then enjoy 17 TB/s
 - For random scatter-gather: ld.global, expect ~5 TB/s
 
+
+## Single-Warp In-Flight Memory Loads (Latency Hiding Capacity)
+
+Issue N independent loads, then sync/use all (typical pipelined load pattern):
+
+| CHAINS in flight | cy/load | × vs serial |
+|------------------|---------|-------------|
+| 1 | 831 | 1× |
+| 2 | 466 | 1.78× |
+| 4 | 242 | 3.43× |
+| 8 | 123 | 6.76× |
+| 16 | 64 | 13× |
+| 32 | 36 | 23× |
+| **64** | **25** | **33×** |
+
+**A single warp can sustain 30+ in-flight memory loads** without proportional cycle cost. The cycle counter only grows from 831 (1 chain) to 1631 (64 chains) — less than 2× more cycles for 64× more loads.
+
+**Per-warp peak BW with deep ILP**: 64 chains × 4 B / 25 cy = 10.24 B/cy = 19.7 GB/s
+**Per-SM with 64 warps**: 19.7 × 64 = 1.26 TB/s (assumes all warps at max ILP)
+**Chip-wide if achievable**: 1.26 × 148 = 187 TB/s — but in practice limited by HBM BW (8 TB/s)
+
+This means: ONE warp doing pipelined loads is enough to hit ~20 GB/s. To hit HBM peak (8 TB/s), need 400+ warps active doing deep-ILP loads.
+
+**Practical takeaway**: For memory-bound kernels, depth (ILP per warp) matters more than width (warp count) up to ~16 chains. Beyond that, both help.
+
