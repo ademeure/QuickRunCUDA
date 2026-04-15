@@ -5348,3 +5348,53 @@ Format enum reference (CUTLASS, `cute/arch/mma_sm100_desc.hpp`):
 - **MXF8F6F4Format**: E4M3=0, E5M2=1, E2M3=3, E3M2=4, E2M1=5
 - **CFormat**: F16=0, F32=1, S32=2
 
+
+## Multi-SM scaling (kind::f8f6f4, M=128, N=256, ITERS=1000)
+
+| SMs | cy/iter | TFLOPS |
+|-----|---------|--------|
+| 1   | 128.12  | 31.4   |
+| 2   | 128.13  | 62.8   |
+| 4   | 128.12  | 125.7  |
+| 8   | 128.25  | 251.1  |
+| 16  | 128.26  | 502.2  |
+| 32  | 128.15  | 1,005  |
+| 64  | 128.15  | 2,011  |
+| 128 | 128.21  | 4,020  |
+| 148 | 128.20  | 4,648  |
+
+**Perfect linear scaling** — each SM's tensor pipe is independent. 4.65 PFLOPS = 93.1% of NVIDIA's published 5 PFLOPS dense FP8.
+
+## Multi-warp per SM is fully serialized (one tensor pipe per SM)
+
+| Warps | cy/MMA | TFLOPS_per_SM |
+|-------|--------|---------------|
+| 1     | 128.21 | 31.41         |
+| 2     | 128.18 | 31.41         |
+| 4     | 128.08 | 31.44         |
+
+Adding more warps does NOT increase per-SM throughput — each MMA still takes 128 cy. **There is exactly 1 tensor pipe per SM.** All 4 SMSPs share it. Multi-warp issuance just round-robins across warps on the same pipe.
+
+## Iteration count effects
+
+| ITERS | cy/iter | TFLOPS |
+|-------|---------|--------|
+| 100    | 130.26 | 4,575 (98%) |
+| 1000   | 128.13 | 4,651 (100%) |
+| 10000  | 128.02 | 4,655 (steady) |
+| 100000 | 394.10 | **1,512 (33% — degraded)** |
+
+Beyond ~10K MMAs in a single warp loop, performance drops 3× — likely due to instruction-cache pressure or scheduling artifacts. Sweet spot is ~10K MMAs per kernel launch.
+
+## kind::i8 (INT8 IMMA) — NOT SUPPORTED on B300/sm_103a
+
+```
+ptxas: Feature '.kind::i8' not supported on .target 'sm_103a'
+```
+
+Per cccl headers, `kind::i8` is gated on `SM_100a, SM_100f, SM_110a, SM_110f` — note B100/B200 (sm_100a) and B400(?) (sm_110a) have it, but **B300 (sm_103a) does not**. This is a deliberate spec difference for the GB300 SKU. INT8 inference workloads must use FP8 instead.
+
+## kind::f8f6f4 with E2M3 (FP6), E2M1 (FP4)
+
+Same TFLOPS as FP8 (4.65 PFLOPS) — they all share the K=32 path under `kind::f8f6f4`. The narrow formats are only "sub-byte" in storage; per-MMA throughput is identical. Real FP4/FP6 acceleration needs `kind::mxf4` or `kind::mxf4nvf4` with block scaling (scale_vec::2X).
+
