@@ -5653,3 +5653,12 @@ ptxas: Instruction 'wgmma.wait_group' cannot be compiled for architecture 'sm_10
 
 **Design guidance**: Port any Hopper code to tcgen05.mma before running on B300. mma.sync still works but leaves 97% of FP8 throughput on the floor.
 
+
+## tcgen05.mma single-MMA latency (issue + commit + wait)
+
+- Single MMA (M=128, N=128, FP8) with `commit.mbarrier::arrive::one` and `mbarrier.try_wait`: **227 cy** total
+- Streaming throughput (same shape): **67 cy/MMA**
+- ⇒ ~3.4 MMAs need to be in flight to hide latency
+
+This is the back-to-back overhead — issue 1 MMA, fully sync, repeat. In practice you should NEVER do this; pipeline 4+ MMAs and only sync at boundaries.
+
