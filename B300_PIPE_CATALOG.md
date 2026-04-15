@@ -3297,7 +3297,11 @@ Local atomic contention gets a 2.4× throughput boost from cache-line merging at
 | atomic unique (CL-traffic) | 292 GB/s | 32% |
 | atomic contended (CL-traffic) | 365 GB/s | 41% |
 
-Atomics are fundamentally half-duplex (request + ACK round trip per op) so they reach at most ~45% of one-direction BW. Reads and writes can pipeline, so they approach the link cap.
+Atomics are bounded by the **peer L2's atomic unit throughput**, not NVLink BW. Each atomic uses BOTH NVLink directions (request one way, response the other), so 32% × 2 directions = 64% of *aggregate* full-duplex, still well below cap. The real bottleneck is processing rate at the remote L2: 2.85 Gatom/s × 4,736 in-flight threads = ~1.66 µs queue time = 3,200 cy matched round-trip latency ✓. 
+
+If we ran atomics AND writes concurrently, the writes would use outgoing NVLink and atomics would use mostly the return side (for responses) — total link utilization could exceed 80%, but pure atomic throughput saturates at the peer-L2 atomic unit's 2.85 Gop/s limit regardless of how much link BW is left.
+
+Reads/writes are one-directional (data flows predominantly outbound for writes, inbound for reads), so they can approach the full 900 GB/s link cap on that direction.
 
 ### Multi-GPU fence.sys cost — cross-GPU writes pay ~18K cy NVLink drain
 
