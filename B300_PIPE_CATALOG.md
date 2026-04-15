@@ -4145,3 +4145,26 @@ REMOTE atomic uses ~2× link BW (request + response = full-duplex). u64 approach
 **Cross-GPU read steady-state** (READ W=128 cache-defeat): 600 GB/s NVLink RX = **67% of peak**. Each read needs a small request packet going out, so the efficiency is lower than writes.
 
 Above measurements via `ncu --metrics` on 148 × aw=32 × W=128 coalesced kernels.
+
+### LOCAL memory hierarchy BW (ncu-measured, 148 × aw=32 coalesced)
+
+| config | L1 BW | L2 BW | DRAM/HBM BW |
+|---|---:|---:|---:|
+| WRITE W=32 | 5.54 TB/s | 8.37 TB/s | 0.009 TB/s (L2-absorbed) |
+| WRITE W=128 | 6.96 TB/s | **10.47 TB/s** (L2 peak) | 3.97 TB/s |
+| WRITE W=1024 | 6.24 TB/s | 9.41 TB/s | **6.12 TB/s** |
+| READ W=32 | 5.02 TB/s | 7.63 TB/s | 5.01 TB/s |
+| READ W=128 | 6.09 TB/s | 9.20 TB/s | **6.09 TB/s** |
+| READ W=1024 | 5.70 TB/s | 8.59 TB/s | 5.70 TB/s |
+
+**HBM3e theoretical peak**: 3996 MHz × 2 (DDR) × 8192-bit bus / 8 = **8.17 TB/s**.
+
+Measured sustained HBM3e on B300 at full chip:
+- **Write peak: 6.12 TB/s = 75% of theoretical**
+- **Read peak: 6.09 TB/s = 75% of theoretical**
+- **L2 peak: 10.47 TB/s** (traffic that stays L2-resident)
+- **L1 peak: ~7 TB/s** (L1 write pipe throughput)
+
+At low W (< 64), writes stay in L2 cache (L2 absorbs → DRAM BW near zero). Above W ~ 64 the data exceeds L2 and spills to DRAM. Reads always hit DRAM since addresses are unique per iter in the cache-defeat kernel.
+
+The 75% HBM efficiency gap may be due to row-buffer conflicts / access pattern suboptimality. Writes are STG.E.STRONG.SYS which forces chip-coherent semantics — possibly less optimal than non-STRONG stores.
