@@ -7345,6 +7345,24 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# CUDA graph launch amortization (per-op cost vs graph size)
+
+Graph of N identical empty kernels, measured us/graph-launch:
+
+| N nodes | µs/graph | µs/op (amortized) | vs direct (2.05 µs) |
+|--------:|---------:|------------------:|--------------------:|
+| 1 | 2.15 | 2.15 | 1.0× (no benefit at N=1) |
+| 10 | 8.23 | 0.82 | 2.5× faster/op |
+| 100 | 59.4 | 0.59 | 3.5× faster/op |
+| **1000** | **562** | **0.56** | **3.7× faster/op** |
+
+**Graphs amortize per-op launch cost**: below ~5 ops, no benefit vs direct `<<<>>>`. At ≥ 100 ops the per-op cost drops to ~0.56 µs (3.7× better than direct).
+
+**Design rule**: if you launch ≥ 10 kernels in tight sequence with the same structure, bundle into a graph. For fewer ops, use PSS (1.47 µs) or direct launch (2.05 µs).
+
+**Mixed-node graphs** (kernel + memset + memcpy): the graph does NOT save time for non-kernel nodes — memset goes through copy engines which don't batch like kernel launches. A 10-node mixed graph (5 noops + 5 memsets) = 20.48 µs/launch ≈ 2 µs/op — same as direct.
+
+
 # cudaStreamQuery + cudaEventQuery polling cost
 
 | Call | µs/call |
