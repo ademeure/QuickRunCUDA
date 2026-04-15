@@ -4265,3 +4265,23 @@ Both lanes see IDENTICAL 19K cy/atom — 9× slower than pure local. Causes:
 | Thread-mix (within warp) | 18,755 | **18,755** (9× slower local) |
 
 **Dedicate at CTA granularity** to keep local atomics fast. Warp-level mixing shares SM resources (L1 atomic queue, LSU), so local warps wait for remote warps on same SM. Thread-level mixing causes warp divergence → full 9× penalty.
+
+### Fundamentals: clock64 / globaltimer / __nanosleep overhead (B300, 1920 MHz)
+
+**Timer read overhead** (back-to-back reads, same warp):
+- `mov.u64 %0, %%clock64`: **36 cy** between consecutive reads
+- `mov.u64 %0, %%globaltimer`: **32 cy** between consecutive reads (slightly cheaper)
+
+So any per-op latency smaller than ~36 cy can't be meaningfully measured via clock64.
+
+**__nanosleep quantization** (steps at ~64 ns):
+| requested ns | actual ns | quantum tier |
+|---:|---:|---|
+| 0-50 | 30-60 | floor (undershoots requested) |
+| 51-63 | ~60 | tier 1 |
+| 64-128 | ~121 | tier 2 |
+| 129+ | ~250 | tier 3 |
+
+Step size ~64 ns — likely a HW clock quantum. Boundaries at 64 and 128 suggest quantization at 2⁶ × 1 ns or similar.
+
+Minimum observable overhead for `__nanosleep(0)`: ~40 ns (77 cy — the instruction itself takes time even with zero argument). Useful as a "smallest pause" for pacing loops.
