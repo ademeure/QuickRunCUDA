@@ -6343,3 +6343,27 @@ Since `tcgen05.mma kind::i8` is **not supported on sm_103a** (verified earlier),
 
 **FP8/INT8 equivalence trick**: Map your INT8 weights/activations into E4M3 or E5M2 FP8 format with a global scaling factor. The accuracy is similar for inference, but throughput is **85× higher** via tensor cores.
 
+
+---
+
+# FMIN Penalty Investigation (task #84)
+
+The "FMIN 20% penalty" suspected earlier was real. Direct A/B test of FFMA2 with various interleaved instructions:
+
+| Pattern (per inner-loop iteration) | cy/iter | Overhead |
+|-----------------------------------|---------|----------|
+| Pure FFMA2 (= 2 scalar FFMA / 1 inst) | 5.57 | baseline |
+| FFMA2 + 1 IADD | 6.76 | **+21%** |
+| FFMA2 + 1 scalar FFMA | 7.57 | +36% |
+| FFMA2 + 2 FMIN | 9.45 | +70% (= +35% per FMIN) |
+
+## Why FMIN ISN'T free under FFMA2 pressure
+
+In our earlier "free IADD3 with FFMA2" finding, the ratio was 2:1 FFMA2:IADD with deeper overlap. At 1:1 ratio, even cheap pipe_alu ops (IADD, FMIN) cost extra cycles on top of FFMA2.
+
+**Mechanism**: FFMA2 takes ~5 cy per inst (low-rate dispatch but high-throughput pipe_fma). Adding ANY inst on pipe_alu costs ~1-2 cy of effective latency since the dispatch is already near-saturated.
+
+**Pure FMIN throughput on pipe_alu**: 3.1 cy/op when standalone (8 chains).
+
+**Design rule**: For peak FFMA2 throughput, minimize pipe_alu instructions in the inner loop. If you need FMIN/FMAX clamping, batch it OUTSIDE the FFMA2-heavy region or use a 2:1+ FFMA2:FMIN ratio.
+
