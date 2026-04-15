@@ -4551,3 +4551,22 @@ Compiler already does register-bank-aware allocation in most cases — this 35% 
 **L1 hit ~52 cy, L2 hit ~295 cy** (5.7× slower). The L1 *eviction hints* (`::evict_*`) don't change HIT latency — they modify cache-line placement for future references when L1 is under pressure. Useful for streaming patterns where you can hint the compiler which lines you'll reuse.
 
 For single-thread pointer chase with small hot working set, `.ca` (L1-cached) is optimal. For streaming reads where lines won't be reused, use `.cg` or `L1::no_allocate` to avoid L1 pollution.
+
+### Special register read costs (1 warp × 1000 XOR-chained reads)
+
+Loop overhead ~22 cy, so subtract that for raw per-SR cost:
+
+| register | cy/read | raw (subtract 22) |
+|---|---:|---:|
+| `%tid.x` | 23 | ~1 (free) |
+| `%ctaid.x` | 23 | ~1 |
+| `%lanemask_eq` | 23 | ~1 |
+| `%clock` (32b) | 24 | ~2 |
+| `%clock64` (64b) | 24 | ~2 |
+| `%globaltimer` | 24 | ~2 |
+| `%nsmid` | 24 | ~2 |
+| `%gridid` | 24 | ~2 |
+| `%smid` | 43 | **~21** (warm-path SR) |
+| `%warpid` | 51 | **~29** (warp-resident, multi-cycle SR) |
+
+Most special registers are 1-2 cy ("free") because they're warp-cached. `%smid` and `%warpid` are multi-cycle reads (20-30 cy) — probably not cached, or require handshake with SM state. Avoid reading these in tight loops; read once and reuse.
