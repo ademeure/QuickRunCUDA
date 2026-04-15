@@ -6879,3 +6879,29 @@ Back-to-back `mov.u64 %0, %%globaltimer` reads:
 
 **All catalog measurements are at 1920 MHz, the true sustained max.** Multiply our cycle-rates by 1.92 GHz for actual throughput.
 
+
+---
+
+# Compute-Memory Overlap (Latency Hiding)
+
+Critical for kernel design — can compute overlap with memory loads?
+
+| Pattern | cy/iter |
+|---------|---------|
+| Pure 8 FFMA chain | 39 |
+| Pure memory load (cold cache) | 522 |
+| **Memory + 8 FFMA (independent)** | **518 (+0%)** ← FFMA fully hidden! |
+| Memory + 8 FFMA (depends on load result) | 548 (+5%) |
+
+**Compute is FREE during memory load latency** when independent. The 8 FFMAs (39 cy worth) completely overlap with the 522 cy load latency.
+
+**Capacity**: A single warp can issue **~520 cy worth of independent compute** during one DRAM access = roughly 130 FFMAs or 50 ldmatrix+FFMA combos.
+
+**Practical design rule**:
+- Order loads as early as possible
+- Fill the 100-500 cy load latency window with FFMA, ALU ops, or even MUFU
+- Use multiple chains (8+ live registers) so the dependency on the load result doesn't stall the chain
+- Compiler does this automatically when it can; explicit `__pipeline` patterns help
+
+When the compute DEPENDS on the load (worst case), only 30 cy of penalty (5%) — the warp scheduler handles single-warp dep chains efficiently.
+
