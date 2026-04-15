@@ -4945,3 +4945,18 @@ For tuning tools like QuickRunCUDA doing `-T N` event-timed iterations, the meas
 **bar.arrive is 24% cheaper than bar.sync**. Useful for producer-consumer patterns where producers only need to signal ("I'm done") and a later consumer does the wait via `bar.sync` paired with matching participant count.
 
 Full `bar.arrive + bar.sync` pair in same thread: illegal instruction (incorrectly structured pair).
+
+### __dp4a / __dp2a (SIMD dot-product-accumulate)
+
+| op | inst/ns | pipe_alu % | pipe_fma % |
+|---|---:|---:|---:|
+| `__dp4a` (int8×4 dot + int32 acc) | 1058 | 94.47% | 48.80% |
+| `__dp2a` (int16×2 dot + int32 acc) | 1058 | 94.47% | 48.80% |
+
+Both run at near-peak ALU while also using half the FMA pipe — ~1,058 warp-inst/ns. Each __dp4a does 4 int8 multiplies + 3 adds + 1 accumulate = 8 int-ops per lane per inst. Chip-wide scalar-path int8 throughput via __dp4a:
+
+**~271 int8 TOPS** (scalar path, 1058 warp-inst × 256 int-ops).
+
+Note: for full-chip int8 peak (~3.96 PTOPS dense on B300), use `tcgen05.mma.kind::i8` (tensor-core path). `__dp4a` is the scalar fallback — ~14× slower than the tensor path but usable when tensor core isn't available.
+
+`vadd4`/`vabsdiff4`/`vmax4` (video SIMD intrinsics): compiler didn't emit on sm_103a — likely mapped to regular ops or not supported at this level. Use `__dp4a`/`__dp2a` or packed-int intrinsics instead.
