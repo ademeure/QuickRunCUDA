@@ -7240,6 +7240,59 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# Minimum empty-kernel launch time
+
+| Configuration | µs (best of 100 trials) |
+|---------------|------------------------:|
+| Empty kernel `<<<1,1>>>` + sync | **6.75** |
+| 1-inst kernel `<<<1,1>>>` + sync | 6.75 |
+| Empty `<<<148, 1024>>>` + sync | 6.75 |
+| 100× empty launches, streamed (no per-launch sync) | **1.95 µs/launch** |
+
+**Findings:**
+
+1. **Minimum launch-to-sync = 6.75 µs** — dominated by `cudaDeviceSynchronize` round-trip.
+2. **1 thread vs 151 K threads**: same 6.75 µs — kernel size doesn't matter when the work is minimal.
+3. **Streamed launches**: 1.95 µs/launch (matches earlier finding).
+
+**Overhead decomposition**:
+- Launch enqueue (host-side): ≈ 1 µs (CUDA API overhead on host).
+- Scheduling / kernel dispatch: ≈ 1 µs (GPU scheduler picks up the launch).
+- Kernel minimum execution: ≈ 1 µs.
+- `cudaDeviceSynchronize` round-trip: ≈ 4 µs.
+
+For **latency-critical workloads** where sync is required (e.g., online serving with small batches), the 6.75 µs floor is the hard limit. Tricks to reduce:
+- Persistent kernels (avoid per-op launch)
+- CUDA Graphs (launches 0.52 µs instead of 1.95 µs)
+- Event-only sync + polling (avoid full cudaDeviceSync)
+
+
+# nanosleep behavior and cap
+
+`nanosleep.u32 N` requested vs actual (measured via globaltimer):
+
+| Requested ns | Actual ns | Actual / Requested |
+|-------------:|----------:|-------------------:|
+| 100 | 96 | 0.96 |
+| 500 | 416 | 0.83 |
+| **1 000** | **384** | **0.38 (capped?)** |
+| 5 000 | 4 704 | 0.94 |
+| 10 000 | 4 768 | 0.48 |
+| 50 000 | 53 504 | 1.07 |
+| **100 000** | **52 544** | **0.53 (HARD CAP)** |
+
+**Findings:**
+
+1. **Per-call nanosleep is capped at ~53 µs** on B300 — requesting 100 µs returns after 53 µs.
+2. For < 50 µs, behavior is mostly as requested (some quantization to ~400 ns / 5 µs snaps).
+3. **SM clock does NOT suspend during nanosleep** — clock64 continues incrementing at 2032 MHz (`clock64 delta / globaltimer delta = 2.032`).
+
+**Practical guidance**:
+- For spin-wait with sleep (e.g., atomic polling), expect ~50 µs max per call. Loop nanosleep if you need longer.
+- Don't use nanosleep as a precise timer — small values (< 1 µs) quantize unpredictably.
+- Use `__nanosleep(x); __nanosleep(x);` in a loop for multi-tens-of-µs spins.
+
+
 # NVML polling costs — most metrics can be polled at kHz
 
 NVML queries from host (1000 samples averaged):
