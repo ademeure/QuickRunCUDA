@@ -4699,3 +4699,19 @@ No performance benefit to manually using `__cvta_*` intrinsics vs just writing `
 At this test config, wider stores give progressively higher BW. WIDTH=8 (STG.E.ENL2.256) reaches 2.2 TB/s DRAM write (below the 6.1 TB/s theoretical HBM peak — more iters / longer kernel would push higher).
 
 **Rule**: use widest vector store your alignment allows. WIDTH=4 (uint4) is nearly universal; WIDTH=8 (256b) is Blackwell-only (sm_100+) and reduces instruction count.
+
+### cp.async (non-bulk) cost vs sync load
+
+1 CTA × 128 threads × 1000 iterations loading 16 B into smem from global:
+
+| pattern | cy/iter |
+|---|---:|
+| `cp.async.ca.shared.global [...], 16;` + commit + wait each iter | 533 |
+| `ld.global.ca` (sync) | 534 |
+| `cp.async.ca` fire-and-forget (single wait at end) | **80.6** (6.6× faster issue) |
+
+**Key finding**: cp.async is NOT faster than sync load when you wait every iter. The benefit is **ability to overlap** issue with other work. Fire-and-forget issue costs 80 cy (vs 534 for wait-each), so cp.async is only worthwhile when you can issue many loads before needing the result.
+
+Typical pattern: issue cp.async for tile N+1 while computing on tile N, then wait for N+1 before using.
+
+For **bulk** TMA (cp.async.bulk), see earlier catalog section — much higher BW but needs mbarrier setup.
