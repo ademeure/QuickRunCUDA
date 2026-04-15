@@ -5043,3 +5043,21 @@ Compare CREDUX `__reduce_add_sync` = **56 cy for full 5-level equivalent** (2.9�
 The `__*_rn` intrinsics skip the Newton-Raphson polish step (accepting ~2-3 ULP error) and run **2.3-2.7× faster** than the precise IEEE versions. For deep-learning / graphics where final-bit accuracy isn't needed, always prefer the fast intrinsics.
 
 `__fdividef(1.0f, x)` and `1.0f/x` produce identical SASS — compiler auto-promotes reciprocal divisions. Still, using `__fdividef` explicit makes intent clear.
+
+### Dual-issue test: FFMA2 + IADD interleaved (SASS-verified, event-timed)
+
+Does mixing FFMA2 (half-rate scalar FMA) with ALU ops let us exceed 128 ops/clk/SM?
+
+| kernel | wall | thread-inst/ns | inst/clk/SM | SASS (inner loop) |
+|---|---:|---:|---:|---|
+| FFMA only (scalar) | 222.8 µs | 34,921 | **122.6** | 512 FFMA |
+| FFMA2 only (packed) | 432.2 µs | 17,953 | 63.2 | 512 FFMA2 |
+| FFMA2 + IADD3 interleaved | 469.8 µs | 33,033 | **116.2** | 512 FFMA2 + 516 IADD3 |
+
+**Findings**:
+1. FFMA2 runs at **half the rate** of scalar FFMA (same FLOPS since 2 FP32 results per inst × 2 FLOPs each). SASS: `FFMA2 R8, R8.F32x2.HI_LO, R0.F32, 0.5` (packed form).
+2. FFMA2 + IADD3 mix: **116 inst/clk/SM** vs 63 for FFMA2 alone. Nearly 2× more total instructions in the same wall time → dual-issue works (ALU fills FMA-pipe idle slots).
+3. Even with dual-issue, total inst/clk/SM stays **below scalar FFMA rate (122)** — total issue throughput is capped near 128 ops/clk/SM chipwide.
+4. Net FP throughput unchanged: FFMA2 still delivers ~72 TFLOPS FP32. IADD is just the "free" companion.
+
+**Methodology correction**: my earlier "IADD free alongside FFMA" claim wasn't wrong in principle, but the test was broken by DCE (IADD chain eliminated). Proper test requires real data dependency through the IADD chain, SASS-verified to contain both op types.
