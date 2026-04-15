@@ -3194,6 +3194,20 @@ Each batch = 8 serial atomic adds (or .cg loads) with true data dependency betwe
 
 Both show strong **bimodal distributions** matching the L2 side-aware finding: ~250 cy for same-L2-side hits, ~600 cy for wrong-L2-side hits. Remarkably, the same ~250 cy L2-side variance survives the cross-GPU traversal — REMOTE .cg loads split cleanly between ~2700 cy and ~2950 cy buckets. The round-trip over NVLink adds roughly +2,400 cy on top of the local-memory baseline, regardless of which side of the remote L2 hits.
 
+**Local atomic latency by address stride** (for baseline L2-side hash visibility):
+
+| stride | min | median | max | L2-side pattern |
+|---|---:|---:|---:|---|
+| 64 B    | 325 | 685 | 778 | 50/50 fast(~325)/slow(~700) |
+| 256 B   | 319 | 692 | 796 | 50/50 |
+| 1 KB    | 319 | 715 | 800 | ~70% slow |
+| 4 KB    | 320 | 719 | 794 | ~70% slow |
+| 16 KB   | 319 | 718 | 780 | slow mode dominates |
+| 64 KB   | 319 | 720 | 778 | slow mode dominates |
+| 1 MB    | 319 | 727 | **1,465** | TLB/page effects appear |
+
+Fast mode ≈ 300-350 cy (same L2 side), slow mode ≈ 700-750 cy (wrong side, ~400 cy penalty). At 1 MB stride TLB misses add another ~700 cy on top.
+
 **Remote atomic latency by address stride** — L2-side bimodality persists across all strides tested (64 B to 1 MB per atomic):
 
 | stride | min | p25 | median | p75-max |
