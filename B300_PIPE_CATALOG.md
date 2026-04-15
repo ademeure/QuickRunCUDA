@@ -4934,3 +4934,14 @@ Design rules:
 - In between: consider CUDA graphs to amortize launch
 
 For tuning tools like QuickRunCUDA doing `-T N` event-timed iterations, the measured time includes N launches, so per-iter cost is inflated by the 2 µs floor for short kernels.
+
+### bar.arrive vs bar.sync (256-thread CTA)
+
+| pattern | cy/iter |
+|---|---:|
+| `bar.sync 0` (arrive + wait) | 38.0 |
+| `bar.arrive 0, 256` (arrive only, no wait) | 29.0 |
+
+**bar.arrive is 24% cheaper than bar.sync**. Useful for producer-consumer patterns where producers only need to signal ("I'm done") and a later consumer does the wait via `bar.sync` paired with matching participant count.
+
+Full `bar.arrive + bar.sync` pair in same thread: illegal instruction (incorrectly structured pair).
