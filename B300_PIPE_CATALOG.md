@@ -7043,3 +7043,29 @@ Comparison:
 
 So **FFMA2 = 1.5× scalar FFMA chip-wide** at peak. Use FFMA2 wherever data is naturally paired (e.g., complex arithmetic, vec2 operations). Combined with the 2:1 FFMA2:IADD3 free-issue rule, FFMA2 + IADD3 mix is the fastest scalar-pipe pattern.
 
+
+## HFMA2 (FP16) Multi-warp Peak
+
+| Warps/CTA | HFMA/cy/SM | Chip TFLOPS |
+|-----------|------------|-------------|
+| 1 | 19.7 | 11.2 |
+| 4 | 78.6 | 44.7 |
+| 8 | 99.7 | 56.7 |
+| 16 | 125.8 | 71.5 |
+| **32** | **125.8** | **71.5** |
+
+**HFMA2 chip-wide peak = 71.5 TFLOPS** — SAME as FFMA2 (71.6 TFLOPS).
+
+Both FFMA2 (FP32×2) and HFMA2 (FP16×2) hit the same dispatch ceiling per SM. The HFMA2 doesn't deliver "2× the FP16 throughput" at chip level — it delivers 2× the data per instruction, but the instruction issue rate is the same.
+
+**Implication**: For scalar FP work on B300:
+- FP32: 71.6 TFLOPS via FFMA2
+- FP16: 71.5 TFLOPS via HFMA2 (same!)
+- BF16 via fma.rn.bf16x2: presumably also ~71 TFLOPS (we'd need to test)
+
+For real AI throughput, you MUST use tensor cores:
+- FP16 via tcgen05.mma: 2,325 TFLOPS (32× HFMA2)
+- FP8 via tcgen05.mma: 4,651 TFLOPS (65× HFMA2)
+
+The HFMA2/FFMA2 path is for "exotic" non-GEMM kernels (FFTs, special functions). For matmul, never use HFMA2.
+
