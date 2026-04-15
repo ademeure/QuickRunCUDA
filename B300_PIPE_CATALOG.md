@@ -7240,6 +7240,88 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# Dynamic parallelism — device-side kernel launch
+
+Launching a child kernel from inside a parent kernel using `<<<>>>` from device code:
+
+| Measurement | µs / child launch |
+|-------------|------------------:|
+| Device-side launch, N=1 (includes first-launch overhead) | 29.31 |
+| Device-side launch, N=10 (amortized) | 9.35 |
+| Device-side launch, N=100 (steady) | **9.36** |
+| Host-side direct launch (for comparison) | **1.87** |
+
+**Device launches are 5× slower than host launches** (9.36 vs 1.87 µs). Dynamic parallelism has real overhead — the enqueue goes through a driver-managed device queue rather than the direct host-driver path.
+
+**CUDA 12+ removed `cudaDeviceSynchronize()` from device code.** Device kernels are fire-and-forget: the parent can only enqueue, not wait. Child completion is visible to the host or to future kernels after the parent grid finishes.
+
+**When dynamic parallelism is useful**:
+- Work-stealing / adaptive tiling where the parent learns runtime values that dictate child shapes.
+- Sparse / irregular workloads (graph traversal) where driver dispatch costs ≫ kernel work.
+- CUDA Graphs replay from device code (some HPC libraries).
+
+Otherwise, **prefer host-side scheduling** with persistent kernels or CUDA Graphs — 5× the throughput.
+
+
+# mbarrier arrive scaling (1 → 1024 arrivers)
+
+Single CTA, `mbarrier.init.shared::cta.b64 [addr], N`, then N threads call `mbarrier.arrive` followed by `mbarrier.try_wait.parity`. 100 init/arrive/wait cycles:
+
+| Arrive count N | cy/iter (full cycle) | cy/arrive |
+|---------------:|---------------------:|----------:|
+| 32   | 318 | 9.93 |
+| 64   | 318 | 4.96 |
+| 128  | 318 | 2.48 |
+| 256  | 314 | 1.23 |
+| 512  | 315 | 0.61 |
+| 1024 | 320 | **0.31** |
+
+**mbarrier completion time ≈ 318 cy regardless of arrive count.** The HW handles parallel arrives efficiently — doubling the arriver count doesn't double the barrier time. Per-arrive cost decreases sub-linearly; at 1024 arrivers it's effectively 0.3 cy/thread.
+
+Steady-state mbarrier round-trip (init + arrive + wait + re-use) = **~318 cy ≈ 166 ns**. This is 3.7× more expensive than plain `__syncthreads()` (~86 cy), but mbarrier provides:
+- Full release semantics for TMA completion (`expect_tx` byte counting)
+- Phase bits for double-buffering without re-init
+- Cross-CTA arrive (from DSMEM or cluster peers)
+
+**Use `__syncthreads` for pure execution barriers**; use mbarrier only when you need async-transfer completion or phase semantics.
+
+
+# Warp stall breakdown via ncu (representative kernels)
+
+Sampled `smsp__warp_issue_stalled_<reason>_per_warp_active.pct` across three kernels:
+
+## Compute-bound: 32-warp FFMA loop (persistent grid)
+
+| Stall reason | % active |
+|--------------|---------:|
+| `not_selected` (ready but scheduler chose another) | **34.31** |
+| `long_scoreboard` (includes startup + printf) | 20.25 |
+| `math_pipe_throttle` | 2.64 |
+| `wait` (barrier / pipe ordering) | 2.01 |
+| `short_scoreboard` (smem / reg-file) | 0.27 |
+| all others (dispatch, drain, mio, lg) | < 0.1 |
+
+`not_selected` at 34 % means ~66 % of cycles this warp was actively issuing. With 32 warps / 8 per SMSP, perfect round-robin would give ~88 % not_selected — we do better because not every warp is ready every cycle. Overall a healthy compute-bound profile.
+
+## Memory-bound: cold DRAM stream (1 000 blocks × 128 thr)
+
+| Stall reason | % active |
+|--------------|---------:|
+| **`long_scoreboard`** | **94.28** |
+| `math_pipe_throttle` | 0.02 |
+
+A classic memory-bound signature — nearly every cycle waiting on a DRAM load to complete. The `long_scoreboard` metric flags any outstanding long-latency operation (DRAM, texture, L2-resident atomic, etc.).
+
+**Reading stall metrics:**
+- `long_scoreboard` dominant → memory-bound; add ILP, use TMA, or reduce working set.
+- `math_pipe_throttle` dominant → pipe saturated (good if you want compute peak).
+- `not_selected` dominant → high occupancy, scheduler has choice; normal.
+- `short_scoreboard` dominant → smem/register bank conflicts or hazards.
+- `wait` dominant → barrier / `cp.async.wait_group` / mbarrier traffic.
+- `mio_throttle` → memory IO staging queue (LSU) full.
+- `lg_throttle` → local/global memory request queue saturated.
+
+
 # CUDA process cold-start breakdown (cuInit → first kernel)
 
 Clean process launch, one-time startup costs:
