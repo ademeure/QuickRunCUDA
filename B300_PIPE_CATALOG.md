@@ -3257,6 +3257,17 @@ Uncontended (each SM own remote address): same pattern, 2,750-2,970 cy at all SM
 
 Within 1% across all ops. The L2 atomic unit processes every operation in one cycle; round-trip latency (NOC + potential NVLink + memory) dominates per-op cost.
 
+**Data width also doesn't matter much** (serial chain, 1 SM, warm L2):
+
+| type | LOCAL cy | REMOTE cy |
+|---|---:|---:|
+| u32 add | 588 | 2,982 |
+| u64 add | 590 | 2,982 |
+| f32 add | 592 | 2,977 |
+| f64 add | 630 | 3,017 |
+
+u32/u64/f32 are essentially identical. f64 is ~7% slower locally and ~1% slower remote — the wider 64-bit float atomic takes marginally longer at the L2 ALU, but the round-trip dominates.
+
 **Atomic throughput (bulk, 32 threads × 148 SMs × 256 atomics/thread, NOT serial-chained):**
 
 | pattern | LOCAL Matomic/s | REMOTE Matomic/s | slowdown |
