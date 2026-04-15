@@ -7141,3 +7141,29 @@ Tested in cluster-launched context, single-warp:
 
 For cross-cluster queues: minimize ordered ops. Use mbarrier (which has built-in release semantics for free, ~24 cy).
 
+
+## Load/Store Ordering Cost — REFINED with CTA scope
+
+| Op | cy/op | × default |
+|----|-------|-----------|
+| ld.global (default) | 117 | 1.0× |
+| ld.relaxed.cta | 117 | 1.0× (same!) |
+| **ld.acquire.cta** | **123** | **1.05× (FREE!)** |
+| ld.relaxed.cluster | 365 | 3.1× |
+| ld.acquire.cluster | 373 | 3.2× |
+| ld.acquire.gpu | 373 | 3.2× |
+| st.relaxed.cta | 60 | 1.0× |
+| **st.release.cta** | **68** | **1.13× (almost free!)** |
+| st.release.cluster | 871 | 14.5× |
+
+**MAJOR INSIGHT**: `acquire`/`release` ordering is nearly FREE at **`.cta` scope**, only expensive at `.cluster`/`.gpu` scope.
+
+This corrects our earlier "ld.acquire = 3× slower" finding — that was for `.gpu` scope. CTA-scoped ordering has minimal overhead because intra-CTA execution is naturally ordered.
+
+**Producer-consumer queue (intra-CTA) optimal pattern**:
+- Producer: `st.release.cta.u32` to publish (68 cy ≈ free)
+- Consumer: `ld.acquire.cta.u32` to read (123 cy ≈ free)
+- Total roundtrip: ~190 cy → **5M ops/sec on a single warp** for full memory ordering
+
+For cross-CTA: must pay the 3-14× tax. Use mbarrier (24 cy with built-in release) instead of explicit ordered atomics whenever possible.
+
