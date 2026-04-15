@@ -5762,3 +5762,29 @@ Min is slightly faster than add (possibly a fast path). CAS / exch add ~15 cy fo
 
 Chip-wide coalesced atomic peak: 0.94 atomics/cy/lane × 32 lanes × 1 warp × 1.92 GHz × 148 SMs = **8.9 Gatomic/s**. (Multi-warp would multiply further, saturating L2 BW.)
 
+
+## Load / Store Memory Ordering Costs
+
+Loaded from per-lane global address with cached data:
+
+| Load variant | cy/iter | vs default |
+|--------------|---------|------------|
+| `ld.global` (default / weak) | **115** | 1.0× |
+| `ld.weak.global` | 115 | 1.0× |
+| `ld.relaxed.gpu` | 355 | **3.1×** |
+| `ld.acquire.gpu` | 363 | 3.2× |
+| `ld.volatile.global` | 353 | 3.1× |
+
+Store variants:
+
+| Store variant | cy/iter | vs default |
+|---------------|---------|------------|
+| `st.global` (default) | **60** | 1.0× |
+| `st.release.gpu` | 843 | **14.0×** |
+
+**Key finding**: even `ld.relaxed.gpu` / `.volatile` cost 3× the default load. The default `ld.global` enjoys full L1 caching; any ordering qualifier (including .relaxed) forces bypassing L1 and going straight to L2/coherent memory.
+
+**Design rule**: NEVER put `.relaxed`, `.acquire`, `.release`, `.volatile`, or `.gpu`/`sys` scope on loads or stores unless your data genuinely requires cross-SM coherence. Inter-block signaling still benefits from these, but inner-loop hot paths should use the default unqualified form.
+
+Also: default `ld.global` behaves like `ld.weak.global` — "weak" IS the default ordering for PTX loads.
+
