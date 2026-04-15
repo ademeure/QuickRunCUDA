@@ -6151,3 +6151,17 @@ This is **GPC-aware load balancing** — it spreads work across GPCs to avoid ho
 - Use `%smid` if you need physical placement (for L2-side awareness)
 - The GPC-aware scheduling can affect L2 partition pressure — adjacent CTAs may target same L2 partition
 
+
+## L2 Slice Affinity (per-SM unique-address load)
+
+148 CTAs each read a unique global address (`A[blockIdx.x * 1024]`) via `ld.global.cg` (bypass L1). Latency varies based on which L2 slice serves which SM:
+
+| Latency band | # SMs |
+|--------------|-------|
+| 50-80 cy (close partition) | 8 |
+| 80-150 cy (cross-partition) | 140 |
+
+Range: 74-137 cy, mean 109 cy. The 8 "fast" SMs are scattered across GPCs (0, 4, 7, 8) — not a simple GPC↔L2 partition mapping. This suggests the L2 slice-to-SM affinity is determined by the **physical address hash**, not the GPC topology. Different addresses map to different L2 slices, and each SM has differing latency based on slice topology.
+
+For predictable L2 behavior, consider using `cudaFuncSetAttribute` with `cudaLimitPersistingL2CacheSize` to pin specific data, or use TMA with cluster-aware tile distribution.
+
