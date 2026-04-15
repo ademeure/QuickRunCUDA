@@ -5456,3 +5456,43 @@ Spec comparison: B300 published ~10 PFLOPS sparse FP8 → we measure 7.44 PFLOPS
 
 **Verified peaks** (MMA-only, no data movement): 4.65 PFLOPS dense FP8, 7.44 PFLOPS sparse FP8.
 
+
+---
+
+# Smem/TMEM Feeders (ldmatrix, stmatrix, tcgen05.ld)
+
+## ldmatrix.sync.aligned.{x1,x2,x4}.m8n8.shared.b16 — per warp
+
+| Variant | bytes_loaded | cy/load | B/cy | B/cy efficiency |
+|---------|--------------|---------|------|-----------------|
+| x1 | 128 | 28.0 | 4.6 | 1× |
+| x2 | 256 | 27.0 | 9.5 | 2.1× |
+| x4 | 512 | 29.0 | 17.7 | **3.9×** |
+
+**Use x4 always** — barely more cycles (29 vs 28) but loads 4× the data.
+
+`ldmatrix.trans` (transposed) has identical throughput — no penalty for transposing on the load.
+
+## stmatrix.sync.aligned.{x1,x2,x4}.m8n8.shared.b16 — per warp
+
+| Variant | bytes | cy/store | B/cy |
+|---------|-------|----------|------|
+| x1 | 128 | 30.0 | 4.3 |
+| x2 | 256 | 32.0 | 8.0 |
+| x4 | 512 | 36.0 | **14.2** |
+
+## tcgen05.ld.sync.aligned.16x64b.x{N}.b32 — TMEM → registers (per warp, sync per-load)
+
+| Variant | bytes (per warp) | cy/load (with wait::ld) | B/cy |
+|---------|------------------|--------------------------|------|
+| x1 | 128 | 11.5 | 11.1 |
+| x2 | 256 | 12.7 | 20.2 |
+| x4 | 512 | 15.7 | 32.6 |
+| x8 | 1024 | 21.7 | 47.2 |
+| **x16** | **2048** | **35.8** | **57.2** |
+| x32 | 4096 | 83.6 | 49.0 |
+
+Sweet spot: **x16** at 57 B/cy/warp = ~109 GB/s/warp at 1.92 GHz. Per SM (4 warps): ~437 GB/s. Per chip: ~65 TB/s of TMEM read bandwidth via tcgen05.ld. (Without per-load `wait::ld`, async issue allows higher steady-state throughput because loads pipeline.)
+
+Beyond x16, throughput drops — the load is too wide and stalls register write-port.
+
