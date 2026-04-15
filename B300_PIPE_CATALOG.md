@@ -7240,6 +7240,57 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# Kernel parameter passing — size is free (up to 4 KB)
+
+All launches ~2 µs regardless of parameter size:
+
+| Parameters | µs/launch |
+|-----------|---------:|
+| No args | 2.047 |
+| 1 int (4 B) | 2.036 |
+| 128-byte struct | 2.038 |
+| 4 KB struct | 2.049 |
+
+**Parameter passing is effectively free within the ~2 µs launch overhead.** The CUDA runtime places args in a driver-managed buffer (max 32 KB on modern CUDA); the copy is hidden in the launch cost. Don't pre-stage parameters into global memory if they fit — just pass structs directly.
+
+
+# cuda::pipeline (C++ async double-buffer primitive)
+
+Single-CTA test: 50 stages, each loading 2 KB via `cuda::memcpy_async` and computing on the previous stage's buffer (2-slot pipeline):
+
+| Metric | Value |
+|--------|------:|
+| Total wall time | 24 µs |
+| cy per stage | 746 |
+| µs per stage | 0.39 |
+
+Compare to plain blocking loop (earlier): 652 cy/op for 2 KB smem load. `cuda::pipeline` costs 14 % more cycles per stage for the double-buffer bookkeeping but **hides the load latency behind compute** — so effective throughput is higher when there's genuine compute per stage.
+
+**Use `cuda::pipeline`** when:
+- Load + compute per stage, need to overlap.
+- Multiple stages (≥ 4) where the startup cost amortizes.
+- You want a cleaner C++ API over raw `cp.async.commit_group` / `wait_group`.
+
+**Skip it** for single-shot small loads (the 14 % overhead hurts).
+
+
+# wmma C++ API — still functional, but LEGACY HMMA path (slow on B300)
+
+`nvcuda::wmma` compiles and runs on sm_103a. Single warp, 16×16×16 fp16→fp32 MMA, 100 back-to-back:
+
+| Metric | Value |
+|--------|------:|
+| Total cy | 4 250 |
+| cy/MMA | 42.5 |
+| FLOPs/cy per warp | 195 |
+
+At 2032 MHz: **~396 GFLOPS per warp**. Per SM with 4 warps: ~1.6 TFLOPS/SM. Chip-wide estimate: ~230 TFLOPS — matches the old `mma.sync` HMMA path, NOT the fast `tcgen05.mma` path.
+
+**Confirmation**: `nvcuda::wmma::mma_sync` emits SASS `HMMA.16816.F32.*` (the legacy path). For tcgen05's 4.65 PFLOPS FP8 peak, you **must** use raw `tcgen05.mma.*` PTX — the high-level wmma API does NOT target the unified tensor path on Blackwell.
+
+**If you see wmma in existing code**, it's correct but leaves **~20× performance on the table**. Rewrite with `tcgen05.mma` via PTX (or CUTLASS 3.x+ which has B300 tcgen05 paths).
+
+
 # Global memory FP atomics — all native, u64 CAS 30× slower
 
 Single warp × 32 lanes × unique addresses per lane, 1000 atomic ops:
