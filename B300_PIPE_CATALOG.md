@@ -7240,6 +7240,120 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# cudaEvent / cudaStream API overhead (host-side)
+
+Host wall-clock measurements (1000-iter avg per row):
+
+| Operation | µs |
+|-----------|----:|
+| `cudaEventCreate` | 0.19 |
+| `cudaEventDestroy` | 0.08 |
+| `cudaEventRecord` (null stream) | 0.97 |
+| `cudaEventElapsedTime` | **0.037** (34 ns — can poll freely) |
+| `cudaStreamWaitEvent` (host call only, no wait) | 0.13 |
+| `cudaEventSynchronize` (idle event, already done) | 2.75 |
+| `cudaStreamSynchronize` (after 1 tiny kernel) | **6.3** |
+| `cudaEventSynchronize` (after 1 tiny kernel) | **20.3** (3× stream sync!) |
+| `stream1 → event → stream2 → sync` chain | 9.6 |
+
+**Key findings:**
+
+1. **`cudaEventElapsedTime` is essentially free** (37 ns). Use it freely inside timing loops.
+2. **`cudaStreamSynchronize` beats `cudaEventSynchronize` by 3×** for the "wait for recent kernel" case (6 µs vs 20 µs). Prefer stream-sync when possible.
+3. **`cudaStreamWaitEvent` is a cheap host call** (0.13 µs) — it just queues a dependency. The actual wait happens on GPU, so this doesn't block the host.
+4. **Cross-stream event-wait chain ≈ 10 µs RTT** for 2 trivial kernels. Roughly 3 µs of this is the event-propagation overhead.
+5. **`cudaEventRecord` = 0.97 µs/record** — non-negligible if you're recording many events in a tight loop.
+
+
+# Warp SHFL throughput scaling (1→32 warps)
+
+`shfl.sync.bfly.b32` with 8-chain ILP, single CTA, varying warp count:
+
+| Warps/CTA | shfl/cy/SM | w-inst/cy/SM | × single warp |
+|----------:|-----------:|-------------:|--------------:|
+| 1  | 5.33  | 0.17 | 1.00× |
+| 2  | 10.66 | 0.33 | 2.00× |
+| 4  | 21.31 | 0.67 | 4.00× (perfect linear) |
+| 8  | 28.42 | 0.89 | 5.33× |
+| 16 | **31.86** | **1.00** | **6.00×** (**saturation**) |
+| 32 | 31.96 | 1.00 | 6.00× |
+
+**SHFL saturates at 1 warp-inst/cy/SM = 32 shuffles/cy/SM.** Chip-wide: 148 × 32 × 2.032 = **9.6 Gshuffle-ops/sec** at full occupancy. Scaling is perfectly linear up to 4 warps, then tapers due to per-SM crossbar limits.
+
+Per-SMSP rate: 0.25 warp-inst/cy/SMSP (= 1/4 of SMSP's 1.0 max). **SHFL serializes across the 4 SMSPs of a single SM.**
+
+Per-instruction latency (from 1-warp CHAINS=8 test): **6 cy** (8-chain takes 48 cy = 8 × 6).
+
+**Practical guidance:**
+- Light use (≤4 warps/SM): no penalty, perfect parallelism.
+- At full occupancy (32 warps/SM), expect 1 SHFL / 4 warps / cycle from the scheduler's perspective — each warp waits ~4 cycles between consecutive shfls.
+- For warp-reduce patterns (5-step butterfly), a single reduction takes 5 × 6 = 30 cy latency per warp, and 5 × 4 = 20 cy when occupancy-limited.
+
+
+# Instruction cache pressure (L1I capacity)
+
+Straight-line FFMA kernel of N instructions (no loop, 8-way register ILP, single warp):
+
+| N insts | size | cy/inst | Notes |
+|--------:|-----:|--------:|-------|
+| 500   | 8 KB | 1.49 | fully in L1I |
+| 800   | 12 KB | 1.80 | |
+| 1 000 | 16 KB | 1.74 | **knee starts** |
+| 1 200 | 19 KB | 2.22 | |
+| 1 500 | 24 KB | 2.47 | |
+| 1 800 | 29 KB | 2.79 | |
+| 2 000 | 32 KB | 2.88 | |
+| 2 200 | 35 KB | 2.93 | |
+| 2 800 | 45 KB | 3.03 | plateau starts |
+| 5 000 | 80 KB | 3.03 | L2-fed instruction fetch |
+| 10 000 | 160 KB | 4.84 | **second knee** |
+| 20 000 | 320 KB | 5.45 | |
+| 50 000 | 800 KB | 5.84 | |
+| 100 000 | 1.6 MB | 5.96 | flat — L2 hit limit |
+
+Each Blackwell SASS inst = 16 bytes. **L1I effective capacity ≈ 16 KB (≈ 1 000 FFMAs)**. Above this, instruction fetches hit L2, costing ~3 cy/inst (vs 1.5 cy/inst when all in L1I). Past ~10 000 insts (~160 KB), another step to ~5-6 cy/inst likely reflects iTLB or L2 pressure.
+
+**Practical rules:**
+- Kernels under 16 KB of SASS run at full dispatch.
+- Past 1 000 SASS insts, expect ~2× slowdown purely from I-cache misses.
+- Unrolling / inlining past this point pays for itself only if it saves elsewhere (e.g. hiding load latency).
+- For fully-unrolled tensor kernels (which can hit 10 000+ insts), the I-cache becomes a real bottleneck. Prefer tight loops with L1I-resident bodies.
+
+
+# Sustained-load clock stability (thermal + power headroom)
+
+NVML reports (B300 SXM6 AC):
+
+| Metric | Value |
+|--------|-------|
+| Max SM clock | 2 032 MHz |
+| Default application clock | 2 032 MHz |
+| Memory clock | 3 996 MHz |
+
+Running sustained FFMA (148 CTAs × 1024 thr × 800 M iterations, 5-second kernel) after `nvidia-smi -rac`:
+
+| Probe # | Clock | Power | Temp | Util |
+|---------|-------|-------|------|------|
+| 1 s | **2 032 MHz** | 332 W | 45 °C | 100 % |
+| 2 s | 2 032 MHz | 334 W | 45 °C | 100 % |
+| 3 s | 2 032 MHz | 335 W | 45 °C | 100 % |
+| 5 s | 2 032 MHz | 335 W | 46 °C | 100 % |
+
+**No throttling.** Clock stays at 2 032 MHz (max boost) through the full 5-second FFMA burst. Power settles at 335 W, far below the 1 200 W TGP on SXM6 AC. Temperature only rose 1 °C from idle (45 °C → 46 °C).
+
+Also tested "forced" clock at 2 032 MHz via `--clock-speed 2 032`: identical behaviour (2 032 MHz, 335 W). So the default boost policy hits full 2 032 MHz under FMA load immediately.
+
+**Correction to earlier catalog**: earlier reported "1920 MHz sustained" was on a session where the application clock had been set lower. Reset via `nvidia-smi -rac` restores full 2032 MHz boost. **Always reset clocks before measurement** — `--clock-speed 0` in QuickRunCUDA means "don't force a new clock", so if a prior session set a lower clock, it stays.
+
+Throughput update: at **2 032 MHz** (not 1 920), the earlier chip peaks should be scaled up by 1.058×:
+- Scalar FFMA peak: 72.3 → ~76.5 TFLOPS (re-verify when clock is correct)
+- HFMA2 / FFMA2: ~76 TFLOPS
+- tcgen05.mma FP8: 4.65 → ~4.92 PFLOPS
+- HBM BW unaffected (memory clock is separate at 3 996 MHz).
+
+Practical: **always call `nvidia-smi -rac`** before benchmarks to restore max boost. The GPU's implicit clock policy may hold below max even without explicit `--clock-speed` forcing if something (driver, prior run) pushed it low.
+
+
 # Integer scalar throughput peak (32 warps × 16 chains, self-dep)
 
 | Op | SASS pipe | inst/cy/SM | w-inst/cy/SM | TIOPS chip |
