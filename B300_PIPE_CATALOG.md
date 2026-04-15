@@ -6455,3 +6455,32 @@ Despite cccl headers gating multicast to SM_90a/100a/110a, the underlying PTX **
 
 For B300 with cluster of 8 (max), this is **8× DRAM bandwidth savings** for shared inputs.
 
+
+---
+
+# CAS / Lock-Free Patterns
+
+Per-lane unique-address CAS (typical lock-free queue):
+
+| Op | cy/op |
+|----|-------|
+| atom.add.u32 | **34** |
+| atom.exch.b32 | 62 |
+| **atom.cas.b32 (single, succeeds)** | **786 (23× atom.add!)** |
+| **CAS retry loop** | **1530 (45×)** |
+
+**Per-lane CAS is 23× more expensive than atom.add** even when CAS succeeds first try (no contention). The retry loop adds another 2× for the verify-and-rerun overhead.
+
+Earlier measurement (CAS on shared address, 8 lanes contending): 66 cy. The 12× gap between same-address (66) and per-lane unique (786) shows that CAS doesn't coalesce across lanes — each unique address needs its own L2 transaction.
+
+**Practical guidance for lock-free queues**:
+- **Counter-only patterns**: use atom.add (34 cy)
+- **True CAS (compare-then-update)**: use atom.cas only when necessary; expect 800-1500 cy per op
+- **Avoid spin-loops on CAS**: use atom.add for token allocation, then post-process
+
+**For producer-consumer queues**:
+- Producer: atom.add to claim slot index (34 cy)
+- Then write data with relaxed st (60 cy)
+- Then atom.add a "ready" counter (34 cy)
+- Total per push: ~130 cy vs CAS-based push at ~1530 cy = **12× faster**
+
