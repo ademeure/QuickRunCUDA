@@ -6205,3 +6205,38 @@ Confirms 32-bank smem architecture — strides 16 and 32 (multiples of bank coun
 
 Per-warp store throughput: ~32 stores per 33 cy = 0.97 stores/cy/lane (essentially full LSU pipe).
 
+
+---
+
+# Grid Sync vs Kernel Launch Overhead
+
+## Persistent kernel grid sync (atomic counter pattern)
+
+Grid sync via global atomic counter (no cudaLaunchCooperativeKernel API):
+
+| Grid blocks | cy/sync | μs @ 1.92 GHz |
+|-------------|---------|---------------|
+| 8 | 4161 | 2.17 |
+| 32 | 4129 | 2.15 |
+| 64 | 4195 | 2.18 |
+| **148** | **4245** | **2.21** |
+
+**Grid sync cost is ~constant at ~4200 cy** = 2.2 μs, regardless of grid size. The cost is dominated by atomic acq_rel (1598 cy) + spin loop on phase var.
+
+## Kernel launch overhead
+
+Empty kernel launched 100× via CUDA events:
+- **Per-launch time: ~5.7 μs**
+
+## Persistent vs launch-spam
+
+| Approach | Cost per iter |
+|----------|---------------|
+| **Persistent kernel + grid sync** | **2.2 μs** |
+| Launch new kernel each iter | 5.7 μs |
+| **Speedup** | **2.6×** |
+
+Persistent kernels are **2.6× more efficient** for loops needing global synchronization. The break-even is around when the iteration's actual compute work exceeds ~3 μs.
+
+**Design rule**: For inner loops with global synchronization, use persistent kernels with atomic-counter grid sync. For fire-and-forget tasks with no inter-iteration deps, normal kernel launches are fine.
+
