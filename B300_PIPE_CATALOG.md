@@ -6484,3 +6484,29 @@ Earlier measurement (CAS on shared address, 8 lanes contending): 66 cy. The 12×
 - Then atom.add a "ready" counter (34 cy)
 - Total per push: ~130 cy vs CAS-based push at ~1530 cy = **12× faster**
 
+
+---
+
+# Constant Memory & Uniform Load Paths
+
+Loading from same address across all 32 lanes (uniform) vs unique per lane:
+
+| Pattern | cy/load |
+|---------|---------|
+| **ld.const (uniform addr)** | **55** ← FASTEST |
+| ld.global (uniform addr) | 86 |
+| ldu.global (uniform load explicit) | 86 |
+| ld.global per-lane | 84 |
+| **ld.const per-lane (uncoalesced!)** | **395 (7×)** |
+
+**Constant memory broadcast**: 55 cy for 32 lanes = **1.7 cy/lane** for uniform reads. This is the fastest CMem path.
+
+**Critical pitfall**: `ld.const` per-lane (each lane reads different address) **serializes to 395 cy** — 7× slower than uniform. Constant memory has only 1 read port; non-uniform reads serialize.
+
+**Design rule**:
+- Use `__constant__` (or `ld.const` PTX) ONLY when ALL lanes read the SAME address (broadcast pattern)
+- Examples: kernel parameters (passed to all threads), small lookup tables read by all threads
+- For per-thread varying reads: use `ld.global` (84 cy) — it coalesces, similar throughput to broadcast cmem
+
+`ldu.global` (the explicit "load uniform" hint) does NOT seem to be faster than plain `ld.global` on B300. The uniform optimization may be auto-applied.
+
