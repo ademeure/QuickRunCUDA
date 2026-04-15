@@ -5889,3 +5889,23 @@ Multi-SM TMA store at 8KB:
 
 **Chip-wide TMA store BW saturates at ~770 GB/s** when many SMs write simultaneously. This is far below HBM peak (~8 TB/s) — likely L2 write coalescing limit when all writes go to same address. With unique addresses per SM, throughput should be much higher.
 
+
+## FFMA Chain Depth vs Register Pressure (ILP scaling)
+
+Single warp running FFMA chain `r[j] = r[j] * r[(j+1)%N] + r[(j+2)%N]`:
+
+| N_LIVE regs | cy/FFMA | Per-lane FFMA/cy |
+|-------------|---------|------------------|
+| 8 | 3.38 | 0.30 |
+| 16 | 2.25 | 0.44 |
+| 24 | 1.88 | 0.53 |
+| 32 | 1.78 | 0.56 |
+| 48 | 1.67 | 0.60 |
+| 64 | 1.69 | 0.59 |
+| 96 | 1.60 | 0.63 |
+| 128 | 1.60 | 0.63 |
+| 192 | 1.55 | 0.65 |
+| **232** | **1.54** | **0.65** |
+
+**Saturation around N=64 live regs** at ~0.6 FFMA/cy/lane. Beyond 64 regs, marginal improvement to 0.65 at the 232-reg max. So 64 deep parallel chains is the practical optimum for FFMA — more chains use registers without speeding up (and may hurt occupancy).
+
