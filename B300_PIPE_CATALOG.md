@@ -4780,3 +4780,18 @@ Compare to `__syncthreads` (24 cy, simpler barrier): mbarrier adds flexibility (
 **`__ldg` == `ld.global.nc` == `ld.global.ca` for read performance**. All hit L1 equally. Use `__ldg` (or `ld.global.nc`) when the compiler can prove the data is read-only and won't be modified during kernel — enables the read-only L1 texture path that may allow more aggressive caching. For mixed read/write, use `.ca`.
 
 Only `.cg` intentionally bypasses L1 (use for streaming data you won't re-access).
+
+### Memory hierarchy latency summary (pointer chase, single thread)
+
+| hit level | cy/load | ns (at 1920 MHz) |
+|---|---:|---:|
+| L1 cache | 52 | 27 |
+| L2 cache | 295 | 154 |
+| DRAM (L2 miss) | **813** | **423** |
+
+Measured via pointer chase with varying working-set sizes:
+- Small WS (< L1 capacity): lands in L1, 52 cy
+- Medium WS (> L1, < L2 ~128 MB): lands in L2, 295 cy
+- Large WS (> L2): each load hits DRAM, 813 cy
+
+L1→L2 step = +243 cy. L2→DRAM step = +518 cy. DRAM latency dominates when working set exceeds L2 capacity.
