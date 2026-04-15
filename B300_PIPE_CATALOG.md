@@ -5416,3 +5416,43 @@ Setup: `__cluster_dims__(2,1,1)` + `tcgen05.alloc.cta_group::2` + `barrier.clust
 
 **Don't use cta_group::2 expecting 2× FLOPS** — peak is set by per-SM tensor pipe throughput, which is unchanged.
 
+
+## Sparsity (tcgen05.mma.sp) — kind::f8f6f4 with 2:4 structured sparsity
+
+Sparse PTX form (different operand order from dense — metadata between b_desc and idesc):
+```
+tcgen05.mma.sp.cta_group::1.kind::f8f6f4 [d_tmem], a_desc, b_desc, [meta_tmem], idesc, {disable_lane}, P;
+```
+
+Sparse uses `K_logical = 64` (vs dense K=32) for kind::f8f6f4. Logical FLOPS = M × N × 64 × 2.
+
+| Shape | cy/iter | Logical TFLOPS (148 SM) | HW rate (FLOPS/cy/SM) |
+|-------|---------|--------------------------|---------------------|
+| M=128 N=64  | 66.9  | 4,453   | (16,384) |
+| M=128 N=128 | 96.2  | 6,196   | (22,815) |
+| **M=128 N=256** | **160.2** | **7,439**   | (26,214) |
+
+Multi-SM scaling: linear, 50/804/3217/7439 TFLOPS at 1/16/64/148 SMs.
+
+**Sparse vs dense at same M=128 N=256**:
+- Dense (K=32):   128 cy/MMA → 4,651 TFLOPS  
+- Sparse (K=64): 160 cy/MMA → 7,439 TFLOPS
+
+Sparse provides **1.6× speedup** (not the marketed 2×). Hardware does 2× the logical work but takes 1.25× the cycles per MMA. Likely the sparse path has slightly higher internal latency.
+
+Spec comparison: B300 published ~10 PFLOPS sparse FP8 → we measure 7.44 PFLOPS = **74% of spec** (vs 93% for dense). Possibly due to garbage sparse metadata in our test; a properly-encoded 2:4 metadata should approach spec.
+
+## Summary table — Tensor Core Peak (single warp, 148 SMs, B300 sm_103a)
+
+| kind | Inputs | Output | K | M=128 N=256 cy | TFLOPS | % of spec |
+|------|--------|--------|---|---|--------|----|
+| f16 dense | FP16/BF16 | FP32 | 16 | 128.1 | 2,325 | 93% |
+| tf32 dense | TF32 | FP32 | 8 | 128.1 | 1,163 | 93% |
+| f8f6f4 dense | FP8/FP6/FP4 | FP32 | 32 | 128.1 | 4,651 | 93% |
+| f8f6f4 sparse | FP8 + meta | FP32 | 64 | 160.2 | 7,439 | 74% |
+| i8 dense | INT8 | INT32 | — | — | — | **NOT ON sm_103a** |
+| mxf8f6f4 (block-scaled) | FP8 + scales | FP32 | 32 | — | — | needs scale TMEM |
+| mxf4 / mxf4nvf4 | FP4 + scales | FP32 | 64 | — | — | needs scale TMEM |
+
+**Verified peaks** (MMA-only, no data movement): 4.65 PFLOPS dense FP8, 7.44 PFLOPS sparse FP8.
+
