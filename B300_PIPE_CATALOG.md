@@ -6954,3 +6954,24 @@ For N_LIVE = 128 with high occupancy hint, the compiler is forced to spill.
 - Spilling = local memory access (slower than RF) ≈ 50% throughput hit
 - Use `nvcc --ptxas-options=-v` to see actual register count
 
+
+## Kernel Size Impact on Launch Latency
+
+| N_INSTS | cubin size | Run time |
+|---------|-----------|----|
+| 10 | 8.7 KB | 2.06 μs |
+| 100 | 13.7 KB | 2.06 μs |
+| 1000 | 63 KB | 4.11 μs |
+| 4000 | 237 KB | 10.25 μs |
+
+**B300 kernel launch latency floor = ~2.0 μs** for tiny kernels. Above ~1000 inst, the kernel run time grows linearly with code size (each unrolled FFMA contributes ~1.5 cy = 0.8 ns).
+
+Important: small kernels (under 100 inst) have NO size penalty. The icache absorbs them. Only beyond several KB of cubin does icache pressure start affecting load.
+
+Combined launch overhead breakdown:
+- Pure launch overhead (no L2 flush, no work): ~2 μs
+- Default with QuickRunCUDA `-T` event timing: 5.7 μs (includes event start/stop)
+- With `--l2flush 1` (per-iter L2 flush): adds ~2 μs
+
+So a real "fire-and-forget" launch on B300 ≈ 2 μs. For batched dispatch, persistent kernels save this 2 μs per iter.
+
