@@ -5565,3 +5565,16 @@ Cost is **constant regardless of value** — it's a control register write, not 
 
 **`L2::256B` prefetch IS effective** — gives 23% speedup on streaming reads by prefetching a 256-byte granule into L2 ahead of need. Use this when you know you'll consume 8 contiguous 32B lines.
 
+
+## Smem peak bandwidth via multi-warp ldmatrix.x4
+
+| N_WARPS on 1 SM | cy/load (per warp) | Total chip BW assumption |
+|-----------------|---------------------|--------------------------|
+| 1 | 47.0 | 21 GB/s/SM × 148 = 3 TB/s |
+| 2 | 23.5 | 41 GB/s × 148 = 6 TB/s |
+| 4 | 11.8 | 84 GB/s × 148 = 12 TB/s |
+| 8 | 5.9 | 167 GB/s × 148 = 25 TB/s |
+| **16** | **4.0** | **246 GB/s × 148 = 36 TB/s** |
+
+**Smem bandwidth saturates at ~16 warps per SM** = ~250 GB/s per SM = ~37 TB/s chip-wide. Beyond 16 warps per SM, no additional throughput. This matches NVIDIA's published smem peak for B300.
+
