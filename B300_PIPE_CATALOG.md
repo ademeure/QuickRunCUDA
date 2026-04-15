@@ -5614,3 +5614,42 @@ Tested metadata values 0x44444444, 0xCCCCCCCC, 0xEEEEEEEE, 0x11111111 — all pr
 
 Implication: the 10 PFLOPS sparse FP8 spec appears to be a theoretical max that may not be reachable in any real kernel. CUTLASS likely reports similar ~7.5 PFLOPS for sparse FP8 in practice.
 
+
+---
+
+# MMA Legacy Paths on B300: mma.sync Slow, wgmma Removed
+
+Tested Hopper-era MMA paths on sm_103a to understand the architectural transition.
+
+## mma.sync (available but slow — emulated?)
+
+| Variant | cy/MMA | TFLOPS (148 SM) | vs tcgen05 | 
+|---------|--------|-----------------|------------|
+| `m16n8k16.f32.f16.f16.f32`   | 14.5  | 80   | 29× slower |
+| `m16n8k16.f32.bf16.bf16.f32` | 14.5  | 80   | 29× slower |
+| `m16n8k32.f32.e4m3.e4m3.f32` | 28.3  | 82   | 56× slower |
+| `m8n8k128.s32.b1.b1.s32.xor.popc` (BMMA) | 3349 | 1.3 | ~2000× slower, basically emulated |
+
+**mma.sync is NOT the peak path on B300.** It runs at a small fraction of tcgen05.mma throughput, probably through the legacy warp-sync tensor unit (same hardware as sm_80, just compatibility). Use ONLY for compatibility with old Hopper kernels; migrate to tcgen05.mma for production.
+
+## wgmma — COMPLETELY REMOVED from sm_103a
+
+```
+ptxas: Instruction 'wgmma.wait_group' cannot be compiled for architecture 'sm_103a'
+```
+
+`wgmma.mma_async` (Hopper warp-group async MMA) is **not available** on B300. It was completely replaced by `tcgen05.mma`. Hopper kernels using wgmma must be rewritten for tcgen05.
+
+## Summary: tensor-core ISA on B300
+
+| API | Status | Notes |
+|-----|--------|-------|
+| `tcgen05.mma` (dense/sparse/block-scale) | ✅ PEAK | 4.65 PFLOPS FP8, 7.44 sparse |
+| `mma.sync.m16n8k*` (Hopper warp-sync) | ⚠️ Slow | 29-56× slower, compat only |
+| `mma.sync.m8n8k128.b1` (BMMA) | ⚠️ Emulated | 1.3 TFLOPS — unusable |
+| `wgmma.mma_async` (Hopper warp-group async) | ❌ REMOVED | ptxas rejects on sm_103a |
+| `kind::i8` (tcgen05 INT8) | ❌ NOT ON sm_103a | SM_100/SM_110 only |
+| `kind::mxf4`, `kind::mxf8f6f4` (block-scaled) | ⚠️ Needs scale TMEM setup | |
+
+**Design guidance**: Port any Hopper code to tcgen05.mma before running on B300. mma.sync still works but leaves 97% of FP8 throughput on the floor.
+
