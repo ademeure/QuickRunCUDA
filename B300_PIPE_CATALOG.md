@@ -4318,3 +4318,23 @@ Measured during ~10-second sustained FFMA + HMMA kernels:
 - B300 TDP (~1 kW) not approached
 
 If you want 2032 MHz (theoretical +5.8% FFMA → ~73 TFLOPS), lock clocks via `nvidia-smi -lgc 2032,2032` or QuickRunCUDA's `--clock-speed 2032`. Otherwise base 1920 MHz is what all measurements assume.
+
+### Shared memory bank conflict cost (Blackwell 32-bank smem)
+
+Stride between threads in a warp-wide smem load (`acc ^= smem[lane*STRIDE + i]`):
+
+| stride | cy/load | banks hit | conflict way |
+|---:|---:|---|---|
+| 1  | 40.06 | 32 | baseline (none) |
+| 2  | 42.08 | 16 | 2-way |
+| 3  | 40.08 | 32 | none (gcd(3,32)=1) |
+| 4  | 46.08 | 8  | 4-way |
+| 5,7,15,17,31,33 | 40.08 | 32 | none (coprime) |
+| 8  | 54.08 | 4  | 8-way |
+| 16 | 70.08 | 2  | 16-way |
+| **32** | **102.08** | 1 | **32-way (worst)** |
+| 64, 128 | 102.08 | 1 | 32-way |
+
+Conflict cost ~ linear in conflict-way: **+2 cy per way**. 32-way conflict adds +62 cy on top of 40 cy baseline = 2.55× slowdown. Strides coprime with 32 (1, 3, 5, 7, 9, …, 31, 33, …) are conflict-free.
+
+Blackwell smem bank structure matches Hopper/Ampere: **32 banks × 4 B width** → conflict when `(addr >> 2) % 32` matches across lanes. 32-byte atomic operations can span 8 banks (16B × 0.5 dwords); 128-bit vector load hits 4 banks per element.
