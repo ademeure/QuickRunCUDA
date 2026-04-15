@@ -7240,6 +7240,83 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# Bit-manipulation intrinsics — 3 speed tiers
+
+32 warps × 16 chains × 1000 iter (self-dep):
+
+| Op | inst/cy/SM | Pipe / speed tier |
+|----|-----------:|-------------------|
+| `shf.l.wrap.b32` | **64** | **Fast ALU (2 w-inst/cy/SM)** |
+| `prmt.b32` | 64 | Fast ALU |
+| `lop3.b32` (3-op logic) | 64 | Fast ALU |
+| `bfi.b32` (bit-field insert) | 55 | Fast-ish (≈ bfe with folding) |
+| `bfe.u32` (bit-field extract) | **32** | **Medium** |
+| `popc.b32` (popcount) | **16** | **Slow** (4× slower than fast ALU) |
+| `clz.b32` (count leading zeros) | 16 | Slow |
+| `bfind.u32` (find highest set bit) | 16 | Slow |
+| `brev.b32` (bit reverse) | 16 | Slow |
+
+**3 tiers identified:**
+1. **Fast ALU (64 inst/cy/SM)**: shift, permute, logic — same rate as IMAD/IMUL.
+2. **Medium (32 inst/cy/SM)**: bfe, bfi — 2× slower.
+3. **Slow (16 inst/cy/SM)**: popc, clz, bfind, brev — 4× slower, dedicated specialized pipe.
+
+**Practical**: avoid popcount in inner loops when possible. LOP3 + shift combinations can often replace bit-field ops at higher speed. Use `prmt` for byte-shuffle patterns (same rate as basic ALU).
+
+
+# FP32 division: `div.rn` is 40× slower than FMA; `div.approx` = FMA speed
+
+| Variant | inst/cy/SM | × FMA | Accuracy |
+|---------|-----------:|------:|----------|
+| **`div.rn.f32`** (IEEE round-to-nearest) | **2.29** | **1/40** | 0.5 ULP (correct) |
+| `div.approx.f32` | 89.87 | 1.0 | ~2 ULP |
+| `div.full.f32` | 89.89 | 1.0 | compiler-managed accuracy |
+| `rcp.approx + mul` (manual) | 89.89 | 1.0 | ~2 ULP |
+| `fma.rn.f32` (reference) | 89.89 | 1.0 | IEEE |
+
+**IEEE FP32 division is 40× slower than multiply — never use it in a hot loop unless accuracy mandates it.** The compiler uses Newton-Raphson iterations for correct rounding.
+
+`div.approx` / `__fdividef` / manual `rcp + mul` all run at the FMA rate. For ML kernels where ~2 ULP is fine, switch with `-use_fast_math` or `__fdividef()`.
+
+Same story for `f32 sqrt`: `sqrt.rn.f32` is slow, `sqrt.approx.f32` runs at MUFU rate.
+
+
+# Async engine count + memcpy concurrency
+
+```
+cudaDevAttrAsyncEngineCount   = 4       (4 copy engines)
+cudaDevAttrGpuOverlap          = 1       (overlap supported)
+cudaDevAttrConcurrentKernels   = 1       (concurrent kernels supported)
+```
+
+**H2D (host → device)** on 256 MB transfers, increasing parallel streams:
+
+| streams | aggregate BW (GB/s) |
+|---------|--------------------:|
+| 1 | 57.6 |
+| 2 | 57.6 |
+| 4 | 57.7 |
+| 8 | 57.7 |
+
+**H2D is PCIe-bound at 57 GB/s (Gen5 x16 cap).** Additional streams don't help — all 4 copy engines share the same PCIe bus.
+
+**D2D (device → device)** on 256 MB transfers:
+
+| streams | aggregate BW (GB/s) |
+|---------|--------------------:|
+| 1 | 2 573 |
+| 2 | 3 099 (1.20×) |
+| 4 | 3 192 (1.24×) |
+| 8 | 3 244 (1.26×) |
+
+**D2D saturates at ~3.2 TB/s** — about 40 % of HBM peak (7.4 TB/s). A single copy engine gives 2.6 TB/s; parallelism via multiple engines recovers only modest extra throughput.
+
+**Practical**:
+- Don't parallelize H2D across streams — 1 is enough.
+- For D2D, prefer kernel-based copies (at HBM peak 7.4 TB/s) over `cudaMemcpy` (2.6-3.2 TB/s via copy engines).
+- Use copy engines for H2D/D2H where SMs should be busy with compute.
+
+
 # Warp vote / reduce primitives throughput
 
 Single warp, 1000 iterations, full mask `0xFFFFFFFF`:
