@@ -7345,6 +7345,43 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# cuModuleLoadData + cuModuleGetFunction
+
+Loading a 23 KB cubin from memory and retrieving kernel symbol:
+
+| Operation | µs/call |
+|-----------|--------:|
+| `cuModuleLoadData` (load + symbol table) | ~46 |
+| `cuModuleUnload` | ~46 |
+| `cuModuleGetFunction` (after module loaded) | **0.107** |
+
+**Findings:**
+- Loading / unloading a cubin costs ~46 µs each — avoid repeated load in hot paths.
+- `cuModuleGetFunction` is essentially free (107 ns) — it's a hash table lookup in the module's symbol table.
+- **Cache loaded modules** for the lifetime of the process. Only reload if the cubin source changes.
+
+Total load pipeline: `cuMemAlloc(cubin)` + `cuModuleLoadData(cubin)` + `cuModuleGetFunction` ≈ 50 µs per unique kernel on first use.
+
+
+# cudaLaunchHostFunc / stream callbacks
+
+| Pattern | µs/iter |
+|---------|--------:|
+| **Pure host-fn in stream** (no kernel) | **1.94** |
+| kernel + host-fn + stream sync (one-at-a-time) | 19.9 |
+| 1 000 × (kernel + host-fn), async enqueue + final sync | 29.6 |
+
+**Findings:**
+- **`cudaLaunchHostFunc` overhead ≈ 2 µs** — similar to direct kernel launch.
+- **Round-trip kernel→callback→sync = 20 µs** — the stream sync dominates when each iter waits.
+- The 1 000-iter async case at 29.6 µs/iter suggests callbacks serialize per-stream with some extra overhead vs pure kernel launches.
+
+**Practical**:
+- Use host callbacks for "notify the CPU when this stream reaches this point" — cheap.
+- Don't use callbacks for hot-path synchronization; use event-based sync instead.
+- Callbacks run on an **internal CUDA driver thread**, NOT in the same stream context — don't do heavy work there.
+
+
 # CUDA graph launch amortization (per-op cost vs graph size)
 
 Graph of N identical empty kernels, measured us/graph-launch:
