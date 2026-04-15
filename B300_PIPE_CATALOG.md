@@ -5909,3 +5909,17 @@ Single warp running FFMA chain `r[j] = r[j] * r[(j+1)%N] + r[(j+2)%N]`:
 
 **Saturation around N=64 live regs** at ~0.6 FFMA/cy/lane. Beyond 64 regs, marginal improvement to 0.65 at the 232-reg max. So 64 deep parallel chains is the practical optimum for FFMA — more chains use registers without speeding up (and may hurt occupancy).
 
+
+## Vector Load Widths (DRAM-latency-bound test)
+
+Each iteration jumps 512 B (force L2 miss):
+
+| PTX | Bytes/load | cy/load | Bytes/cy/lane |
+|-----|------------|---------|---------------|
+| `ld.global.u32` | 4 | 510 | 0.008 |
+| `ld.global.v2.u32` | 8 | 514 | 0.016 (2.0×) |
+| `ld.global.v4.u32` | 16 | 515 | 0.031 (3.9×) |
+| `ld.global.v2.u64` | 16 | 505 | 0.032 (4.0×) |
+
+**Vector loads are essentially free width-wise** — same latency, 2-4× more bytes moved. Always coalesce consecutive elements into ld.v4 when possible. The DRAM/L2 latency is fixed at ~510 cy per memory transaction; the wider the request, the more data per transaction.
+
