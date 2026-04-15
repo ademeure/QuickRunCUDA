@@ -3290,15 +3290,27 @@ Local atomic contention gets a 2.4× throughput boost from cache-line merging at
 
 **LOCAL atomic BW (for reference, NOT limited by 900 GB/s NVLink — stays on-chip):**
 
-| pattern | rate | CL-traffic BW |
-|---|---:|---:|
-| ATOMG serial chain, 1 SM | 76 Matom/s | 10 GB/s |
-| ATOMG serial chain, 32 SMs | 1,432 Matom/s | 183 GB/s |
-| ATOMG serial chain, 148 SMs | 5,857 Matom/s | **750 GB/s** |
-| REDG fire-and-forget, 148 SMs × 1024 threads | 22,400 Matom/s | **2,867 GB/s** |
-| Contended to 1 CL (bulk test) | 13,934 Matom/s | 1,780 GB/s |
+| pattern | threads/SM | total threads | rate | CL-traffic BW |
+|---|---:|---:|---:|---:|
+| ATOMG serial chain, 1 SM × 32 thd | 32 | 32 | 76 Matom/s | 10 GB/s |
+| ATOMG serial chain, 148 SM × 32 thd | 32 | 4,736 | 5,857 Matom/s | 750 GB/s |
+| ATOMG serial chain, 148 SM × 1024 thd | 1,024 | 151,552 | **22,662 Matom/s** | **2,901 GB/s** |
+| REDG fire-and-forget, 148 SM × 1024 thd | 1,024 | 151,552 | 22,349 Matom/s | 2,861 GB/s |
+| Contended on 1 CL, 148 SM × 32 thd | 32 | 4,736 | 13,934 Matom/s | 1,780 GB/s |
+
+**LOCAL atomic peak ≈ 2.9 TB/s** at full thread count, regardless of ATOMG/REDG variant. Earlier 750 GB/s figure was thread-limited (only 4,736 threads; each per-thread serial chain at 590 cy doesn't saturate L2 atomic unit chip-wide). With max threads (151K), both ATOMG and REDG hit the same ~2.9 TB/s L2 atomic unit capacity.
+
+**REMOTE atomic max** (148 × 1024 thd × 256 atoms):
+- ATOMG serial: 8,826 Matom/s = **1,130 GB/s** CL-traffic  
+- REDG fire-and-forget: 8,810 Matom/s = **1,128 GB/s**
+
+Both remote modes hit the same ~1.13 TB/s ceiling — thread-scaling helps but NVLink / peer atomic packet rate is the ultimate bound. Remote is **39% of local atomic throughput**. The 1.13 TB/s "CL-traffic" exceeds the 900 GB/s link cap because atomics use sub-CL packets; actual NVLink bytes are ~560 GB/s, well within peak.
 
 Local atomics can saturate the on-chip L2 atomic path well above NVLink's 900 GB/s because they don't traverse NVLink at all. The bottleneck is L2 atomic unit capacity (~3 TB/s fire-and-forget saturation).
+
+**REMOTE atomic with fire-and-forget + max parallelism (148 × 1024 thd × 256 REDG):** **8,842 Matom/s = 1,132 GB/s** CL-traffic — ~4× higher than the 32-thread-per-SM number (292 GB/s). Earlier atomic figures were thread-count-limited, not NVLink-limited. REDG (fire-and-forget) sends a single small packet per op (no response), so NVLink packet BW is the ceiling, not CL-traffic. Actual NVLink packet bytes ~560 GB/s.
+
+Key insight: **REMOTE atomic throughput scales with thread count up to saturation at ~1.1 TB/s CL-traffic / ~560 GB/s packet BW**. With scoreboard-blocking `atomicAdd` (return used), the per-thread serial round-trip caps throughput at half that rate.
 
 **Atomic vs write/read BW context (all cross-GPU, % of 900 GB/s NVLink5 peak):**
 
