@@ -4040,3 +4040,19 @@ With clock placed AFTER writes and BEFORE fence, pure fence cost measures only t
 - REMOTE fence ≈ LOCAL + drain-of-in-flight-queue, capping at ~96K cy / 50 µs
 - Once W > ~100, warp is already throttled by NVLink; fence drains only the remainder
 - Sweet spot: don't fence more than once per ~50 µs of cross-GPU work
+
+### Atomic BW framing clarification (u32 vs u64)
+
+The **137 Gatomic/s LOCAL unique peak** is the SAME rate for u32 and u64 (148 × 32 × 32 threads, unique addresses, 1,000 atoms each). The "4.4 TB/s CL-traffic" figure used **32B atomic granularity** (HW atomic unit operates on 32B blocks):
+
+| framing | u32 (4B) | u64 (8B) |
+|---|---:|---:|
+| ops/s | 137.1 Gatom/s | 137.0 Gatom/s |
+| data read only (1 × sz) | 549 GB/s | 1,096 GB/s |
+| data R+W (2 × sz) | 1,097 GB/s | 2,192 GB/s |
+| 32B-granularity (atomic unit) | **4,389 GB/s** | **4,385 GB/s** |
+| 128B full-CL (overstated) | 17,555 GB/s | 17,539 GB/s |
+
+Reality check: the 4.4 TB/s fits within HBM3e peak (~8 TB/s) since test data (620 MB) exceeds L2 (128 MB); atomics hit HBM. The "17.5 TB/s" full-CL number is an accounting artifact — atomics don't actually transfer 128 B each, just read+write 4-8 B of the target word (the rest of the CL is dormant).
+
+For u64, payload R+W is 2.2 TB/s, so at 8 TB/s HBM peak we use ~28% of memory BW. The bottleneck is L2 atomic unit rate (~137 Gops/s), not memory bandwidth.
