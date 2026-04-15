@@ -3288,6 +3288,17 @@ Throughput per warp: 32 threads do 32 atoms in parallel but each serialized chai
 
 Local atomic contention gets a 2.4× throughput boost from cache-line merging at L2. Remote contention only gets +25% — the NVLink-bound throughput is the ceiling. Peak cross-GPU atomic rate is ~2.3-2.9 Gops/s (≈ 300-370 MB/s effective payload). Linear scaling in SM count up to 148 with no saturation → throughput limit is at the remote L2's atomic unit or NVLink request rate, not per-link BW.
 
+**Atomic vs write/read BW context (all cross-GPU, % of 900 GB/s NVLink5 peak):**
+
+| operation | effective BW | % peak |
+|---|---:|---:|
+| WRITE (coalesced STG, event-timed) | 718 GB/s | **80%** |
+| READ (.cg cache-defeat) | 820 GB/s | **91%** |
+| atomic unique (CL-traffic) | 292 GB/s | 32% |
+| atomic contended (CL-traffic) | 365 GB/s | 41% |
+
+Atomics are fundamentally half-duplex (request + ACK round trip per op) so they reach at most ~45% of one-direction BW. Reads and writes can pipeline, so they approach the link cap.
+
 ### Multi-GPU fence.sys cost — cross-GPU writes pay ~18K cy NVLink drain
 
 System: 2× B300 SXM6 AC connected by NV18 (18 NVLinks × 53.125 GB/s = ~900 GB/s (18 NVLink5 × 50 GB/s per direction, data-only; nvidia-smi's 53.125 GB/s/link includes protocol overhead) peer BW). Standalone tool `multigpu/MGFenceBench.cpp` allocates buffer A on a remote GPU via P2P, then launches kernel on primary GPU that writes to remote A, then fences. Clock placed after writes to isolate pure-fence time.
