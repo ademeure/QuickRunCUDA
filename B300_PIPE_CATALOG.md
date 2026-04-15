@@ -4056,3 +4056,24 @@ The **137 Gatomic/s LOCAL unique peak** is the SAME rate for u32 and u64 (148 ×
 Reality check: the 4.4 TB/s fits within HBM3e peak (~8 TB/s) since test data (620 MB) exceeds L2 (128 MB); atomics hit HBM. The "17.5 TB/s" full-CL number is an accounting artifact — atomics don't actually transfer 128 B each, just read+write 4-8 B of the target word (the rest of the CL is dormant).
 
 For u64, payload R+W is 2.2 TB/s, so at 8 TB/s HBM peak we use ~28% of memory BW. The bottleneck is L2 atomic unit rate (~137 Gops/s), not memory bandwidth.
+
+### LOCAL atomic packet coalescing (atomicAdd, stride sweep within warp)
+
+HW groups atomic requests within a warp-instruction into **32B packets**. Threads whose addresses fall in the same 32B block get merged into ONE packet. This only applies cleanly to `atomicAdd` (other ops may not coalesce the same way).
+
+**148 × 32 × 32 threads, 1,000 atoms each, stride_B between adjacent threads (gtid × stride_B):**
+
+| stride_B | threads/32B block | packets/warp-inst | semantic Matom/s |
+|---:|---:|---:|---:|
+| 4   | 8 (max pack) | 4  | **372,364** |
+| 8   | 4            | 8  | 364,308 |
+| 16  | 2            | 16 | 269,665 |
+| 32  | 1            | 32 | 176,428 |
+| 64  | 1 (spread)   | 32 | 141,373 |
+| 128 | 1            | 32 | 136,903 |
+| 256 | 1            | 32 | 137,027 |
+| 512 | 1            | 32 | 133,526 |
+
+**Peak LOCAL atomicAdd = 372 Gatomic/s at stride=4B** (8:1 coalesce benefit). My earlier "137 Gatom/s" figure used stride=256B (no coalescing) — valid as a "minimum" rate but NOT the peak. Peak semantic rate with tight packing is 2.7× higher.
+
+**Design note**: for summing counters, tightly pack them. `atomicAdd(&counters[tid])` (stride 4B → coalesced) is 2.7× faster than `atomicAdd(&counters[tid*64])` (stride 256B → uncoalesced). For min/max/xor/and/or/cas this coalescing may NOT apply (add-only semantics allows HW to sum before committing).
