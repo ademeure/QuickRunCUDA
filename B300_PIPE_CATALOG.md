@@ -7240,6 +7240,28 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# cudaDeviceGetAttribute selected additions (not in cudaDeviceProp dump above)
+
+| Attribute | Value |
+|-----------|------:|
+| `cudaDevAttrMaxGridDimX` | 2 147 483 647 (= 2³¹ − 1) |
+| `cudaDevAttrMaxPitch` | 2 147 483 647 (2 GB row pitch max) |
+| `cudaDevAttrMaxTexture1DWidth` | 131 072 (128 K 1D-tex elements) |
+| `cudaDevAttrMaxTexture2DWidth / Height` | 131 072 × 65 536 |
+| `cudaDevAttrMaxTexture3DWidth / H / D` | 16 384 × 16 384 × 16 384 |
+| `cudaDevAttrReservedSharedMemoryPerBlock` | **1 024 bytes** — explains the 228-KB pool vs 227-KB opt-in gap |
+| `cudaDevAttrSingleToDoublePrecisionPerfRatio` | **64** (FP32 pipe 64× FP64 pipe; our measured 76× ratio is close) |
+| `cudaDevAttrSparseCudaArraySupported` | 1 (sparse texture arrays work) |
+| `cudaDevAttrHostRegisterReadOnlySupported` | 0 (no read-only host registration) |
+| `cudaDevAttrCanFlushRemoteWrites` | 0 |
+| `cudaDevAttrTccDriver` | 0 (Linux default driver, not TCC — no low-level Windows path) |
+
+**Surprises / useful numbers**:
+- **1 KB reserved smem per block** — bookkeeping overhead the HW adds to every CTA. Accounts for the 228 KB SM pool - 227 KB max-per-CTA = 1 KB discrepancy.
+- **FP32/FP64 ratio = 64:1** per NVIDIA spec attr, matches our measured DFMA 0.95 TFLOPS (72.3 TFLOPS FFMA / 0.95 TFLOPS DFMA = 76×).
+- **SparseCudaArray supported** — sparse textures exist, but rarely used in compute kernels.
+
+
 # cudaMemset throughput — approaches HBM write peak
 
 | Size | µs | GB/s |
