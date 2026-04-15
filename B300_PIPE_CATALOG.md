@@ -5233,3 +5233,26 @@ For mixed MUFU+FMA workloads (e.g., softmax normalization), place MUFU in a sepa
 | warps_active | 31.20% of peak |
 
 In compute-bound kernels, `math_pipe_throttle` dominates. For memory-bound kernels, expect `long_scoreboard` to dominate instead. The `smsp__average_warps_issue_stalled_*` family of metrics is the best way to diagnose what's slowing a kernel.
+
+### Memory-bound vs compute-bound stall contrast
+
+Same metric suite, different kernels:
+
+**Compute-bound FFMA2 2:1 IADD** (ncu):
+- math_pipe_throttle: 3.92 warps/issue (dominant)
+- long_scoreboard: 0
+- wait: 0.99
+- warps_active: 31%
+
+**Memory-bound cache-defeat read (148 × 1024 × W=32)**:
+- long_scoreboard: **28.49 warps/issue (dominant!)** — waiting on DRAM
+- wait: 2.70
+- math_pipe_throttle: 0.04
+- warps_active: 49%
+
+**Diagnostic rule**: 
+- If `long_scoreboard` ≫ others → memory-bound (waiting for L2/DRAM). Add more warps/ILP to hide latency.
+- If `math_pipe_throttle` ≫ others → compute-bound at peak. Already optimal, or switch to higher-FLOP instructions (tensor cores).
+- If `wait` dominates → dependency chain too tight; add more independent chains.
+- If `short_scoreboard` dominates → waiting on shared memory; check bank conflicts.
+- If `membar` dominates → too many fences; consolidate synchronization.
