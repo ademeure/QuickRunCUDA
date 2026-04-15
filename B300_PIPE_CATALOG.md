@@ -4168,3 +4168,20 @@ Measured sustained HBM3e on B300 at full chip:
 At low W (< 64), writes stay in L2 cache (L2 absorbs → DRAM BW near zero). Above W ~ 64 the data exceeds L2 and spills to DRAM. Reads always hit DRAM since addresses are unique per iter in the cache-defeat kernel.
 
 The 75% HBM efficiency gap may be due to row-buffer conflicts / access pattern suboptimality. Writes are STG.E.STRONG.SYS which forces chip-coherent semantics — possibly less optimal than non-STRONG stores.
+
+### Compute throughput via ncu (FFMA + HMMA)
+
+**FFMA peak** (`tests/bench_ffma_peak.cu`, 148×256 threads, fully unrolled 8-chain):
+- smsp FFMA rate: 34,355.79 inst/ns chip-wide
+- sm_pipe_fma utilization: **99.08% of peak sustained**
+- = **34.36 TFFMA/s = 68.7 TFLOPS FP32**
+- Theoretical: 148 SMs × 4 SMSPs × 32 lanes × 1 FFMA/cy × 1920 MHz = 36.4 TFFMA/s
+- Measured 94% of theoretical (remainder: occasional SMSP idle)
+
+**HMMA peak** (`tests/bench_hmma_peak.cu`):
+- Tensor pipe rate: 139.48 inst/ns chip-wide
+- sm_pipe_tensor utilization: **99.45% of peak**
+- Shape-dependent FLOPs (16×8×16 FP16 = 4096 ops/inst, or 16×16×16 = 8192):
+  - 4096 ops/inst: **571 TFLOPS FP16→FP32**
+  - 8192 ops/inst: **1,143 TFLOPS**
+  - B300 spec ~1,980 TFLOPS FP16 dense → matches if HMMA shape is larger
