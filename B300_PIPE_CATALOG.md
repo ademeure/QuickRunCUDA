@@ -5022,3 +5022,18 @@ Manual shfl_xor-based reduction, depth = # of levels:
 Average marginal cost per shfl_xor in a chain: **~30 cy** (serial dependency via add-reduction).
 
 Compare CREDUX `__reduce_add_sync` = **56 cy for full 5-level equivalent** (2.9× faster than 162 cy manual tree). This is why CREDUX HW is a clear win when available.
+
+### Fast-math intrinsics vs exact (chained, 8 independent)
+
+| op | inst/ns | speedup vs exact |
+|---|---:|---:|
+| `__fsqrt_rn` (HW-fast) | 649 | 2.28× vs `sqrtf` |
+| `sqrtf` (exact) | 284 | (baseline) |
+| `__frsqrt_rn` (HW-fast) | 763 | 2.69× vs `rsqrtf` |
+| `rsqrtf` (exact) | 284 | (baseline) |
+| `__fdividef` | 284 | — |
+| `1.0f / x` (exact) | 284 | (compiler fuses to same as __fdividef) |
+
+The `__*_rn` intrinsics skip the Newton-Raphson polish step (accepting ~2-3 ULP error) and run **2.3-2.7× faster** than the precise IEEE versions. For deep-learning / graphics where final-bit accuracy isn't needed, always prefer the fast intrinsics.
+
+`__fdividef(1.0f, x)` and `1.0f/x` produce identical SASS — compiler auto-promotes reciprocal divisions. Still, using `__fdividef` explicit makes intent clear.
