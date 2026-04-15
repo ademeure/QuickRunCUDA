@@ -4636,3 +4636,21 @@ Single warp × N-way ILP (N outstanding loads per thread):
 Compare to earlier warps/SM sweep (8 warps × 1 ILP = 294 GB/s). **ILP and warps are interchangeable for latency hiding** — you can have 8 warps × 1 ILP OR 1 warp × 8 ILP and get the same chip-wide BW.
 
 **Rule of thumb for memory-bound kernels**: target `warps × ILP ≥ 16` to approach HBM saturation. Choose between them based on register budget (ILP needs more registers) vs occupancy constraints.
+
+### Warp reduce primitives (CREDUX HW path)
+
+1 warp × 1000 chained iters:
+
+| reduce op | cy/iter |
+|---|---:|
+| `__reduce_min_sync` / `min.s32` | **29** (fastest) |
+| `__reduce_max_sync` / `max.s32` | 29 |
+| `__reduce_add_sync` | 56 |
+| `__reduce_or_sync`  | 56 |
+| `__reduce_and_sync` | 56 |
+| `__reduce_xor_sync` | 56 |
+| Manual shfl_xor 5-level tree | **162** |
+
+**HW `CREDUX` path beats shfl-tree by 2.9-5.6×.** min/max are 2× faster than add — the reduce HW has a dedicated compare unit that's faster than the adder. Use `__reduce_*_sync` over shfl-xor patterns whenever possible.
+
+Note: `__reduce_*_sync` requires SM 80+ (Ampere+), and only compiles to real CREDUX on SM 90+ (Hopper/Blackwell). On older cards it falls back to shfl trees.
