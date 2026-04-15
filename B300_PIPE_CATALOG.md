@@ -6975,3 +6975,21 @@ Combined launch overhead breakdown:
 
 So a real "fire-and-forget" launch on B300 ≈ 2 μs. For batched dispatch, persistent kernels save this 2 μs per iter.
 
+
+## ld.shared variants (single warp)
+
+| Op | cy/load |
+|----|---------|
+| ld.shared.u32 (varying address) | 53 |
+| ld.shared.v2.u32 | 23 (likely partial DCE) |
+| ld.shared.v4.u32 | 23 (likely partial DCE) |
+| ldmatrix.x1 | 41 |
+| ldmatrix.x4 | 47 |
+
+Single-load smem latency: ~25-50 cy depending on variant. Lower than DRAM 199 cy, slightly higher than L1 12 cy.
+
+For peak smem throughput, use:
+- **ld.shared.v4.u32** for 16B per-lane loads (sequential data)
+- **ldmatrix.x4** for tensor-core feed patterns (8x8 tiles, transposed)
+- Plain ld.shared.u32 only for scalar reads
+
