@@ -6094,3 +6094,60 @@ All shfl variants take **exactly 6 cy** — the warp shuffle network treats broa
 
 Unlike `atom.add.release.gpu` (872 cy = 17× tax), mbarrier already has release semantics built in — adding the `.release` qualifier costs nothing extra. This is why mbarrier is the recommended primitive for synchronizing TMA / async ops on Blackwell.
 
+
+---
+
+# B300 Physical Architecture: 10 GPCs
+
+Tested via `mov.u32 %0, %%smid` from CTA 0 across 512 launched blocks:
+
+## GPC structure (verified)
+
+| GPC | SMs | SM range |
+|-----|-----|----------|
+| 0 | 16 | 0-15 |
+| 1 | 16 | 16-31 |
+| 2 | 16 | 32-47 |
+| 3 | 16 | 48-63 |
+| 4 | 16 | 64-79 |
+| 5 | 16 | 80-95 |
+| 6 | 16 | 96-111 |
+| 7 | 16 | 112-127 |
+| 8 | 16 | 128-143 |
+| **9 (partial)** | **4** | **144-147** |
+| **Total** | **148** | |
+
+So **B300 in this configuration has 10 GPCs**: 9 fully-enabled with 16 SMs each (144) + 1 partial GPC with 4 SMs (4). All 148 active SMs hit by 148+ CTAs.
+
+## CTA scheduler placement pattern
+
+For 512 CTAs launched, the order CTA 0..15 → SM:
+
+```
+CTA  0 → SM 142   (partial GPC 8/9)
+CTA  1 → SM 143
+CTA  2 → SM 144   (last GPC)
+CTA  3 → SM 145
+CTA  4 → SM 146
+CTA  5 → SM 147
+CTA  6 → SM 0     (start GPC 0)
+CTA  7 → SM 1
+CTA  8 → SM 16    (GPC 1)
+CTA  9 → SM 17
+CTA 10 → SM 32    (GPC 2)
+CTA 11 → SM 33
+...
+```
+
+**The scheduler**:
+1. Fills the smallest/last GPCs FIRST (CTAs 0-5 → SMs 142-147)
+2. Then **round-robins 2 CTAs per GPC** across all GPCs (0,1 to GPC0; 2,3 to GPC0+16; etc.)
+3. After hitting all 9 full GPCs (18 CTAs), starts a new pass
+
+This is **GPC-aware load balancing** — it spreads work across GPCs to avoid hot spots and balance L2 partition usage.
+
+**Implications**:
+- Don't assume `blockIdx.x` correlates with physical SM number
+- Use `%smid` if you need physical placement (for L2-side awareness)
+- The GPC-aware scheduling can affect L2 partition pressure — adjacent CTAs may target same L2 partition
+
