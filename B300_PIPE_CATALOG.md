@@ -4570,3 +4570,18 @@ Loop overhead ~22 cy, so subtract that for raw per-SR cost:
 | `%warpid` | 51 | **~29** (warp-resident, multi-cycle SR) |
 
 Most special registers are 1-2 cy ("free") because they're warp-cached. `%smid` and `%warpid` are multi-cycle reads (20-30 cy) — probably not cached, or require handshake with SM state. Avoid reading these in tight loops; read once and reuse.
+
+### CTA → SM placement mapping (deterministic, not identity)
+
+Launching 148 CTAs × 32 threads, each reads `%smid`:
+
+- **Deterministic across runs** — identical mapping every launch
+- **NOT identity**: `blockIdx.x == %smid` holds only for 2/148 CTAs
+- Enumeration pattern (first 16 CTAs): `[142, 143, 144, 145, 146, 147, 0, 1, 16, 17, 32, 33, 48, 49, 64, 65, ...]`
+- Pattern looks like GPC/TPC scheduling: CTAs 0-5 → SMs 142-147 (last GPC's last 6 SMs), then SM 0,1 (first TPC), 16,17 (second TPC), etc.
+
+**Practical implication**: `if (blockIdx.x == k)` is NOT the same as "this CTA runs on SM k". If you need per-SM logic (e.g. SM-local coordination), read `%smid` at runtime and dispatch by that, not by `blockIdx.x`.
+
+For 296 CTAs (2 per SM): only 142/148 SMs get both rounds from the first 148 CTAs — launch scheduler may occupy fewer SMs than expected if CTAs overlap in timing.
+
+See `side_aware.cu` for an SMID-aware algorithm that uses this mapping explicitly.
