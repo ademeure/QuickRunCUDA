@@ -6546,3 +6546,49 @@ Chip-wide peak instruction rate (4 SMSP × 148 SM × 1.92 GHz):
 - Pure FFMA: 18.3 inst/cy/SMSP × 4 × 148 × 1.92 = ~21 Tinst/s
 - ALU+FMA dual: 23.3 inst/cy/SMSP × 4 × 148 × 1.92 = ~26 Tinst/s
 
+
+---
+
+# SASS-Level Tensor Core Encoding
+
+Examined SASS dumps from compiled tcgen05 kernels:
+
+## tcgen05.mma → SASS
+
+| PTX kind | SASS opcode |
+|----------|-------------|
+| kind::f16 | `UTCQMMA gdesc[URx], gdesc[URy], tmem[URz], tmem[URw], idesc[URk], !UPT` |
+| kind::tf32 | `UTCQMMA ...` (same opcode, different idesc) |
+| kind::f8f6f4 | `UTCQMMA ...` (same) |
+| kind::f8f6f4.sp (sparse) | `UTCQMMA ...` (same) |
+| **cta_group::2 (any kind)** | **`UTCQMMA.2CTA ...`** (one modifier!) |
+
+**Critical insight**: ALL tcgen05.mma variants compile to the **single `UTCQMMA` SASS opcode**. Data type, sparsity, M/N shape — all encoded in the **idesc operand**, not the instruction. The hardware tensor pipe is **unified** across all kinds.
+
+This explains how a single MMA pipe per SM handles FP4/FP6/FP8/BF16/FP16/TF32 with different throughputs — the same hardware path interprets the idesc bits to route to appropriate datapath width.
+
+## Surrounding instructions (per UTCQMMA)
+
+```
+@P0 ELECT P1, URZ, PT             ; pick 1 thread from warp
+UTCQMMA gdesc[UR6], gdesc[UR4], tmem[UR10], tmem[UR12], idesc[UR13], !UPT
+@P1 PLOP3.LUT P0, PT, P1, PT, ... ; predicate flip for next iter
+```
+
+The `ELECT` instruction is key — only ONE thread per warp issues each MMA. The `U` prefix on UTCQMMA means **uniform datapath** (one per warp, not per lane). This is the secret to high efficiency: minimal instruction-issue overhead per MMA.
+
+## Hopper-style mma.sync → SASS
+
+| PTX | SASS opcode |
+|-----|-------------|
+| mma.sync.m16n8k16.f32.f16.f16.f32 | **`HMMA.16816.F32`** |
+
+Different SASS opcode. The HMMA path = legacy Hopper-style tensor core (slow on B300 = 80 TFLOPS vs 2325 for tcgen05).
+
+## Other UTC* opcodes seen
+
+- `UTCATOMSWS` : Used by tcgen05.alloc/dealloc (atomic slot-write)
+- `UTCBAR` : tcgen05 barrier (commit)
+
+These are uniform-path tcgen05 control instructions.
+
