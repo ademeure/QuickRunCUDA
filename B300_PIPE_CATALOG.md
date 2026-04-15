@@ -7240,6 +7240,37 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# Warp scheduling order on SM — HIGH warpid starts first
+
+32-warp CTA, each warp records its clock64 at launch. Sorted by arrival time:
+
+```
+warpid=30  t=+    0 cy    (first arrival — reference point)
+warpid=29  t=+    2 cy
+warpid=31  t=+    2 cy
+warpid=28  t=+    4 cy
+warpid=25  t=+   16 cy
+warpid=26  t=+   27 cy
+…
+warpid= 1  t=+  104 cy
+warpid= 2  t=+  110 cy
+warpid= 0  t=+  114 cy    (last — 114 cy = 57 ns behind first)
+warpid= 3  t=+  114 cy
+```
+
+**Findings:**
+
+1. **Warps arrive in roughly DESCENDING warpid order** — the highest-numbered warps (28-31) start first.
+2. **Spread is ~114 cy = 57 ns** from first to last within the same CTA.
+3. **Not strictly monotonic** within groups — 4 SMSPs each schedule ~8 warps with slight asymmetry.
+4. Cluster structure visible: 4 groups of 8 (0-7, 8-15, 16-23, 24-31) — each SMSP processes one group.
+
+**Implications**:
+- Don't rely on low-warpid running first — if you have producer/consumer split, assign the producer role to HIGH-warpid warps.
+- The 57 ns spread is negligible for long-running work but may matter for very short kernels (< 1 µs).
+- Warpgroup-style specialization patterns (`warpgroup_id = warpid / 4`) must account for this non-uniform start.
+
+
 # Device runtime limits (default)
 
 Queried via `cudaDeviceGetLimit`:
