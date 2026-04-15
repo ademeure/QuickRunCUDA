@@ -4535,3 +4535,19 @@ Blackwell has 2 register banks (odd/even). Instructions reading 3 register opera
 **Design**: when compiler has a choice, prefer constants as multiplier/addend inputs. Keep accumulator chains independent. For hand-tuned SASS, stagger register bank allocation (`.reg .f32 %R0<even>, %R1<odd>, …`) to minimize 3-operand bank conflicts.
 
 Compiler already does register-bank-aware allocation in most cases — this 35% gap only shows when you force all-register 3-operand FMA chains with dependency.
+
+### L1 eviction hints + cache policies (1 thread pointer chase, warm 256-CL working set)
+
+| policy | cy/load | L1 | notes |
+|---|---:|---|---|
+| `ld.global.ca` (cache all) | 52 | yes | default L1-cached path |
+| `ld.global.L1::evict_first`  | 52 | yes | same latency, evicts sooner under pressure |
+| `ld.global.L1::evict_last`   | 52 | yes | same latency, evicts later |
+| `ld.global.L1::evict_unchanged` | 52 | yes | same latency, keeps if unmodified |
+| `ld.global.cg` (cache global) | **295** | NO | L2 only |
+| `ld.global.cv` (cache volatile) | 294 | NO | L2 only, uncacheable |
+| `ld.global.L1::no_allocate` | 295 | NO | explicit L1 bypass |
+
+**L1 hit ~52 cy, L2 hit ~295 cy** (5.7× slower). The L1 *eviction hints* (`::evict_*`) don't change HIT latency — they modify cache-line placement for future references when L1 is under pressure. Useful for streaming patterns where you can hint the compiler which lines you'll reuse.
+
+For single-thread pointer chase with small hot working set, `.ca` (L1-cached) is optimal. For streaming reads where lines won't be reused, use `.cg` or `L1::no_allocate` to avoid L1 pollution.
