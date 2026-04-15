@@ -7069,3 +7069,46 @@ For real AI throughput, you MUST use tensor cores:
 
 The HFMA2/FFMA2 path is for "exotic" non-GEMM kernels (FFTs, special functions). For matmul, never use HFMA2.
 
+
+---
+
+# Atomic Contention at Scale (Critical for Histograms / Reductions)
+
+## Single address, varying CTA count
+
+| Blocks (× 32 lanes) | cy/atom | Atoms/cy chip-wide |
+|---------------------|---------|---------------------|
+| 1 | 51 | 0.6 |
+| 2 | 51 | 1.3 |
+| 4 | 51 | 2.5 |
+| 8 | 51 | 5.0 |
+| 16 | 51 | 10 |
+| 32 | 51 | 20 |
+| **148 (full chip)** | **132** | **36 atoms/cy = 69 G atoms/s** |
+
+L2 atomic unit handles up to 32 simultaneously-contending CTAs at the same 51 cy. Beyond that (148 CTAs), slows to 132 cy = 2.6× — still surprisingly good given 100% contention.
+
+## 148 CTAs varying ADDRESS spread
+
+| Distinct addresses | cy/atom | Notes |
+|--------------------|---------|-------|
+| 1 | 132 | all-same, L2 serializes well |
+| **4 (same cacheline!)** | **1301 (10× WORSE)** | **CACHE LINE THRASHING** |
+| 16 (1 cache line) | 540 | thrashing eases |
+| 64 (4 cache lines) | 373 | improves |
+| 256 (16 cache lines) | 255 | converges |
+| 1024 | 258 | flat |
+| 4096 | 260 | flat |
+
+**🚨 Catastrophic finding**: Atomics on 4 addresses within the same 32B cacheline are **10× SLOWER** than atomics on a single address! This is L2 cache line ping-ponging — the 4 atomic sites force the cache line to bounce between L2 slices.
+
+**Design rules for histograms / reductions on B300**:
+1. **Best**: single global counter (132 cy, 36 atoms/cy chip)
+2. **WORST**: small counter array (4-8 counters in same cacheline) — avoid!
+3. **Good**: spread counters across cachelines (≥16 distinct lines, 64+ counters): 255 cy
+4. **Inflection**: beyond ~256 counters across distinct cachelines, no further improvement
+
+For per-warp privatization (typical histogram pattern), use:
+- `counter[blockIdx.x * 32 + warpIdx + base]` to give each warp a UNIQUE cacheline
+- NEVER pack multiple counters into one cacheline if they're hot atomics
+
