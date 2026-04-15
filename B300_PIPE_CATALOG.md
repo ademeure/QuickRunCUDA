@@ -7240,6 +7240,49 @@ With 64 FMAs, overlap adds ~230 cy over pure load. FMAs are no longer free — t
 **Practical**: for each cold DRAM load, interleave up to **~40 FFMAs** for free. Beyond that, each extra FMA pays its dispatch cycle.
 
 
+# Device runtime limits (default)
+
+Queried via `cudaDeviceGetLimit`:
+
+| Limit | Default value |
+|-------|--------------|
+| `cudaLimitPrintfFifoSize` | **9 699 328 bytes (9.2 MB)** |
+| `cudaLimitStackSize` | **1 024 bytes / thread** |
+| `cudaLimitMallocHeapSize` | **8 MB** (device-side `malloc`/`new`) |
+| `cudaLimitPersistingL2CacheSize` | 24 MB (settable up to L2/2 = 63 MB) |
+| `cudaLimitDevRuntimePendingLaunchCount` | (query if using DP) |
+
+**Per-thread stack = 1 KB** is surprisingly small. Kernels with deep recursion (e.g., sort, tree traversal) or large local arrays will spill. Increase via `cudaDeviceSetLimit(cudaLimitStackSize, 8192)` before launching.
+
+**printf FIFO = 9.2 MB** supports tens of thousands of messages per run, plenty for debugging. Overflow behavior: messages dropped silently.
+
+
+# cudaMallocAsync memory pool — default release behavior
+
+Default memory pool attributes on B300:
+
+| Attribute | Default |
+|-----------|---------|
+| `cudaMemPoolAttrReleaseThreshold` | **0** (release to OS on every free) |
+| `cudaMemPoolAttrReservedMemCurrent` | (tracked live) |
+| `cudaMemPoolAttrReservedMemHigh` | (tracked live) |
+
+After a 48 MB alloc: Reserved = 64 MB (rounded to pool block size), Used = 48 MB.
+After free: Reserved drops to 0 (default threshold = 0 means release immediately).
+
+**For repeated alloc/free patterns**, set a release threshold to keep memory resident in the pool:
+```cpp
+uint64_t threshold = 256 * 1024 * 1024;  // 256 MB
+cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold, &threshold);
+```
+
+Without this, each `cudaFreeAsync` hands memory back to the OS, and the next `cudaMallocAsync` of similar size has to request OS pages again (slower than pool-hit but still much faster than legacy `cudaMalloc`).
+
+**Practical for iterative workloads**:
+- Set release threshold = expected working set × ~1.5 to avoid churn.
+- Call `cudaMemPoolTrimTo(pool, 0)` at cleanup to fully release.
+
+
 # Minimum empty-kernel launch time
 
 | Configuration | µs (best of 100 trials) |
