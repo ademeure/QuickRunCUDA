@@ -14669,3 +14669,46 @@ HFMA2 and FFMA use **different FMA pipes** and co-issue with zero additional cos
 
 **LSU throughput**: ~5.75 cy per load with 4-way ILP, identical for all load widths. The benefit of wider loads (float4 vs float) is not latency but **bandwidth** — one LDG.128 moves 4× more data per LSU slot than LDG.32.
 
+
+# HBM Bandwidth Scaling with SM Count
+
+2 GB working set, float4 vectorized, 4 blocks per SM at 256 threads:
+
+## Read-only bandwidth
+
+| Active SMs | Read BW (GB/s) | % HBM peak | Per-SM BW |
+|-----------:|---------------:|-----------:|---------:|
+| 1 | 51 | 0.7% | 51 GB/s |
+| 4 | 204 | 3% | 51 GB/s |
+| 8 | 439 | 6% | 55 GB/s |
+| 16 | 1044 | 14% | 65 GB/s |
+| 37 (1/4 chip) | 3721 | 50% | 101 GB/s |
+| 74 (1/2 chip) | 6072 | 82% | 82 GB/s |
+| **148 (full)** | **7033** | **95%** | 48 GB/s |
+
+**7.0 TB/s read at full chip — 95% of theoretical HBM peak.** Bandwidth scales linearly up to ~37 SMs (50% of peak at 25% of SMs), then saturates. Per-SM bandwidth peaks at ~100 GB/s with 37 SMs — at full occupancy, each SM gets ~48 GB/s.
+
+## Write-only bandwidth
+
+| Active SMs | Write BW | Notes |
+|-----------:|---------:|-------|
+| 1 | 109 | 2× read per SM! |
+| 74 | 6190 | 84% peak |
+| 148 | 6072 | Slightly lower (queue contention) |
+
+Write bandwidth per SM is **2× read** at low SM count (write-combining is more efficient). At full chip, write achieves 6.1 TB/s (82%).
+
+## Copy (R+W simultaneous)
+
+| Active SMs | Per-dir BW | Total R+W | Efficiency |
+|-----------:|-----------:|----------:|-----------:|
+| 74 | 3195 | **6391** | **80%** |
+| 148 | 1424 | 2849 | 36% (!) |
+
+**Full-chip R+W copy regresses to 36% efficiency** — severe memory controller contention when all 148 SMs issue simultaneous reads AND writes. **74 SMs achieves 2.2× the total R+W bandwidth of 148 SMs.** This is a critical finding for kernels that do both heavy reads and writes (e.g., elementwise ops, layer norm).
+
+**Practical**:
+- **Read-only kernels**: use all SMs (7.0 TB/s)
+- **Write-only kernels**: use all SMs (6.1 TB/s)
+- **R+W kernels**: best with ~half the SMs (74 SMs = 6.4 TB/s total R+W) — launching fewer persistent blocks can paradoxically increase memory throughput
+
