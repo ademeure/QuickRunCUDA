@@ -4952,6 +4952,63 @@ SHFL is fully pipelined with 6-stage pipeline (24/4 = 6). With ≥6 independent 
 
 Local memory (register spill) = **43 cy** per load — approximately L1 cache latency (39 cy) + addressing overhead. Register access = 0 cy (part of FMA pipeline). **Spilling costs 10× vs register access.**
 
+### LSU pipeline depth
+
+| Outstanding loads | cy/load | Notes |
+|------------------:|--------:|-------|
+| 1 | 4.06 | Issue-rate limited |
+| 4 | 1.12 | ~4× speedup |
+| **8** | **0.56** | **Pipeline saturated** |
+| 16 | 4.05 | Register spill kills throughput |
+
+**8 outstanding loads saturate the LSU pipeline** (0.56 cy/ld = ~2 loads/cy). Beyond 8, register pressure causes spills that destroy throughput. Practical unroll factor for memory loops: 4-8.
+
+### No subnormal penalty on FMA
+
+All FP32 value ranges run at identical 4.03 cy: normal, subnormal, overflow, NaN, FTZ. No data-dependent slowdown.
+
+### Load variant comparison (streaming 256 MB, chip-wide)
+
+| Variant | GB/s | vs default |
+|---------|-----:|----------:|
+| `ld.global` (default) | **1064** | baseline |
+| `ld.global.nc` (non-coherent) | 933 | -12% |
+| `ld.global.cg` (L2 only) | 929 | -13% |
+| `__ldg` (read-only/texture) | 834 | **-22%** |
+
+**On Blackwell, default `ld.global` is fastest.** The unified L1 cache outperforms the texture cache path (__ldg). This differs from Hopper where __ldg was sometimes faster. Always prefer default loads unless you specifically need non-coherent access.
+
+### Memory warps don't slow compute warps
+
+| Config | FMA cy/op |
+|--------|----------:|
+| 1 compute, 0 mem | 4.03 |
+| 1 compute, 1 mem | 4.03 |
+| 1 compute, 3 mem | 4.03 |
+| 4 compute, 4 mem | 4.11 |
+
+**Zero interference.** The warp scheduler perfectly overlaps compute (FMA pipe) and memory (LSU pipe) across different warps.
+
+### IMAD (integer multiply-add)
+
+| Metric | Value |
+|--------|------:|
+| IMAD.LO latency | **4.03 cy** (same as FFMA) |
+| IMAD.LO throughput (4 chains) | **2.08 cy/op** (dual-issue, same as FFMA) |
+| IMAD + FFMA co-issue | **4.06 cy** (both free together) |
+| DP4A (4×i8 dot) latency | **4.02 cy** |
+
+IMAD shares the FMA pipe with identical latency/throughput characteristics. IMAD + FFMA co-issue on heavy+lite sub-pipes.
+
+### Vote/match primitive costs
+
+| Operation | cy/op |
+|-----------|------:|
+| `vote.sync.ballot` | **0.14** (free) |
+| `activemask` | **0** |
+| `match.any.sync` | **8.2** |
+| `match.all.sync` | **8.2** |
+
 ### ALU (pipe_alu) throughput vs warp count
 
 | Warps | Total ALU ops/cy | Notes |
