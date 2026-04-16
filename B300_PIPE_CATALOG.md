@@ -7380,6 +7380,67 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 **Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
 
 
+# End-to-end LLM workload model on B300 (7B-parameter Llama-like)
+
+Using our measured B300 numbers to model a **single-GPU 7B LLM** (32 layers, d=4096, 32 heads, GQA 8 KV heads).
+
+## Prefill (prompt processing, seq_len=2048, batch=1)
+
+| Component | Per-layer FLOPs | OI | Measured BW/TFLOPS | Time/layer | Notes |
+|-----------|----------------:|----:|-------------------:|-----------:|-------|
+| QKV projection (3 × 4K×4K) | 3 × 2×4K³ = 411 G | 1 333 | 2 034 TF (FP16) | **0.20 ms** | compute-bound ✓ |
+| Attention QK^T (32 heads × 2K×128×2K) | 2×32×2K²×128 = 33.6 G | 250 | ~1 400 TF | 0.024 ms | borderline |
+| Attention softmax + V mul | ~33.6 G | 250 | ~1 400 TF | 0.024 ms | |
+| Output projection (4K×4K) | 137 G | 1 333 | 2 034 TF | 0.067 ms | compute-bound |
+| FFN up+gate+down (3 × 4K×11K) | 3 × 2×4K×11K = 774 G | 1 375 | 2 034 TF | **0.38 ms** | compute-bound |
+| RMSNorm + residual + SiLU | negligible | < 1 | 7.4 TB/s BW | ~0.01 ms | memory-bound, fused |
+| **Layer total** | **~1 389 G** | | | **~0.70 ms** | |
+| **32-layer total** | **44.4 TFLOP** | | | **~22.4 ms** | |
+
+**Estimated prefill throughput**: 2048 tokens / 22.4 ms = **~91 K tokens/sec** at FP16.
+
+## Decode (single-token generation, batch=1)
+
+| Component | FLOPs | Bottleneck | Time | Notes |
+|-----------|------:|------------|-----:|-------|
+| QKV proj (4K×4K × 3, batch=1) | 100 M | **Memory-bound** (weight load: 3×32 MB) | 0.013 ms | at 7.4 TB/s |
+| KV cache append | trivial | — | ~0 | |
+| Attention (1 × 2K KV) | ~1 M | Memory-bound (KV read) | 0.003 ms | |
+| Output proj (4K×4K) | 33 M | Memory-bound | 0.004 ms | |
+| FFN (3 × 4K×11K) | 258 M | Memory-bound | **0.035 ms** | 3 × 88 MB weights |
+| Pointwise (fused) | trivial | — | ~0.001 ms | |
+| **Layer total** | ~392 M | | **~0.056 ms** | **weight-loading dominated** |
+| **32-layer total** | 12.5 GFLOP | | **~1.8 ms** | |
+
+**Estimated decode throughput**: 1 token / 1.8 ms = **~555 tokens/sec** at FP16.
+
+**Decode is almost entirely memory-bound** — each token reads ~14 GB of weights (7B params × 2 bytes) through HBM. At 7.4 TB/s, minimum time = 14 GB / 7.4 TB/s = 1.89 ms. Our model predicts 1.8 ms = **96 % of HBM-limited theoretical**.
+
+## Scaling with batch size (decode)
+
+| Batch | Weight-load time | Compute time | Total | Tokens/s |
+|------:|-----------------:|-------------:|------:|---------:|
+| 1 | 1.89 ms | 0.005 ms | 1.89 ms | 529 |
+| 8 | 1.89 ms | 0.04 ms | 1.93 ms | 4 145 |
+| 32 | 1.89 ms | 0.16 ms | 2.05 ms | 15 610 |
+| 128 | 1.89 ms | 0.62 ms | 2.51 ms | 50 998 |
+| **512** | **1.89 ms** | **2.48 ms** | **4.37 ms** | **117 164** |
+
+At **batch=128-512, decode transitions from memory-bound to compute-bound**. The crossover point depends on model size:
+- 7B: batch ~128 (OI crosses tensor ridge)
+- 70B: batch ~16 (larger weights → earlier crossover)
+
+## Key B300 advantage for LLM serving
+
+| Metric | Value | Implication |
+|--------|-------|-------------|
+| HBM capacity | **268 GiB** | Fits 70B FP16 model (140 GB) + KV cache |
+| HBM bandwidth | **7.4 TB/s** | Decode @ batch=1: 555 tok/s for 7B |
+| FP16 tensor | **2 034 TFLOPS** (at 8K) | Prefill: 91K tok/s for 7B |
+| FP8 tensor | **~4 000 TFLOPS** (est.) | 2× FP16 for quantized inference |
+| NVLink | **956 GB/s** bidi | Tensor-parallel across 2 GPUs efficiently |
+
+
 # cuBLAS GEMM at scale — FP32 / TF32 / FP16 practical peaks
 
 Square GEMM (M=N=K), warm cuBLAS:
