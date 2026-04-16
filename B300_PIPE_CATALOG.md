@@ -14934,9 +14934,9 @@ B300 data: **measured** in this catalog. H100 data: published specs + industry b
 | L2 cache (MB) | 50 | **126** | 2.5× |
 | L2 bandwidth (TB/s) | 4.0 | **8.5** | 2.1× |
 | TDP (W) | 700 | 1100 | 1.6× |
-| 70B BF16 decode (tok/s) | ~7 | **17** | **2.4×** |
+| **70B BF16 decode (tok/s)** | ~7 | **40** | **5.7×** |
 | 70B concurrent (ctx=2K) | ~40 | **216** | **5.4×** |
-| 8B decode (tok/s) | ~55 | **142** | **2.6×** |
+| **8B decode (tok/s)** | ~55 | **345** | **6.3×** |
 
 **The B300 delivers 2-2.5× throughput at 1.6× power** — a meaningful efficiency improvement. The 3.6× memory capacity is the biggest jump, enabling 5.4× concurrent serving capacity. For Llama-70B, the B300 can serve the model entirely from one GPU (140 GB BF16 fits in 287 GB) while H100 requires 2-GPU tensor parallelism.
 
