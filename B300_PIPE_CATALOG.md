@@ -14878,6 +14878,21 @@ B300 data: **measured** in this catalog. H100 data: published specs + industry b
 Verified with actual `cudaMemGetInfo` free memory (283.9 GB after 3.5 GB driver overhead).
 
 
+# cuBLAS Algorithm Selection Quality
+
+cublasLt returns 8 algorithm candidates. Does the default pick the best one?
+
+| Shape | Default µs | Best µs | Worst µs | Default vs best | Spread |
+|-------|----------:|--------:|---------:|:--------------:|:------:|
+| 1×28672×8192 (decode) | 73.7 | 72.0 | 75.3 | **+2.4%** | 4% |
+| 32×28672×8192 (batch) | 69.4 | 69.4 | 84.4 | **0%** (is best!) | 22% |
+| 4096³ (compute) | 77.7 | **75.9** (1810 TF!) | 91.1 | +2.3% | 20% |
+
+**The default algorithm is within 2.3% of optimal** for all tested shapes. Algorithm auto-tuning (cublasLt heuristic search) adds minimal value — the default is nearly always correct.
+
+For compute-bound GEMMs, the spread between best and worst algorithms is ~20%. For memory-bound decode, only ~4%. **Algorithm selection matters more for compute-bound workloads.**
+
+
 # Multi-Request Serving: Overlap vs Batching
 
 3 key GEMMs per "request" (Q + Gate + Down projections, batch=1 per request):
