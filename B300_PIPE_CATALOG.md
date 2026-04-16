@@ -5033,6 +5033,18 @@ Precise ops compile to MUFU + Newton-Raphson refinement + special-case handling.
 
 All tested patterns (1-reg self-FMA, 3-reg distinct sources, cross-chain, interleaved) give identical 4.03 cy. No bank conflict penalty detected — the operand collector handles all combinations.
 
+### Bit manipulation intrinsic latency
+
+| Operation | Latency | Pipe |
+|-----------|--------:|------|
+| `__ballot_sync` (warp vote) | **8.2 cy** | adu |
+| `__popc` (population count) | ~2 cy (pipe_alu) | alu |
+| `__ffs` (find first set) | ~2 cy | alu |
+| `__clz` (count leading zeros) | ~2 cy | alu |
+| `__brev` (bit reverse) | ~2 cy | alu |
+
+The bit-manipulation ops (popc, ffs, clz, brev) run on pipe_alu at standard 2 cy throughput. `__ballot_sync` is more expensive at 8.2 cy because it requires warp-wide predicate gathering.
+
 ### Warp scheduling fairness
 
 8 warps of identical FMA work complete within **0.38%** of each other (41980–42139 cy). The scheduler is perfectly fair across warps in a CTA.
