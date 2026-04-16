@@ -15989,9 +15989,9 @@ SAXPY (read A, read+write B) achieves ~3.5 TB/s total HBM traffic at ≥74 SMs. 
 - 7680-bit memory bus (60 HBM3E channels), PCIe Gen6 x16, 4 async copy engines, ECC ON
 
 ## Measured Peaks
-| | Isolated | Sustained chain | Notes |
+| | At 2032 MHz boost | At 1800 MHz (locked) | Notes |
 |--|--------:|----------------:|-------|
-| **HBM read** | 7.0 TB/s | 2.8 TB/s (7-GEMM chain) | L2 eviction contention |
+| **HBM read** | 7.0 TB/s | 7.0 TB/s | Same — HBM independent of clock |
 | **L2 read** | 8.5 TB/s | — | 21% faster than HBM |
 | **BF16 tensor** | 1776 TFLOPS | 737 TFLOPS (60s sustained) | Zero degradation |
 | **FP8 tensor** | 3411 TFLOPS | — | 2× BF16 |
@@ -16003,7 +16003,7 @@ SAXPY (read A, read+write B) achieves ~3.5 TB/s total HBM traffic at ≥74 SMs. 
 
 | Model | Decode tok/s | Prefill tok/s | Concurrent (ctx=2K) |
 |-------|------------:|:-------------:|:-------------------:|
-| **Llama-70B BF16** | **17** (738 µs/layer, verified) | 11853 (seq=512) | **218** (verified) |
+| **Llama-70B BF16** | **40** (314 µs/layer at 2032 MHz boost) | 11853 (seq=512) | **218** (verified) |
 | Llama-70B FP8 + FP8 KV | ~30 | — | **648** |
 | **Llama-8B BF16** | **142** | — | **1019** |
 | 70B + spec decode K=7 | **62** | — | 218 |
