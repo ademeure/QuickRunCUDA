@@ -7380,6 +7380,49 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 **Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
 
 
+# Memory coalescing penalty — 8× for non-coalesced access
+
+256 MB working set, 4736 × 512 threads, u32 loads:
+
+| Pattern | GB/s | % of 7.4 TB/s | vs stride-1 |
+|---------|-----:|--------------:|------------:|
+| **Sequential (stride-1, coalesced)** | **2 303** | 31 % | 1.0× |
+| Stride-32 (each thread reads different cacheline) | 272 | 3.7 % | **8.5× slower** |
+| Random (LCG hash) | 286 | 3.9 % | **8.1× slower** |
+
+**Non-coalesced access wastes 87 % of HBM bandwidth.** When each thread in a warp reads from a different cacheline, 128 B is fetched per 4 B used = 32× bandwidth amplification.
+
+**Stride-32 ≈ random**: both patterns spread warp lanes across distinct cachelines, giving ~equal effective BW.
+
+Note: stride-1 only reaches 31 % of peak because **u32 loads are small** (4 B per thread). With uint4 loads (16 B), stride-1 reaches 85 %+. See earlier "wide load patterns" section.
+
+**Design rules**:
+- Adjacent threads must access adjacent memory (coalesced = warp reads 1-4 cachelines).
+- Scatter/gather patterns should be restructured via shared memory staging.
+- Sort/compact before global reads if possible.
+
+
+# Intra-warp load imbalance — warp waits for SLOWEST lane
+
+148 CTAs × 1024 threads, FMA compute with varying work per lane:
+
+| Pattern | Total FMAs/warp | Time | Efficiency |
+|---------|----------------:|-----:|-----------:|
+| Uniform (all lanes = 1 000 iter) | 32 K | 0.012 ms | baseline |
+| Lane-0 heavy (lane 0 = 32 K, rest = 1 K) | 63 K | **0.089 ms** (7.4×) | 31 lanes idle most of the time |
+| Linear (lane k = (k+1) × 1 K, max = 32 K) | **528 K** | **0.177 ms** (14.8×) | all lanes producing some work |
+
+**Findings:**
+- **Warp time = slowest-lane time.** In lane-0-heavy, 31 out of 32 lanes sit idle while lane 0 finishes — pure waste.
+- **Linear has 8.3× more total FMAs** than lane-0-heavy but only 2× the runtime — because more lanes are actively producing useful work.
+- **Wasted resources** from imbalance: in the lane-0-heavy case, 31/32 = 97 % of compute capacity is idle during the long tail.
+
+**Design rules**:
+- **Sort threads by expected work amount** so adjacent threads (same warp) have similar loads.
+- Use **warp-level work redistribution** (`__ballot_sync` + `__popc` to rebalance within the warp).
+- For sparse / irregular workloads: compact work items into contiguous warps before dispatch.
+
+
 # Histogram patterns: smem-privatized is 200× faster than naive
 
 64 M elements, random distribution, varying bin counts:
