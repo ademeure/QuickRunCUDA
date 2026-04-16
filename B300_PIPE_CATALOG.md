@@ -9271,7 +9271,38 @@ Square GEMM (M=N=K), warm cuBLAS:
 | 10000 | 1996 | 81.0% | |
 | 15000 | 2146 | 87.1% | |
 
-**1500³ = only 6.4% MFU** — cuBLAS has a pathological tile mismatch at this size. Always pad to power-of-2 or multiples of 256 for best performance.
+**1500³ = only 6.4% MFU** — cuBLAS has a pathological tile mismatch at this size.
+
+### CRITICAL: GEMM dimension alignment (measured, BF16)
+
+**M alignment cliff (N=K=4096):**
+
+| M | TFLOPS | MFU | Notes |
+|---:|-------:|----:|-------|
+| 4096 | 1837 | 74.5% | Clean power-of-2 |
+| **4097** | **166** | **6.7%** | **11× SLOWER from +1 element!** |
+| 4100 | 304 | 12.3% | Still 6× slower |
+| 4104 | 1613 | 65.4% | Recovers at multiple of 8 |
+| 4112 | 1768 | 71.7% | Good |
+
+**K alignment shows same pattern**: K=4097 = 188 T (**9.8× slower** than K=4096).
+
+**Prime/pathological sizes**: 4001³ = 162 T (6.6%), 4093³ = 192 T (7.8%) — all terrible.
+
+**ALWAYS pad GEMM dimensions to multiples of 8 (minimum) or 128 (optimal).** A single extra element past a tile boundary causes **10× throughput collapse**. This affects any framework with dynamic shapes (variable batch/seq).
+
+Real model sizes are fine (designed as clean multiples): Llama-7B FFN (11008) = 2045 T (83%), Llama-70B FFN (28672) = 2203 T (89%).
+
+### cuBLAS algorithm selection (measured, FP16, cublasLt heuristic)
+
+| Shape | # algos | Default | Best | Best vs worst | Notes |
+|:------|--------:|--------:|:----:|:-------------:|:------|
+| 4096³ | 8 | 1817 T | 1902 T (algo 3) | **+27%** | **Search helps 5%** |
+| 8192³ | 8 | 2249 T | 2249 T (algo 0) | +51% | Default is best |
+| 128×8192² | 8 | 653 T | 653 T (algo 0) | +26% | Default is best |
+| 4096×28672×8192 | 8 | 2202 T | 2202 T (algo 0) | **+46%** | Default is best |
+
+**Default algorithm is usually optimal or within 5%.** The worst algorithm can be up to 46% slower than the best — cuBLAS's heuristic saves you from the bad ones. Auto-tuning (e.g., `cublasLtMatmulAlgoGetHeuristic` with N>1) helps ~5% for mid-size GEMMs.
 
 ### cuBLAS with REAL model shapes (measured, BF16, cuBLAS 13.4)
 
