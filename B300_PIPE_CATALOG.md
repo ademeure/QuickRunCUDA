@@ -13987,7 +13987,7 @@ The 93 cy overhead comes from:
 
 **SETP→BRA distance is irrelevant when the predicate is ready.** The only cost is when the predicate depends on a just-computed value — then the branch stalls until the producer completes (~6 cy for FMA, ~20 cy for smem load).
 
-### Uniform branch recognition (SASS-verified)
+### Uniform branch recognition and runtime uniformity cost (SASS-verified)
 
 ptxas emits `BRA.U` (uniform branch) when the predicate comes from a uniform register:
 - **Kernel arguments** → loaded into UR* (uniform registers) → `UISETP` → `BRA.U UP0`
@@ -13995,6 +13995,22 @@ ptxas emits `BRA.U` (uniform branch) when the predicate comes from a uniform reg
 - **Loop counters from uniform path** → UR* → `BRA.U`
 
 `BRA.U` costs **0 additional cycles** for taken or not-taken. `@P0 BRA` when actually uniform at runtime also costs 0 cy (hardware detects uniformity).
+
+### Runtime uniformity does NOT eliminate BSSY cost
+
+When ptxas emits BSSY (because it can't prove uniformity at compile time), the BSSY overhead is paid even when ALL threads take the same path at runtime:
+
+| Scenario (8 FMA/side) | cy/iter | Overhead vs no-branch |
+|------------------------|--------:|----------------------:|
+| No branch (baseline) | 82 | 0 |
+| `BRA.U` (compile-time uniform via arg0) | **84** | **+2 cy** |
+| `__all_sync` uniformity check | 114 | +32 cy |
+| **BSSY, runtime-uniform (all threads same path)** | **167** | **+85 cy** |
+| BSSY, actually divergent | 265 | +183 cy |
+
+**BSSY with runtime-uniform is NOT free — it costs +85 cy** even though only one path executes. The hardware pays the BSSY/BSYNC infrastructure cost regardless. This contrasts with `BRA.U` which is genuinely free (+2 cy).
+
+**To reliably eliminate BSSY cost**: Express the condition through **kernel arguments** or **uniform registers** (UR*). This makes ptxas emit `BRA.U` instead of BSSY. If the condition must be computed from per-thread data that happens to be uniform, use `__all_sync` to convert to a uniform branch (+32 cy, still much better than BSSY's +85 cy).
 
 ### How ptxas converts explicit branches to predication
 
