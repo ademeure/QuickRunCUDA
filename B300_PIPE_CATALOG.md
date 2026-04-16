@@ -5063,6 +5063,29 @@ IMAD shares the FMA pipe with identical latency/throughput characteristics. IMAD
 | `match.any.sync` | **8.2** |
 | `match.all.sync` | **8.2** |
 
+### Multi-CTA FMA scaling (128 threads/block, persistent grid)
+
+| CTAs/SM | Warps/SM | 1-chain FMA/cy/SM | 2-chain FMA/cy/SM | Dual-issue ratio |
+|--------:|---------:|------------------:|------------------:|-----------------:|
+| 1 | 4 | 31.8 | 62.6 | **1.97×** |
+| 2 | 8 | 63.5 | 124.4 | 1.96× |
+| 4 | 16 | 126.6 | 247.3 | 1.95× |
+| 8 | 32 | 253.4 | 494.4 | 1.95× |
+| 16 | 64 | 506.7 | 988.8 | 1.95× |
+
+**Perfect linear CTA scaling** (per-warp FMA latency constant at 4.0 cy regardless of occupancy). **Dual-issue gives exactly 2× throughput at all CTA counts** — always have ≥2 independent FMA chains per thread.
+
+### Predication cost
+
+| Predication | cy/fma | Overhead |
+|-------------|-------:|---------:|
+| Unpredicated | 4.03 | — |
+| @P (any mask) | **4.22** | **+0.19 cy** |
+| @!P (negated) | 4.28 | +0.25 cy |
+| SETP alone | **free** | co-issues with FMA |
+
+Predication adds a fixed 0.19 cy per instruction, **independent of the predicate mask** (all-true, all-false, half-true = identical cost). The predicated instruction occupies the pipe regardless of the mask.
+
 ### ALU (pipe_alu) throughput vs warp count
 
 | Warps | Total ALU ops/cy | Notes |
