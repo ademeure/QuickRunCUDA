@@ -5421,7 +5421,18 @@ FMA computes `(a×b)+c` with single rounding (IEEE 754 fused). Kahan summation w
 
 **FP4 is transformative**: a 405B model fits on a single B300 (202 GB < 274 GB HBM) — impossible at FP8/FP16. 70B at FP4 achieves 120 tok/s = conversational speed for many concurrent users. NVLink TP overhead is only 3% (1.7 ms per 80 layers × 21 µs all-reduce).
 
-Real frameworks typically achieve 60-80% of these peaks. Batch-1 attention is negligible (0.2% of decode time — KV cache read = 0.03 ms vs 16.7 ms weight loading).
+Real frameworks typically achieve 60-80% of these peaks.
+
+**Attention overhead (measured KV cache streaming, 64 heads, d=128):**
+
+| seq_len | Time | % of 70B FP8 decode (16.7 ms) |
+|--------:|-----:|------------------------------:|
+| 512 | 0.23 ms | 1.4% |
+| 2048 | 0.95 ms | 5.7% |
+| 4096 | 1.84 ms | **11%** |
+| 8192 | 3.78 ms | **23%** |
+
+Attention becomes significant at seq≥4096 (11%+ of decode). At seq=8192: attention = 23% of total — no longer negligible. This is with a naive kernel (143 GB/s); flash attention implementations would be faster.
 
 **With NCCL 2-GPU TP** (70B FP8): 8.3 ms weight + 0.8 ms NCCL (80 layers × 10 µs) = 9.1 ms → **110 tok/s** (NCCL overhead = 9%).
 
