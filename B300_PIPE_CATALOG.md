@@ -14858,6 +14858,19 @@ cuBLAS uses the **maximum register allocation** — 255 registers per thread lea
 
 **12.5% occupancy** confirmed by ncu (8 warps / 64 max = 12.5%). Despite this low occupancy, the kernel achieves 6.4 TB/s HBM bandwidth — proving that occupancy is irrelevant for memory-bound decode.
 
+## ncu Memory Traffic
+
+| Metric | Value | Notes |
+|--------|------:|:-----:|
+| **DRAM read** | **469.8 MB** | Exactly the weight matrix (470 MB) |
+| DRAM write | 4.8 MB | Output + overhead only |
+| L2 sectors read | 15.3M (490 MB) | ~1.04× DRAM (minimal L2 amplification) |
+| Global loads (LDG) | **0 bytes** | cuBLAS uses TMA, not LDG! |
+
+**cuBLAS reads exactly the weight matrix from DRAM** — zero wasted traffic. The `LDG = 0` confirms cuBLAS uses the **TMA (Tensor Memory Accelerator) path** exclusively: HBM → L2 → smem (via `cp.async.bulk`) → registers (via `LDSM`). No traditional global loads.
+
+**Read amplification: 1.04×** — nearly perfect (490 MB L2 vs 470 MB DRAM). The L2 is used purely as a pass-through cache with minimal amplification.
+
 
 # Cross-Pipe Dependency Latency Table
 
