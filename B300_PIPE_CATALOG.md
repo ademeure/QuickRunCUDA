@@ -15187,23 +15187,27 @@ Full Llama-70B-like layer with all optimizations applied (fused QKV, fused Gate+
 
 **cudaGraph provides zero benefit** for the optimized pipeline — the 9 kernels per layer are dominated by GEMM execution time, not launch overhead.
 
-**ROOT CAUSE: Fused Gate+Up (N=57344) is 1.9× SLOWER than separate Gate + Up at batch=1!**
+**ROOT CAUSE: Inter-GEMM pipeline contention, not fusion itself.**
 
-| GEMM | Separate µs | Fused µs | Weight |
-|------|----------:|--------:|-------:|
-| Gate (1×28672×8192) | 75 | — | 470 MB |
-| Up (1×28672×8192) | 74 | — | 470 MB |
-| **Gate+Up separate** | **149** | — | 940 MB (2 loads) |
-| **Gate+Up fused** | — | **288** | 940 MB (1 load) |
+Measured fusion threshold at M=1 (fused N vs 2× separate N/2):
 
-The 940 MB fused weight matrix achieves only 3.3 TB/s vs 6.3 TB/s for two separate 470 MB loads. cuBLAS tiles the very wide N=57344 poorly at M=1.
+| N fused | Fused µs | 2×(N/2) µs | Ratio | Weight |
+|--------:|--------:|-----------:|------:|-------:|
+| 4096 | 12 | 17 | **0.68** | 67 MB |
+| 8192 | 24 | 30 | **0.78** | 134 MB |
+| 14336 | 40 | 41 | 0.98 | 235 MB |
+| 28672 | 74 | 81 | **0.91** | 470 MB |
+| 32768 | 87 | 84 | 1.04 | 537 MB |
+| 57344 | 269 | 282 | **0.96** | 940 MB |
 
-**Corrected optimal pipeline** (separate Gate+Up):
-- Fused QKV: 29 µs + O: 24 µs + Gate: 75 µs + Up: 74 µs + Down: 73 µs = **275 µs GEMMs**
-- Elementwise: ~32 µs → **~307 µs/layer**
-- With pipeline contention (~1.3×): **~400 µs/layer × 80 = 32 ms → ~31 tok/s**
+**Fusion is neutral-to-beneficial at all N values** (within ±5%). The 729 µs pipeline cost is not from bad fusion — it's from **inter-GEMM memory contention** when GEMMs run back-to-back without clearing the memory pipeline.
 
-**Key lesson**: Fusion helps at batch≥32 (fused QKV saves 17%) but **hurts at batch=1** for very wide N dimensions. Always benchmark fused vs separate for your actual batch size.
+**Individual GEMMs sum to ~395 µs (NT), but the pipeline measures 729 µs (1.85×):**
+- GEMMs: 29 + 24 + 269 + 73 = 395 µs
+- Elementwise: ~50 µs
+- Pipeline contention: **~284 µs** (additional memory subsystem overhead)
+
+**Key lesson**: The sum of individual GEMM measurements **underestimates real pipeline cost by ~1.5-1.8×** due to memory contention. Always measure the full layer pipeline, not individual GEMMs, when estimating serving throughput.
 
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
