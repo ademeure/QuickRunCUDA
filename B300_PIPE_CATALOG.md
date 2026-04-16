@@ -14405,12 +14405,71 @@ Pointer chase through 64 KB working set, varying shared memory:
 
 **smem=8KB kills L1 for a 64KB working set, but smem=128KB does not!** This is not a bug — the SRAM is organized in physical banks, and different smem sizes consume different banks. Some configurations leave L1 with good address coverage; others create cache set gaps that cause systematic misses.
 
+**Verified with 32 KB and 128 KB working sets** — the pattern is consistent:
+
+| smem (KB) | ws=32KB | ws=64KB | ws=128KB |
+|----------:|--------:|--------:|---------:|
+| 0 | 41 ✅ | 42 ✅ | 48 ✅ |
+| 4 | 41 ✅ | 42 ✅ | — |
+| 8 | 507 ❌ | 555 ❌ | 645 ❌ |
+| 32 | 545 ❌ | 556 ❌ | 647 ❌ |
+| 48 | 41 ✅ | 218 ⚠️ | 648 ❌ |
+| 64 | 41 ✅ | 222 ⚠️ | 650 ❌ |
+| 80 | 41 ✅ | 42 ✅ | 648 ❌ |
+| 96 | 41 ✅ | — | 653 ❌ |
+| 112 | 550 ❌ | — | 654 ❌ |
+| 128 | 41 ✅ | 42 ✅ | 232 ⚠️ |
+| 160 | 41 ✅ | 42 ✅ | 555 ❌ |
+| 192 | 41 ✅ | 221 ⚠️ | — |
+
 **Practical guidance**:
 1. **smem=0-4 KB**: full L1 (~200 KB)
-2. **smem=8-40 KB**: L1 severely degraded — **avoid these sizes if L1 matters!**
-3. **smem=48-64 KB**: partial L1
-4. **smem=80-160 KB**: L1 works well for moderate working sets (**sweet spot**)
-5. **smem>192 KB**: L1 too small for most workloads
+2. **smem=8-32 KB**: L1 severely degraded — **avoid these sizes if L1 matters!**
+3. **smem=48-96 KB**: L1 works for ≤32 KB working sets; partial for 64 KB
+4. **smem=128-160 KB**: L1 works well up to 64 KB working sets (**sweet spot if you need both**)
+5. **smem=112 KB**: another bad configuration — avoid
+6. **smem>192 KB**: L1 too small for most workloads
 
-This means **using more shared memory can paradoxically IMPROVE L1 performance** if it shifts the SRAM bank allocation to a more favorable configuration. Test your specific kernel's smem size against L1-sensitive working sets.
+**Using more shared memory can paradoxically IMPROVE L1 performance** by shifting SRAM bank allocation. Always benchmark your specific kernel.
+
+
+# Register Bank Conflicts — None Detected
+
+Tested FMA with all source operands from the same register (`FMA(r,r,r)`) vs different registers:
+
+| Pattern | cy/4FMA | cy/FMA |
+|---------|--------:|-------:|
+| 4 independent chains, cross-reg | 23 | 5.75 |
+| 4 independent chains, same-reg | 23 | 5.75 |
+| **8 independent chains** | **23** | **2.88** |
+
+**No register bank conflicts on B300.** Same-register and cross-register FMA have identical throughput. The operand collector handles all register access patterns at full speed.
+
+**Dual FMA pipe confirmed**: 8 chains achieve 2.88 cy/FMA = **2× the single-pipe rate** (5.75 cy/FMA with 4 chains). Both FMA_heavy and FMA_lite pipes run simultaneously.
+
+
+# Dual-Issue: FMA + ALU Co-Issue
+
+| Workload | cy/iter | Notes |
+|----------|--------:|-------|
+| 4 FMA (asm volatile) | 24 | Baseline |
+| **4 FMA + 4 IADD3** | **24** | **IADD3 is FREE** |
+| 4 IADD3 only | 23 | ALU pipe alone |
+
+The ALU pipe (IADD3/LOP3/etc.) runs simultaneously with the FMA pipe at zero additional cost. This is the quad co-issue model: FMA_heavy + FMA_lite + ALU + LSU can all issue in a single cycle.
+
+
+# Double-Precision FMA (DFMA) Pipeline
+
+| Pattern | cy/iter | cy/DFMA | Notes |
+|---------|--------:|--------:|-------|
+| 1 DFMA chain | 91 | 91 | Pipeline latency (~74 cy + loop) |
+| 2 DFMA chains | 167 | 83 | Slight ILP benefit |
+| 4 DFMA chains | 496 | 124 | Scheduling overhead |
+| **DFMA + 1 FFMA** | **91** | — | **FFMA is FREE!** |
+| **DFMA + 4 FFMA** | **91** | — | **All 4 FFMA are FREE!** |
+
+**Critical finding**: Up to 4 FP32 FMAs can execute **for zero additional cost** during each DFMA. The DFMA occupies the FP64 pipeline for ~91 cy, during which the FP32 FMA pipes are completely idle and can do useful work.
+
+**Practical for mixed-precision**: If your algorithm has both FP64 accumulation and FP32 computation (e.g., iterative refinement, mixed-precision solvers), interleave DFMA with FFMA — the FFMA work is free up to 4 per DFMA.
 
