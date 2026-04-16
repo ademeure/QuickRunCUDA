@@ -6013,6 +6013,17 @@ Predication adds a fixed 0.19 cy per instruction, **independent of the predicate
 
 **Binary step function**: the LSU speedup is all-or-nothing. **Even 1 active thread out of 32 gives the full 1.33 cy cost.** There's no intermediate benefit — the memory pipeline must issue at least one sector request for any non-zero active mask. The all-false short-circuit only triggers when LITERALLY zero threads are active.
 
+### Complete predication behavior by instruction type (measured)
+
+| Type | 0 active | 1-31 active | 32 active | Pattern |
+|:-----|:--------:|:-----------:|:---------:|:--------|
+| ld.global (throughput) | **0.42** | 1.33 | 0.90 | Binary (3× at 0) |
+| st.global (throughput) | 4.21 | 6.09 | 6.09 | Binary (31% at 0) |
+| **FMA (throughput)** | **1.18** | **1.18** | **1.18** | **NO effect at all** |
+| ld.global (latency chain) | 1.28 | 1.86 | 1.36 | Binary (30% at 0) |
+
+**Summary**: loads get 3× speedup at all-false. Stores get 31% speedup. **FMA gets ZERO benefit from predication** — the FMA pipe always takes the same cycles whether it computes or not. The FMA pipe doesn't check the active mask for early termination.
+
 ### Memory bandwidth scaling with occupancy
 
 | Warps/SM | Relative BW | Per-warp efficiency |
