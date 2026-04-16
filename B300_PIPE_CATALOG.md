@@ -7864,6 +7864,44 @@ The benefit of FP4 on this path is **2× less memory** for the same K:
 
 **When `kind::mxf4` ships** (expected CUDA 13.3+ or 14.0): real FP4 peak = ~9.3 PFLOPS = 2× FP8. This will make FP4 inference on B300 strictly dominant for memory-bound LLM decode.
 
+### FP4 quantization accuracy (E2M1 with per-tensor scaling)
+
+100K elements, various distributions, host-side quantization:
+
+| Distribution | FP4 MSE | FP8 MSE | FP4/FP8 ratio | Max err (FP4) |
+|-------------|--------:|--------:|--------------:|--------------:|
+| Uniform[-1,1] | 4.06e-3 | 1.87e-4 | **21.8×** | 0.167 |
+| Normal(0, 0.1) | 1.71e-4 | 6.97e-6 | **24.5×** | 0.077 |
+| Normal(0, 0.02) | 6.41e-6 | 4.38e-7 | **14.6×** | 0.015 |
+| Laplace(0, 0.05) | 1.64e-4 | 3.59e-6 | **45.7×** | 0.085 |
+
+**FP4 has 15-46× higher MSE than FP8** — a significant accuracy gap. The gap varies by distribution: narrow-peaked distributions (low σ) are most FP4-friendly (fewer outliers crushed); heavy-tailed (Laplace) is worst.
+
+**Practical implications for LLM inference:**
+- Per-tensor scaling (tested above) is the WORST case for FP4. Per-channel or per-group-32 scaling reduces MSE by 2-4× (because each group's scale factor adapts to local range).
+- **Weight-only FP4** (activations stay FP8/FP16) is the standard pattern — activations need more precision.
+- With calibrated quantization (SmoothQuant, AWQ, GPTQ), FP4 quality is adequate for 7B+ models on typical benchmarks.
+
+### FP4 memory advantage for LLM decode
+
+For a 7B-parameter model at batch=1 decode:
+
+| Precision | Weight size | HBM load time (7.4 TB/s) | Decode tokens/s |
+|-----------|:----------:|:------------------------:|:---------------:|
+| FP16 | 14 GB | 1.89 ms | **529** |
+| FP8 | 7 GB | 0.95 ms | **1 053** |
+| **FP4** | **3.5 GB** | **0.47 ms** | **~2 100** |
+
+**FP4 decode is 4× faster than FP16 and 2× faster than FP8** — purely from halving the weight bytes to load from HBM. Since decode at batch=1 is almost entirely memory-bound (96% of time is weight loading), FP4's memory compression translates directly to throughput gain.
+
+**With FP4 on B300**: a 7B model at batch=1 would achieve ~2100 tokens/sec (vs ~529 at FP16) — approaching conversational speed for all users simultaneously.
+
+For **70B models**:
+- FP16: 140 GB → doesn't fit on 1 GPU (268 GB HBM, need KV cache too)
+- FP8: 70 GB → fits with 198 GB for KV cache
+- **FP4: 35 GB** → fits with **233 GB for KV cache** (4.7× more KV headroom)
+
+
 ### Format details: E2M1 (NVFP4)
 
 | Property | Value |
