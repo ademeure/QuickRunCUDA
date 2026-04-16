@@ -14162,3 +14162,82 @@ Comparison of global→smem copy paths, 128 threads, L1-cached source:
 
 **cp.async with serial `wait_all` is slower than regular loads** because each iteration pays the async engine dispatch + completion latency. The value of cp.async is in **pipelining with compute** (overlap), not raw copy speed. The earlier TMA section shows proper pipelined throughput reaching 29 TB/s chip-wide.
 
+
+# FP16 vs BF16 cuBLAS GEMM
+
+**FP16 and BF16 have IDENTICAL throughput on B300** across all tested shapes:
+
+| Shape | BF16→FP32 | FP16→FP32 | FP16→FP16 |
+|-------|----------:|----------:|----------:|
+| 8192³ | 923 | 922 | 925 |
+| 4096³ | 1732 | 1730 | 1675 |
+| 4096²×128 | 280 | 282 | **344** |
+| 16384²×4096 | 876 | 877 | — |
+
+The B300 MMA unit processes both 16-bit formats at the same rate. The only performance difference comes from **output precision**:
+- **FP16 output is 23% faster for memory-bound GEMMs** (4096²×128): half the bytes written to C
+- **FP16 output is 3% slower for compute-bound GEMMs** (4096³): tiny FP32→FP16 conversion overhead
+- **For large compute-bound shapes** (8192³): no difference at all
+
+**Recommendation**: Use BF16 for training (better dynamic range) and FP16 for inference serving (identical throughput, slightly better memory-bound performance).
+
+
+# cudaMemcpy Throughput Scaling
+
+## Device-to-Device
+
+| Size | GB/s | µs/copy | Notes |
+|-----:|-----:|--------:|-------|
+| 256 B | 0.0 | 5.3 | Launch overhead |
+| 4 KB | 0.8 | 5.4 | Same overhead |
+| 64 KB | 10 | 6.4 | |
+| 256 KB | 48 | 5.4 | |
+| 1 MB | 163 | 6.4 | |
+| 4 MB | 1023 | 4.1 | Starting to saturate |
+| 16 MB | 2720 | 6.2 | |
+| 64 MB | 2724 | 24.6 | |
+| 256 MB | 3116 | 86 | |
+| 1 GB | **3211** | 334 | **87% of HBM** (read+write) |
+
+D2D copy reaches 3.2 TB/s at 1 GB. Since it reads AND writes, total HBM traffic is 6.4 TB/s = 87% of peak. The ~5 µs floor for small copies is the API call + copy engine dispatch overhead.
+
+## cudaMemset
+
+| Size | GB/s | µs/call |
+|-----:|-----:|--------:|
+| 256 B | 0.1 | 3.1 |
+| 1 MB | 194 | 5.4 |
+| 64 MB | **5440** | 12.3 |
+
+cudaMemset at 5.4 TB/s (write-only) is **1.7× faster than D2D copy** because it only writes (no read). 74% of theoretical HBM write bandwidth.
+
+## Host↔Device (PCIe Gen5 x16, pinned memory)
+
+| Direction | 64 KB | 1 MB | 16 MB | 256 MB |
+|-----------|------:|-----:|------:|-------:|
+| H2D (GB/s) | 6.5 | 38.7 | 56.0 | **57.6** |
+| D2H (GB/s) | 6.5 | 38.4 | 55.6 | **57.3** |
+
+Both directions saturate at **~58 GB/s = 90% of PCIe Gen5 x16** theoretical (64 GB/s). 1 MB is the threshold for near-peak throughput. Below 64 KB, the ~10 µs API overhead dominates.
+
+
+# Instruction Fetch Throughput (Code Size Effects)
+
+Measured with asm volatile dependent FMA chains of varying length (loop body = N × 16 bytes + overhead):
+
+| FMAs in loop | Loop body (est.) | cy/iter | cy/FMA | vs pipeline limit |
+|-------------:|---------:|--------:|-------:|------------------:|
+| 1 | 80 B | 23 | 23.0 | 1.0× (loop overhead) |
+| 5 | 144 B | 27 | 5.4 | 0.9× |
+| 9 | 208 B | 43 | 4.8 | 0.8× |
+| 17 | 336 B | 161 | 9.5 | 1.6× |
+| 33 | 592 B | 229 | 6.9 | 1.2× |
+| 65 | 1.1 KB | 528 | 8.1 | 1.4× |
+| 129 | 2.1 KB | 1124 | 8.7 | 1.5× |
+| 257 | 4.2 KB | 2152 | 8.4 | 1.4× |
+| 513 | 8.3 KB | 4379 | 8.5 | 1.4× |
+
+For small loops (≤~200 bytes), the instruction buffer caches the loop body and execution is pipeline-limited (~6 cy/FMA). For loops exceeding ~500 bytes, the sustained rate drops to ~8.5 cy/FMA — a **40% throughput penalty** from instruction fetch pressure. The transition is gradual, not a cliff, suggesting the B300's instruction cache has multiple levels.
+
+**Practical**: Keep hot loops under ~500 bytes (32 SASS instructions) to stay in the instruction buffer. For larger compute bodies, the 8.5 cy/FMA sustained rate means instruction fetch bandwidth of ~1.9 bytes/cycle per warp.
+
