@@ -119,7 +119,23 @@ Note: Smem read peak is ~36 TB/s chip at 128 B/clk/SM — true HW peak, confirme
 | FP8 E4M3 | `f8f6f4` | 32 | **128** | **4929** | ✓ (~5000) |
 | FP4 block16 | `mxf4nvf4` | 64 | **128** | **9856** | ✓ (~10000) |
 
-**All formats share exactly 128 cy/MMA.** The tensor core has a single fixed pipeline latency. Throughput differences are purely from K dimension. FP4 block-scaled achieves 2× FP8 because K=64 vs K=32.
+**All formats share exactly 128 cy/MMA at M=128 N=256.** The tensor core has a single pipeline. Throughput differences are from K dimension. FP4 block-scaled achieves 2× FP8 (K=64 vs K=32).
+
+### tcgen05.mma shape scaling (FP16, varying M and N)
+
+| M | N | cy/MMA | TFLOPS/SM | Efficiency |
+|---:|---:|-------:|----------:|-----------:|
+| **128** | **256** | **128** | **16.65** | **100%** |
+| **128** | **128** | **64** | **16.65** | **100%** |
+| 128 | 64 | 48 | 11.10 | 67% |
+| 128 | 32 | 44 | 6.01 | 36% |
+| 128 | 8 | 44 | 1.50 | 9% |
+| 64 | 256 | 128 | 8.33 | 50% |
+| 64 | 128 | 64 | 8.33 | 50% |
+
+**cy/MMA = max(44, N/2)** for M=128. Linear scaling with N for N≥128; 44 cy fixed floor for N<64. M=64 always gives 50% of M=128 throughput.
+
+**For maximum efficiency**: use M=128, N≥128. Smaller tiles waste tensor core cycles on the 44 cy minimum overhead.
 
 ---
 
@@ -5107,6 +5123,29 @@ The bit-manipulation ops (popc, ffs, clz, brev) run on pipe_alu at standard 2 cy
 **Pipelined TMA saturates DRAM**: 7.7 TB/s = 104% of HBM3E spec (some L2 absorption). Double-buffering gives 2× over serial. All 148 SMs sustain identical throughput (zero SM variance).
 
 **TMA is the correct way to load data on Blackwell.** cp.async (legacy) gives 55 GB/s/SM; cp.async.bulk (TMA) gives 52 GB/s/SM per copy but with proper pipelining delivers the same sustained bandwidth at much lower instruction overhead.
+
+### TMA + MMA overlap (GEMM inner-loop pattern)
+
+| Configuration | cy/iter | Notes |
+|--------------|--------:|-------|
+| MMA only (FP16 M128N256K16) | 128 | Tensor core baseline |
+| TMA only (16 KB copy, L2-resident) | 692 | Memory copy baseline |
+| **MMA + TMA interleaved** | **680** | **MMA is completely FREE** |
+
+**MMA adds zero overhead to TMA** — tensor core compute runs entirely in TMA's shadow. The combined time (680 cy) is actually 12 cy less than TMA alone, because MMA keeps the scheduler active and improves TMA polling efficiency.
+
+**GEMM mainloop: optimal K-depth (TMA 16KB + K×MMA, FP16 M128 N256):**
+
+| K steps | cy/iter | TFLOPS/SM | Efficiency | Bottleneck |
+|--------:|--------:|----------:|-----------:|:-----------|
+| 1 | 678 | 3.14 | 19% | TMA-limited |
+| 2 | 680 | 6.27 | 38% | TMA-limited |
+| 4 | 679 | 12.55 | 75% | TMA-limited |
+| **6** | **780** | **16.40** | **98%** | **Balance** |
+| 8 | 1032 | 16.51 | 99% | MMA-limited |
+| 16 | 2048 | 16.65 | 100% | MMA-limited |
+
+**Crossover at K=6 steps** (K_total = 6×16 = 96 FP16 elements): TMA cost (680 cy) ≈ 6 × MMA cost (128 cy = 768 cy). Below K=6: TMA-limited (MMA free in shadow). Above: MMA-limited (TMA free). **For max GEMM throughput: use K≥6 steps per pipeline stage** (matches CUTLASS/cuBLAS K=96-128 configurations).
 
 ### clock64 read latency
 
