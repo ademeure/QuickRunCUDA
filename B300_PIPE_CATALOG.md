@@ -9424,6 +9424,26 @@ Real model sizes are fine (designed as clean multiples): Llama-7B FFN (11008) = 
 
 FP8 advantage peaks at M=64 (2.7×) where L2 caching amplifies the half-sized weight reads.
 
+### FP8 per-tensor scaling overhead (measured)
+
+| Size | No scaling | Per-tensor scale | Overhead |
+|-----:|:---------:|:----------------:|:--------:|
+| 4096³ | 3389 T | 3410 T | **0%** |
+| 8192³ | 4213 T | 4216 T | **0%** |
+
+**Scaling is FREE.** The scale factor multiplication hides in the GEMM epilogue. No reason to avoid per-tensor scaling.
+
+### Concurrent GEMMs on different streams (measured, BF16)
+
+| Streams | 1024³ TFLOPS | 4096³ TFLOPS | Throughput boost |
+|--------:|:----------:|:----------:|:----------------:|
+| 1 | 245 | 1700 | baseline |
+| 2 | 404 | 2030 | +65% / +19% |
+| 4 | 398 | 2123 | +63% / +25% |
+| 16 | 405 | **2177** | **+65% / +28%** |
+
+**Concurrent streams boost aggregate throughput 28-65%.** Small GEMMs benefit most (65% at 1024³) because they don't fully occupy all 148 SMs. Useful for MoE expert routing (run multiple expert GEMMs concurrently).
+
 **Mixtral expert FP8 E4M3:**
 
 | Tokens/expert | TFLOPS | MFU |
