@@ -14761,6 +14761,18 @@ The NVML reports Gen6 x16 link, but measured bandwidth (~58 GB/s) is consistent 
 
 **For serving reliability**: B300 SXM6 sustains full tensor core throughput indefinitely. No burst-then-throttle behavior.
 
+## HBM3E Access Latency Distribution
+
+100 random 64KB-strided pointer chases (single warp):
+
+| Percentile | Cycles | ns | Level |
+|:----------:|-------:|---:|:-----:|
+| Min-P90 | 36-37 | 20-21 | L2 hit |
+| P99 | 553 | 307 | DRAM miss |
+| Max | 1577 | 876 | DRAM + TLB miss |
+
+**Bimodal distribution**: 90% of accesses hit L2 at ~37 cy, with occasional DRAM misses at 553 cy and rare TLB misses at 1577 cy. The tail latency (P99) is **15× the median** — important for latency-sensitive workloads. Prefetching and L2-aware data layout reduce tail exposure.
+
 
 # Multi-Request Serving: Overlap vs Batching
 
