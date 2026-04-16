@@ -7816,7 +7816,34 @@ All tested syntax variants (`.block_scale`, `.scale_vec::2X`, `.kind::mxf4`, `.k
 **Current real FP4 throughput via `kind::f8f6f4` = 4.9 PFLOPS (= FP8, K=32 shared path).**
 FP4 saves 2× smem/HBM bytes but does NOT compute more MACs per instruction via this path.
 
-**When ptxas gains `.block_scale` codegen**: K=64 (`kind::mxf8f6f4`) or K=96 (`kind::mxf4`) will unlock the real FP4 tensor throughput of ~10-15 PFLOPS on sm_103a.
+## ✓ BREAKTHROUGH: `kind::mxf4nvf4.block_scale.block16` COMPILES on sm_103a!
+
+After systematic testing of every syntax variant, the correct PTX for block-scaled FP4:
+
+```ptx
+tcgen05.mma.cta_group::1.kind::mxf4nvf4.block_scale.block16
+    [d_tmem], [a_tmem], b_desc, idesc, [scale_A_tmem], [scale_B_tmem], pred;
+```
+
+**SASS: `UTCOMMA.BLOCK16`** — the native block-scaled FP4 tensor core instruction!
+
+**What works vs what doesn't:**
+
+| Syntax | Status |
+|--------|--------|
+| `kind::mxf4nvf4.block_scale.block16` | **✓ COMPILES** (UTCOMMA.BLOCK16 SASS) |
+| `kind::mxf4.block_scale.block32` | ✗ ptxas rejects `.block32` |
+| `kind::mxf4` (default = `.block32`) | ✗ same rejection |
+| `kind::mxf8f6f4` | ✗ rejects `.block32` |
+| `kind::f8f6f4.block_scale` | ✗ cannot combine |
+
+**Key operand differences from `kind::f8f6f4`:**
+- A matrix from **TMEM** (via `tcgen05.cp` pre-load), NOT smem descriptor
+- **Two separate scale TMEM addresses** (`[scale_A]`, `[scale_B]`) — one per matrix
+- **No `{disable_lane_mask}`** operand — replaced by scale operands
+- Scale factor type: UE8M0 or UE4M3 (per Table 57 of PTX ISA)
+
+**Next step**: build full benchmark kernel with `tcgen05.cp` to load A+scales into TMEM, then run the block-scaled MMA to measure real K=64 FP4 throughput. The instruction compiles and emits SASS — the hardware path exists.
 
 
 
