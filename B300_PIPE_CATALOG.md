@@ -14263,3 +14263,63 @@ Single warp (32 threads), INT32 atomicAdd to global memory (L2-resident):
 
 **1169 cy per global atomic** = ~575 ns. Compare to L2 load latency (~76 cy) — the atomic RMW pipeline adds ~1100 cy on top of the basic L2 access.
 
+
+# L1 Data Cache Characterization (Pointer Chase)
+
+Sequential pointer chase (stride = 128 bytes = 1 cache line) through varying working set sizes, single warp, no shared memory:
+
+| Working set | cy/chase | Cache level |
+|-----------:|--------:|-------------|
+| 8 KB | 39 | L1 (hot) |
+| 32 KB | 42 | L1 |
+| 64 KB | 46 | L1 |
+| 128 KB | 53 | L1 |
+| 192 KB | 61 | L1 (edge) |
+| **224 KB** | **216** | **L1→L2 transition** |
+| **256 KB** | **533** | **L2 (full miss)** |
+| 512 KB | 678 | L2 |
+| 1 MB | 804 | L2 (far slices) |
+| 4 MB | 1299 | L2→DRAM transition |
+| 8 MB | 1638 | DRAM |
+| 128 MB | 1638 | DRAM (stable) |
+
+## L1 data cache = ~200 KB effective capacity
+
+The cliff at 224 KB confirms the L1 data cache holds approximately **192-224 KB** when shared memory is not used. This is larger than the commonly cited 128 KB because B300 can allocate the full unified L1/smem space to data cache when `smem_size = 0`. Maximum hardware-configurable L1 is ~228 KB.
+
+## Latency hierarchy
+
+| Level | Latency | vs L1 |
+|-------|--------:|------:|
+| L1 (warm, ≤64 KB) | **39-46 cy** | 1× |
+| L1 (cold, 192 KB) | **61 cy** | 1.6× |
+| L2 (256 KB) | **533 cy** | 14× |
+| L2 (1 MB, far slices) | **804 cy** | 21× |
+| DRAM (≥8 MB) | **1638 cy** | 42× |
+
+L1 latency increases gradually from 39 to 61 cy as working set approaches capacity — the replacement policy has some LRU-like overhead. The **14× cliff from L1 → L2** (61 → 533 cy) is the critical threshold: keep hot data under ~192 KB per SM.
+
+## Associativity
+
+No associativity cliff observed for any stride pattern up to 256 ways (256 KB working set at 1 KB stride). This suggests B300's L1 is either **fully associative** or has **very high associativity (≥128-way)**. Modern GPU L1 caches commonly use hash-based indexing that approximates full associativity.
+
+
+# Warp Scheduling: FMA Throughput vs Warp Count
+
+Single block on one SM, dependent FMA chain per warp:
+
+| Warps | cy/iter (per warp) | Total FLOP/cy/SM | Notes |
+|------:|---------:|:----------------:|-------|
+| 1 | 23 | 2.8 | Baseline |
+| 2 | 23 | 5.6 | Perfect scaling |
+| 4 | 23 | 11.1 | Perfect |
+| 8 | 23 | 22.3 | Perfect |
+| 16 | 28 | 36.6 | +22% per-warp latency |
+| 32 | 35 | **58.2** | **+52% per-warp, but highest total** |
+
+**Up to 8 warps: no per-warp overhead.** Each warp sees the same 23 cy/iter regardless of how many other warps share the SM. The 4 warp schedulers (one per sub-core) handle ≤2 warps each without contention.
+
+**At 16-32 warps**: per-warp latency increases because each scheduler serves 4-8 warps round-robin. The warp must wait longer between its execution slots. However, **total SM throughput still increases** (58.2 FLOP/cy at 32 warps vs 22.3 at 8 warps = 2.6× more total work).
+
+**Implication**: For compute-bound kernels with dependent chains, 8 warps/SM is the sweet spot for per-warp latency. More warps improve total throughput but at the cost of individual warp responsiveness. For latency-sensitive work (single-request inference), prefer fewer warps.
+
