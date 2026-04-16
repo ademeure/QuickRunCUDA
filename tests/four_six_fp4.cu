@@ -21,7 +21,7 @@
 #define NUM_CANDIDATES 2
 #endif
 #ifndef GROUPS_PER_THREAD
-#define GROUPS_PER_THREAD 1
+#define GROUPS_PER_THREAD 2
 #endif
 
 #define VSIZE      16
@@ -186,10 +186,10 @@ static __device__ __forceinline__ void process_group(
 // ------------------------- the kernel -------------------------
 
 #ifndef MIN_BLOCKS_PER_SM
-#define MIN_BLOCKS_PER_SM 0
+#define MIN_BLOCKS_PER_SM 8
 #endif
 
-extern "C" __global__ void __launch_bounds__(512, MIN_BLOCKS_PER_SM) kernel(const float* __restrict__ A,
+extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(const float* __restrict__ A,
                                   float* __restrict__ B,
                                   float* __restrict__ C,
                                   int n_threads, int cols_param, int /*unused*/) {
