@@ -14789,6 +14789,33 @@ Final verification of key catalog numbers (end of session):
 **All key numbers verified within ±3%.** Variations are from thermal/power state across a multi-hour session. The catalog data is reliable and reproducible.
 
 
+# Power Efficiency & Serving Economics
+
+## Power efficiency
+
+| Metric | Value |
+|--------|------:|
+| Idle power | 182 W |
+| Sustained tensor compute (60s) | 390 W |
+| BF16 sustained TFLOPS | 737 |
+| **Total efficiency** | **1.89 TFLOPS/W** |
+| **Incremental efficiency** (above idle) | **3.5 TFLOPS/W** |
+| Power limit range | 200-1100 W |
+
+The B300 achieves **3.5 TFLOPS per incremental watt** above idle — excellent efficiency. The 182W idle is high (large die + HBM3E) but the marginal cost of computation is low.
+
+## Per-token serving cost
+
+| Model | tok/s | Power | J/token | $/1K tokens (@$3/hr) |
+|-------|------:|------:|--------:|---------------------:|
+| 70B BF16 decode | 17 | 390 W | 22.9 | **$0.049** |
+| 70B FP8 decode | ~30 | ~390 W | ~13 | **$0.028** |
+| 70B + spec decode | ~62 | ~390 W | ~6.3 | **$0.013** |
+| 8B BF16 decode | 142 | ~250 W | 1.8 | **$0.006** |
+
+**FP8 + speculative decode achieves $0.013 per 1K output tokens** for Llama-70B — competitive with cloud API pricing. Llama-8B at $0.006/1K is nearly free.
+
+
 # Multi-Request Serving: Overlap vs Batching
 
 3 key GEMMs per "request" (Q + Gate + Down projections, batch=1 per request):
