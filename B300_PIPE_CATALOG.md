@@ -14977,6 +14977,25 @@ Peak gate-projection throughput at **seq=512** (1591 TFLOPS) — the sweet spot 
 - 4K tokens: **600 ms** = 6.8K tok/s
 - 8K tokens: ~1.2 s = ~6.8K tok/s (extrapolated)
 
+
+# Peak FLOPS Search and Alignment Sensitivity
+
+## Best cuBLAS BF16 GEMM shapes
+
+| Shape | TFLOPS | Notes |
+|-------|-------:|-------|
+| **4096³** | **1730** | **Peak measured** |
+| 2048³ | 1226 | Good but less SM utilization |
+| 4000³ | 1466 | Non-pow2 but still efficient |
+| 8192³ | 628 | Lower (larger tiles, possible L2 pressure) |
+| **4097³** | **56** | **30× cliff!** Off-by-one alignment penalty |
+
+**Peak BF16: 1730 TFLOPS** at 4096³. The optimal shape maximizes tile utilization across 148 SMs.
+
+**4097 alignment cliff**: M=4097 is **30× slower** than M=4096. cuBLAS tile sizes are multiples of 64 or 128; a single extra row forces wasteful padding across all tiles. **Always pad GEMM dimensions to multiples of 128** for best performance.
+
+**Non-power-of-2**: 4000³ achieves 1466 TFLOPS (85% of peak) — cuBLAS handles any multiple of ~64 well. The cliff is specifically for dimensions that are 1 over a tile boundary.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
