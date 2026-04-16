@@ -15039,6 +15039,27 @@ With 228 KB total smem per SM, each additional 16 KB reduces blocks by ~3. The d
 
 **Key tradeoff**: 48 KB smem per block gives 4 blocks/SM (25% occupancy). This is typically fine for compute-bound kernels (our earlier measurement showed 99% FMA throughput at 25% occupancy), but devastating for memory-bound kernels.
 
+
+# Continuous Batching: Mixed Prefill + Decode
+
+Gate projection (M × 28672 × 8192, BF16), varying mix of decode and prefill tokens:
+
+| Mix | Total M | µs | TFLOPS | Decode cost |
+|-----|--------:|---:|-------:|:-----------:|
+| 1 decode only | 1 | 74 | 6 | 74 µs |
+| 32 decode only | 32 | 69 | 217 | 69 µs |
+| 64 decode only | 64 | 70 | 428 | 70 µs |
+| 8 decode + 128 prefill | 136 | 87 | 736 | **5 µs** |
+| 32 decode + 128 prefill | 160 | 82 | 917 | **16 µs** |
+| 64 decode + 512 prefill | 576 | 323 | 838 | **36 µs** |
+| 64 decode + 2048 prefill | 2112 | 1204 | 824 | **36 µs** |
+
+**Continuous batching is essentially free for GEMMs.** When decode tokens are batched with a prefill request, the decode tokens ride for free on the weight-loading cost. 64 decode tokens cost only 36 µs (vs 70 µs alone) because the prefill dominates the weight-loading time.
+
+**Separate vs combined GEMM**: Identical performance (1.01× — no benefit from splitting). cuBLAS loads weights once regardless of how M is divided between decode and prefill tokens.
+
+**Practical**: The marginal cost of adding one more decode token to a continuous batch is ~0 µs for the linear layers (until total M exceeds ~128 and becomes compute-bound). The real cost of continuous batching is in **attention**, where each decode token must independently scan its full KV cache.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
