@@ -5269,6 +5269,34 @@ All FP32 value ranges run at identical 4.03 cy: normal, subnormal, overflow, NaN
 
 **L2 read:write asymmetry = 1.6:1** — reads are 60% faster than writes. L2-resident data effectively doubles the available memory bandwidth (14 vs 7.4 TB/s).
 
+### L2 atomic throughput scaling (unique per-thread addresses, no contention)
+
+| SMs active | Gatom/s | Per-atom cy | Scaling |
+|-----------:|--------:|------------:|--------:|
+| 1 | 13 | 40 | 1× |
+| 37 | 480 | 40 | 37× |
+| 74 | 961 | 40 | 74× |
+| **148** | **1922** | **40** | **148×** |
+
+**Perfect linear scaling to 1.9 Tatom/s.** Per-atom L2 round-trip = 40 cy (constant regardless of SM count). L2 atomic units process independently per slice — zero inter-SM contention for unique addresses.
+
+### GEMM writeback (smem → global store)
+
+| Pattern | cy / 16 KB | GB/s per SM |
+|---------|----------:|------------:|
+| Scalar (32b stores) | 611 | 54.5 |
+| **Vectorized (v4, 128b)** | **512** | **65.1** |
+
+v4 writeback is 1.2× faster. For full M128×N256 epilogue (128 KB): ~4096 cy, which hides behind the next tile's MMA pipeline.
+
+### Epilogue phase breakdown (per 4-element chunk)
+
+| Phase | cy |
+|-------|---:|
+| F32→F16x2 conversion | 4.1 |
+| TMEM ld.x4 + cvt + 2 stores | **16.7** |
+| Full epilogue hides behind MMA | **0.4% overhead** |
+
 ### Coalescing efficiency (single warp, DRAM-resident data)
 
 | Inter-thread stride | cy/ld | Sectors/request | Slowdown vs coalesced |
