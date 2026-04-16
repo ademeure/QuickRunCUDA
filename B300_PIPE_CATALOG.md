@@ -7799,11 +7799,20 @@ The PTX ISA (§9.7.16.2.1.1) documents **K=96 as sm_103a-EXCLUSIVE**:
 
 **K=96 processes 3× the K dimension in IDENTICAL cycle time.** Same cy/mma (~66), but 3× the multiply-accumulates.
 
-**Extrapolation to full-size M=128 N=256** (using K=32→K=96 ratio of 3.0×):
-- K=32 measured at M=128 N=256: 4.65 PFLOPS
-- **K=96 estimated: ~14 PFLOPS FP4** (3× over FP8!)
+## VERIFIED at full scale M=128 N=256 (the production tensor core shape)
 
-This is the **B300's native FP4 tensor core throughput** — accessible TODAY via `kind::f8f6f4` + idesc bit 31 = 1, without needing `kind::mxf4` or block scaling!
+| Config | K | cy/mma | TFLOPS/SM | Chip | × FP8 |
+|--------|--:|-------:|----------:|-----:|------:|
+| FP8 E4M3 K=32 | 32 | 128.29 | 33.22 | **4.9 PFLOPS** | 1.0× |
+| FP4 E2M1 K=32 | 32 | 128.27 | 33.22 | 4.9 PFLOPS | 1.0× |
+| **FP4 E2M1 K=96** | **96** | **128.29** | **99.65** | **14.7 PFLOPS** | **3.0×** |
+| **FP4 K=96 (148 SMs)** | **96** | **128.12** | **99.79** | **14.8 PFLOPS** | **3.02×** |
+
+**14.8 PFLOPS FP4 confirmed at full tensor core scale.** Same 128 cy/mma as FP8 — the hardware processes 96 FP4 MACs per cycle vs 32 FP8 MACs.
+
+Perfect linear scaling: single SM = 99.8 TFLOPS, 148 SMs = 14.8 PFLOPS (148× exactly).
+
+This is the **B300's real FP4 tensor core throughput** — accessible TODAY via `kind::f8f6f4` + idesc bit 31 = 1, without needing `kind::mxf4` or block scaling!
 
 **How to use K=96 right now:**
 ```cpp
