@@ -5756,6 +5756,28 @@ KV cache per request: 70B at 4K = 1.3 GB, at 32K = 10.7 GB.
 
 **For SLA guarantees: p99 = p50.** The B300 delivers identical latency to every request.
 
+### Per-GEMM breakdown within one 70B layer (measured)
+
+| Batch | QKV (10%) | O (10%) | **gate_up (51%)** | down (28%) | Total |
+|------:|:---------:|:-------:|:-----------------:|:----------:|:-----:|
+| 1 | 0.030 | 0.035 | **0.151** | 0.083 | 0.298 |
+| 8 | 0.030 | 0.022 | **0.145** | 0.076 | 0.272 |
+| 256 | 0.040 | 0.044 | **0.221** | 0.120 | 0.424 |
+| 1024 | 0.107 | 0.095 | **0.500** | 0.292 | 0.993 |
+
+**gate_up = 51% of layer time** (N=57344 merged, largest weight). **FFN = 79%** (gate_up + down). Attention projections = only 21%. Optimizing FFN GEMMs has 4× more impact.
+
+### CUDA/cuBLAS cold start (measured)
+
+| Operation | Time |
+|-----------|-----:|
+| cuBLAS handle creation | **164 ms** |
+| First GEMM 8192³ (cold kernel + data) | **33 ms** (66× vs warm 0.5 ms) |
+| First GEMM new shape (kernel selection) | **23 ms** |
+| cudaMalloc 256 MB | 0.1 ms |
+
+**Total cold start: ~400 ms** (cuBLAS init + kernel selection for ~10 unique shapes). One-time cost at model load, negligible over serving lifetime.
+
 ### Prefill (time-to-first-token) at 80-layer level (measured, 70B BF16)
 
 | Prompt length | TTFT | MFU | Tok/s |
