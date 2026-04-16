@@ -7345,6 +7345,65 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# Tiny PCIe / D2D transfer latency (bytes-KB range)
+
+Transfer latency dominated by fixed setup overhead until ~KB sizes:
+
+| Size | H2D µs | D2H µs | D2D µs |
+|-----:|-------:|-------:|-------:|
+| 4 B | 6.57 | 8.92 | 8.82 |
+| 64 B | 6.64 | 8.89 | 8.58 |
+| 1 KB | 6.41 | 9.14 | 8.46 |
+| 4 KB | 6.58 | 9.12 | 8.57 |
+
+**Findings:**
+- **H2D latency ≈ 6.5 µs** regardless of size (4 B to 4 KB) — fixed overhead dominates.
+- **D2H is 37 % slower than H2D** (9 µs vs 6.5 µs) — CPU→GPU writes are posted, GPU→CPU reads need ack.
+- **D2D ≈ 8.5 µs** — similar to D2H (copy-engine overhead dominates at tiny sizes).
+- For small control messages: prefer `cuStreamWriteValue32` (2.5 µs) over `cudaMemcpyAsync` (6.5 µs).
+
+
+# Warps per SM required for peak HBM
+
+Same 1 GB streaming load, varying warps/SM (1 CTA per SM, CTA size = N × 32):
+
+| Warps/SM | GB/s | % of 7.4 TB/s |
+|---------:|-----:|--------------:|
+| 1 | 929 | 13 % |
+| 2 | 1 804 | 24 % |
+| 4 | 3 363 | 45 % |
+| 8 | 5 581 | 75 % |
+| **16** | **6 693** | **90 %** |
+| **32** | **6 797** | **92 % (peak)** |
+| 64 | 6 704 | 91 % (no gain) |
+
+**Findings:**
+- **1 warp/SM gets 13 % of HBM peak** (929 GB/s) — under-occupancy severely limits BW.
+- **Each doubling of warps roughly doubles BW** up to 8 warps/SM.
+- **16 warps/SM achieves 90 % of peak**, **32 warps/SM peaks at 92 %**.
+- **64 warps/SM doesn't help** — already saturated at 32.
+
+**Design rule for memory-bound kernels**: use **at least 16 warps/SM** (512 threads at 32 thr/warp, across all CTAs on the SM). 32 warps/SM is ideal; more is wasted occupancy.
+
+
+# cuEventElapsedTime precision
+
+| Scenario | Measured ms | Interpretation |
+|----------|------------:|----------------|
+| Back-to-back `cudaEventRecord` (no work between) | **2.27-2.50 µs** | minimum measurable gap |
+| With noop kernel between records | 4.0-5.0 µs (warm) | event + tiny kernel |
+| (First noop sample) | 56.9 µs | cold launch |
+
+**Resolution = 32 nanoseconds** (smallest increment visible in the ms float value).
+
+**Precision limit**: events can't reliably time anything below **~2.3 µs** — that's the floor of the event record mechanism.
+
+**Practical**:
+- Kernels ≥ 10 µs: use cudaEvents (< 25 % overhead).
+- Kernels < 10 µs: use `%clock64` inside the kernel (2 cy read = ~1 ns) and convert via `ms = cy / 2032e3` at 2.032 GHz.
+- For microsecond benchmarking, run N=1000+ iterations and divide.
+
+
 # Error-check primitives are essentially FREE
 
 | Call | µs/call |
