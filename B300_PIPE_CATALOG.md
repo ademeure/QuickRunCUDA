@@ -14762,7 +14762,18 @@ The NVML reports Gen6 x16 link, but measured bandwidth (~58 GB/s) is consistent 
 
 **18 NVLink v7 links** to the second GPU — the highest NVLink connectivity configuration. At ~50 GB/s per link bidirectional: ~900 GB/s total NVLink bandwidth (theoretical). The second GPU is visible to nvidia-smi but not to the CUDA runtime in this container.
 
-**2032 MHz boost is available** but the GPU runs at 1800 MHz base. The 1800→2032 MHz boost would increase all cycle-based measurements by 13% (e.g., FMA from 6 cy to ~5.3 cy effective). All measurements in this catalog are at 1800 MHz.
+## Clock Boost: 1920 MHz Achievable (Verified)
+
+Successfully boosted via `nvmlDeviceSetGpuLockedClocks(dev, 2032, 2032)` — GPU reaches **1920 MHz** (not full 2032).
+
+| Metric | 1800 MHz | 1920 MHz | Improvement |
+|--------|--------:|---------:|:-----------:|
+| Gate proj (memory-bound) | 74 µs | 73 µs | **0.9%** |
+| BF16 4096³ (compute-bound) | 1776 TF | **1833 TF** | **3.2%** |
+
+**Clock boost is irrelevant for LLM decode** (0.9% — memory-bound). Moderate benefit for compute-bound workloads (3.2%). HBM bandwidth is independent of SM clock, so memory-bound operations don't benefit from boosting.
+
+All catalog measurements are at 1800 MHz base clock. At 1920 MHz boost: decode throughput would increase from 17 to ~17.2 tok/s (negligible).
 
 **GPU clock confirmed at exactly 1.800 GHz** via kernel clock64 vs cudaEvent wall time correlation (4.9B cycles / 2.722s = 1800.0 MHz).
 
