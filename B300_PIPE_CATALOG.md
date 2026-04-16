@@ -5449,6 +5449,29 @@ Real frameworks typically achieve 60-80% of these peaks. Batch-1 attention is ne
 
 **Compute (exp, sigmoid, FMA) fully hides behind memory access.** The kernel is purely memory-bound despite heavy math (GELU activation). Scalar loads reduce this to 1.1 TB/s (15%) — **always vectorize elementwise kernels**.
 
+### Practical kernel: LayerNorm throughput
+
+**LayerNorm (v4 loads, shfl+smem reduction, 256 threads/block):**
+
+| Hidden dim | Rows | Working set | Effective BW | Notes |
+|:----------|:----:|:-----------:|:------------:|:------|
+| 1024 | 1024 | 4 MB | 6.8 TB/s | L2 cached |
+| 4096 | 1024 | 16 MB | 17.1 TB/s | L2 peak |
+| 8192 | 1024 | 32 MB | **19.4 TB/s** | L2 + L1 |
+| 16384 | 1024 | 64 MB | 12.8 TB/s | L2 partial miss |
+
+**Compute (mean, variance, sqrt) fully hides behind memory access.** LayerNorm is L2-bandwidth-bound for typical hidden dims (4K-8K). 3 data passes (mean, var, normalize) × v4 loads achieve near-peak L2 throughput.
+
+### PCIe Gen5 host↔device bandwidth
+
+| Transfer size | H→D | D→H |
+|:-------------|-----:|-----:|
+| 1 MB | 38.9 GB/s | 38.7 GB/s |
+| 16 MB | 56.0 GB/s | 55.7 GB/s |
+| ≥ 64 MB | **57.7 GB/s** | **57.4 GB/s** |
+
+**PCIe Gen5 x16 peak: 57.7 GB/s (90% of 64 GB/s spec).** Symmetric H↔D. Model loading: 70B FP8 from host = 70 GB / 57.7 GB/s = 1.2 seconds.
+
 ### Practical kernel: softmax throughput
 
 Softmax (1024 rows × 4096 cols, 256 threads/block): **0.0107 ms, 7.8 TB/s effective BW** (105% of DRAM spec). The 16 MB working set fits in L2, achieving near-peak bandwidth. 3 passes (max reduction + exp+sum + normalize) with SHFL warp reductions.
