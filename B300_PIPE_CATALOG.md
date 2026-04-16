@@ -8119,7 +8119,7 @@ ncu --section SpeedOfLight -c 1 ./myapp
 | **Fuse with adjacent kernels** | **N× for N ops** | Medium |
 | Use uint4 loads (16 B/thread) | 2.6× vs u32 | Low |
 | Use 2×uint4 loads (32 B/thread) | +10 % vs 1×uint4 | Low |
-| Coalesce memory access (stride-1) | **8× vs scattered** | Medium |
+| Coalesce memory access (stride-1) | **1.8× vs scattered** (not 8×) | Medium |
 | Smem-privatize histograms/reductions | **200×** | Medium |
 | Use `__reduce_add_sync` over shuffle tree | 40 % faster | Low |
 | Use `max(x,0)` not `x>0?x:0` for relu | 2× | Trivial |
@@ -8131,16 +8131,17 @@ ncu --section SpeedOfLight -c 1 ./myapp
 | Use tensor cores (tcgen05.mma / cuBLAS) | **30-90×** vs scalar | High |
 | Use FP8 instead of FP16 (if accuracy OK) | 2× tensor throughput | Medium |
 | Use FFMA2 (packed FP32) / HFMA2 (packed FP16) | same peak but better encoding | Low |
-| Avoid div.rn.f32 (use div.approx) | **40×** for division | Trivial |
-| Avoid POPC/CLZ/BFIND in inner loops | 4× slower than ALU | Low |
+| Avoid div.rn.f32 (use div.approx) | **13×** for division (51 vs 4 cy) | Trivial |
+| Use FP4 block-scaled (mxf4nvf4) | **2× over FP8** (9.9 vs 4.9 PFLOPS) | High |
+| Prefer predication over branches | 0.2 cy vs **67 cy** (4-way if-else) | Low |
 | Avoid function pointers | 5× dispatch overhead | Medium |
 
 ## Step 4: Latency-bound kernel fixes
 
 | Fix | Expected gain | Effort |
 |-----|:--------------|:-------|
-| **Increase warps/SM** (more CTAs or threads/CTA) | Linear to 64 warps | Low |
-| Add ILP (unroll inner loop, multiple loads in flight) | Up to 33× for loads | Low |
+| **Increase warps/SM** (8 warps saturate FMA pipe) | Linear to 16 warps | Low |
+| Add ILP (2+ FMA chains, 8 outstanding loads) | **2× for FMA, 1.7× for loads** | Low |
 | Use `__launch_bounds__(max_thr, min_CTAs)` to control occupancy | 10-50 % | Low |
 | Reduce register pressure (fewer live variables) | Prevents spill; 10× if spilling | Medium |
 
@@ -8154,12 +8155,24 @@ ncu --section SpeedOfLight -c 1 ./myapp
 | Use `cudaMallocAsync` not `cudaMalloc` | 50× faster alloc | Trivial |
 | Use NonBlocking streams | 12 % faster interleaved | Trivial |
 
-## Step 6: Advanced (diminishing returns)
+## Step 6: GEMM-specific (from measured TMA+MMA overlap)
+
+| Fix | Expected gain | Notes |
+|-----|:-------------|:------|
+| **K ≥ 6 MMA steps per TMA copy** | **19% → 98% TC eff** | Universal across FP16/FP8/FP4 |
+| Double-buffer TMA pipeline | 2× over serial TMA | 52 GB/s/SM sustained |
+| M=128, N≥128 tile size | **100% TC eff** (vs 9-67% for smaller) | N<64 wastes 44 cy floor |
+| Shared B matrix across SMs | **1.8× L2 broadcast** | L2 amplifies shared reads |
+| Epilogue overlap with MMA | **FREE** (0.4% overhead) | TMEM ld + global st hides |
+| Use tcgen05.mma not mma.sync | **250× throughput** | mma.sync is compatibility only |
+
+## Step 7: Advanced (diminishing returns)
 
 | Fix | When |
 |-----|------|
 | Warp specialization with TMA async | Only for GEMM-class with pipelined stages |
 | Green contexts for SM partitioning | Multi-tenant serving |
+| FP4 block-scaled (mxf4nvf4) | Need TMEM + scale factor management |
 | 16-CTA cluster opt-in | When DSMEM > 8 CTAs needed |
 | setmaxnreg register redistribution | Warp-specialized pipelines |
 | L2 persist policy | Hot working set < 32 MB with streaming eviction |
