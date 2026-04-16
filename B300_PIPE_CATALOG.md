@@ -6000,6 +6000,19 @@ Predication adds a fixed 0.19 cy per instruction, **independent of the predicate
 
 **Predicated-off stores are NOT faster at all** (4.06 cy = same as real stores). The LSU store path doesn't recognize the all-false mask for early termination.
 
+### Active thread count vs predicated load throughput (measured, 8 loads per iter)
+
+| Active threads | cy/ld | Regime |
+|:--------------:|------:|:-------|
+| **0** | **0.42** | All-false → LSU short-circuits (no memory access) |
+| 1 | 1.33 | Any non-zero → full load pipeline |
+| 4 | 1.33 | Same |
+| 16 | 1.33 | Same |
+| 31 | 1.33 | Same |
+| **32** | **0.90** | Unpredicated (compiler optimizes away predicate) |
+
+**Binary step function**: the LSU speedup is all-or-nothing. **Even 1 active thread out of 32 gives the full 1.33 cy cost.** There's no intermediate benefit — the memory pipeline must issue at least one sector request for any non-zero active mask. The all-false short-circuit only triggers when LITERALLY zero threads are active.
+
 ### Memory bandwidth scaling with occupancy
 
 | Warps/SM | Relative BW | Per-warp efficiency |
