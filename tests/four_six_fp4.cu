@@ -35,7 +35,7 @@
 
 static __device__ __forceinline__ float rcp_approx_ftz(float a) {
     float b;
-    asm volatile("rcp.approx.ftz.f32 %0, %1;" : "=f"(b) : "f"(a));
+    asm("rcp.approx.ftz.f32 %0, %1;" : "=f"(b) : "f"(a));
     return b;
 }
 
@@ -70,18 +70,18 @@ struct QuantResult {
 
 static __device__ __forceinline__ float roundtrip_e4m3(float x, unsigned char& out_byte) {
     unsigned short packed;
-    asm volatile("{cvt.rn.satfinite.e4m3x2.f32 %0, %2, %1;}"
+    asm("{cvt.rn.satfinite.e4m3x2.f32 %0, %2, %1;}"
                  : "=h"(packed) : "f"(x), "f"(0.0f));
     out_byte = (unsigned char)(packed & 0xFF);
     unsigned int f16_pair;
-    asm volatile("{cvt.rn.f16x2.e4m3x2 %0, %1;}" : "=r"(f16_pair) : "h"(packed));
+    asm("{cvt.rn.f16x2.e4m3x2 %0, %1;}" : "=r"(f16_pair) : "h"(packed));
     __half_raw hr; hr.x = (unsigned short)(f16_pair & 0xFFFF);
     return __half2float(__half(hr));
 }
 
 static __device__ __forceinline__ unsigned char f32x2_to_e2m1x2(float lo, float hi) {
     uchar2 packed;
-    asm volatile("{ .reg .b8 t; cvt.rn.satfinite.e2m1x2.f32 t, %2, %1; mov.b16 %0, {t,0}; }"
+    asm("{ .reg .b8 t; cvt.rn.satfinite.e2m1x2.f32 t, %2, %1; mov.b16 %0, {t,0}; }"
                  : "=h"(*reinterpret_cast<unsigned short*>(&packed)) : "f"(lo), "f"(hi));
     return packed.x;
 }
@@ -89,7 +89,7 @@ static __device__ __forceinline__ unsigned char f32x2_to_e2m1x2(float lo, float 
 static __device__ __forceinline__ half2 e2m1x2_to_f16x2(unsigned char byte) {
     unsigned short h = (unsigned short)byte;
     unsigned int f16_pair;
-    asm volatile("{ .reg .b8 t; mov.b16 {t,_}, %1; cvt.rn.f16x2.e2m1x2 %0, t; }"
+    asm("{ .reg .b8 t; mov.b16 {t,_}, %1; cvt.rn.f16x2.e2m1x2 %0, t; }"
                  : "=r"(f16_pair) : "h"(h));
     return *reinterpret_cast<half2*>(&f16_pair);
 }
@@ -126,12 +126,15 @@ static __device__ __forceinline__ void process_group(
     QuantResult q_vec[NUM_CANDIDATES];
     float err_vec[NUM_CANDIDATES];
 
+    // Hoist inv_scale out of the candidate loop — scale is constant but
+    // rcp_approx_ftz uses asm which prevents the compiler from CSE'ing.
+    float inv_scale = rcp_approx_ftz(scale);
+
     #pragma unroll
     for (int i = 0; i < NUM_CANDIDATES; ++i) {
         QuantResult& q = q_vec[i];
         const float inv_val = 1.f / cand_all[i];
         float s_group   = absmax * (inv_val * SCALE_OVERRIDE);
-        float inv_scale = rcp_approx_ftz(scale);
         unsigned char s_as_fp8;
         float s_round = roundtrip_e4m3(s_group * inv_scale, s_as_fp8);
         if (s_round == 0.f) s_round = 1.f;
@@ -228,7 +231,7 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
 #elif GROUPS_PER_THREAD == 2
     unsigned int wa0,wa1,wa2,wa3,wa4,wa5,wa6,wa7;
     unsigned int wb0,wb1,wb2,wb3,wb4,wb5,wb6,wb7;
-    asm volatile(
+    asm(
         "ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%16];\n\t"
         "ld.global.v8.u32 {%8,%9,%10,%11,%12,%13,%14,%15}, [%17];"
         : "=r"(wa0),"=r"(wa1),"=r"(wa2),"=r"(wa3),
