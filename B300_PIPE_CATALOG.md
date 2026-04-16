@@ -14696,6 +14696,38 @@ Workspace size from 0 to 256 MB has **NO effect** on BF16 4096³ GEMM throughput
 
 **When cudaGraph helps**: many tiny kernels (elementwise ops, layer norm sequences) where launch overhead is a significant fraction of total time. For GEMM-heavy layers, it's not worth the complexity.
 
+
+# System Characterization: Clock, ECC, PCIe, Thermal
+
+## Clock behavior under 10s sustained FMA burn
+
+| Second | SM clock | Mem clock | Power | Temp | Throttle |
+|-------:|---------:|----------:|------:|-----:|:--------:|
+| 1-10 | **1800 MHz** | 3996 MHz | 235W | 40°C | **none** |
+
+**No clock boost, no throttling, no thermal issues.** The B300 SXM6 runs at a fixed 1800 MHz SM clock under sustained compute. The theoretical 2032 MHz boost may not apply to this datacenter SKU or configuration. All `clock64` cycle measurements in this catalog are at **1800 MHz**.
+
+**Power**: 236W under full FMA compute = only **21% of 1100W TDP**. Reaching higher power draw requires tensor cores + memory streaming simultaneously.
+
+## ECC & Reliability
+
+- **ECC mode**: ON (both current and pending)
+- **Corrected (SBE) errors since boot**: 0
+- **Uncorrected (DBE) errors since boot**: 0
+
+HBM3E ECC is active with zero errors — excellent reliability.
+
+## PCIe & Interconnect
+
+| Parameter | Value |
+|-----------|-------|
+| PCIe link | **Gen6 x16** (reported by NVML) |
+| Measured H2D/D2H | ~58 GB/s (consistent with Gen5 effective) |
+| Cooling | Passive (SXM6, server chassis airflow) |
+| PCI Bus ID | 00000000:04:00.0 |
+
+The NVML reports Gen6 x16 link, but measured bandwidth (~58 GB/s) is consistent with Gen5 x16 effective throughput. The host system may negotiate Gen5 compatibility.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
