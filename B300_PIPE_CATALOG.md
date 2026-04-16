@@ -14562,3 +14562,35 @@ All MUFU instructions have ~23 cy loop-iteration cost (including overhead), with
 
 **Caveat**: High-level functions like `__expf()`, `__logf()`, `__sinf()` expand to MUFU + range reduction + normalization FMAs, adding 3-10 extra instructions. For peak throughput, use raw PTX (`ex2.approx.ftz.f32`) rather than library functions.
 
+
+# Voting & Shuffle Co-Issue
+
+| Operation | Latency (cy) | + 4 FMA (cy) | FMA cost hidden? |
+|-----------|-------------:|-------------:|:----------------:|
+| `__all_sync` | 28 | — | — |
+| `__any_sync` | 28 | — | — |
+| `__popc(__ballot_sync)` | 23 | — | — |
+| **`__shfl_xor_sync` + 4 FMA** | — | **26** | **Yes (+2 cy)** |
+| 4 independent `shfl_xor` | 24 total | — | 6 cy/shfl throughput |
+
+**Shuffle is free alongside FMA** — SHFL + 4 FMA = 26 cy vs 24 cy FMA-only (+2 cy). The shuffle unit co-issues with both FMA pipes.
+
+**Vote operations** (`__all_sync`, `__any_sync`) have 28 cy latency — ~5 cy above loop overhead. `__ballot_sync + __popc` has 23 cy (ballot and popc fuse efficiently).
+
+**BFIND** (bit-find / count-leading-zeros): ~79 cy including loop and dependency chain.
+
+## Complete Per-Warp Co-Issue Summary
+
+In a single scheduler cycle, B300 can simultaneously issue to ALL of these pipes from the same warp:
+
+| Pipe | Example instructions | Free alongside FMA? |
+|------|---------------------|:-------------------:|
+| FMA_heavy | FFMA, DFMA | — (is the baseline) |
+| FMA_lite | FFMA (2nd chain) | Yes (2.88 cy/FMA with 8-way ILP) |
+| ALU | IADD3, LOP3, PRMT, ISETP | **Yes (+0 cy)** |
+| LSU | LDG, STG, LDS, STS | **Yes (+0-4 cy)** |
+| MUFU | RCP, RSQ, EX2, LG2, SIN, COS | **Yes (+1 cy)** |
+| Shuffle | SHFL, VOTE, REDUX | **Yes (+2 cy)** |
+
+This is effectively **6-way co-issue** when the instruction mix provides independent operations across all pipes. The B300 SM can execute 6+ distinct operations simultaneously from a single warp, making instruction mix optimization highly valuable.
+
