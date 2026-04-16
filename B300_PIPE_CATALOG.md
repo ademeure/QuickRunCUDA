@@ -4824,6 +4824,66 @@ L1→L2 step = +243 cy. L2→DRAM step = +518 cy. DRAM latency dominates when wo
 
 The transition is sharp: 192 KB → L1 at 39 cy, 256 KB → L2 at 235 cy. This is with 228 KB total smem, confirming the L1/smem partition: **192 KB L1 data + 36 KB overhead or other use** out of the 228 KB unified smem/L1.
 
+### L1 sector size = 32 bytes (verified via sub-line pointer chase)
+
+| Step | Measured cy/ld | Predicted (32B sector) | Error |
+|-----:|---------------:|-----------------------:|------:|
+| 4 B | 71.6 | 71.8 | 0.2 |
+| 8 B | 104.4 | 104.5 | 0.1 |
+| 16 B | 170.1 | 170.1 | 0.0 |
+| 32 B | 301.2 | 301.2 | 0.0 |
+
+Formula: avg_lat = (L2_lat + (sector/step - 1) × L1_lat) / (sector/step). With L1=39 cy, L2=301 cy, **sector=32B is the ONLY size that matches all 4 data points** (16B, 64B, 128B all fail by 16-197 cy).
+
+The L1 data cache fills in 32-byte sectors from L2, not full 128-byte lines. Consecutive accesses within the same 32B sector hit L1; the next sector requires a new L2 fetch. This is consistent with NVIDIA's sectored L1 design since Volta.
+
+### L2 cache capacity and hierarchy (pointer-chase, single SM)
+
+| Working set | cy/ld | Level |
+|:------------|------:|-------|
+| ≤ 48 MB | 301-305 | L2 (local slice) |
+| 56 MB | 317 | L2 + slight eviction |
+| 64 MB | 464 | **L2 transition** |
+| 72-112 MB | 603-635 | Remote L2 / partial DRAM |
+| 128 MB | 728 | Mostly DRAM |
+| ≥ 144 MB | 789 | **Fully DRAM** |
+
+**Effective L2 capacity for single SM ≈ 48-56 MB** (sharp transition begins at 56 MB). This is ~half the spec'd 128 MB — likely reflects the single SM hitting its local L2 partition. The B300's L2 is sliced across memory controllers; a single SM accesses its local slice at 301 cy and remote slices at ~631 cy.
+
+**DRAM latency = 789 cy = 388 ns** at 2.032 GHz (HBM3E, consistent with ~400 ns memory access).
+
+### FMA dual-issue and register read ports (verified)
+
+| Pattern | cy/pair | Notes |
+|---------|--------:|-------|
+| FMA same-reg (a=b=c=d) | 4.03 | Latency baseline |
+| FMA 3 distinct src regs | 4.03 | **No read-port bottleneck** |
+| FMA+FMA (2 chains) | **4.05** | **Heavy+lite dual-issue confirmed** (2.03 cy/fma) |
+| FMA+IADD interleaved | **4.04** | IADD is free behind FMA |
+| 4-chain FMA ILP | 4.50/4 = 1.13 | ~3.6× speedup vs serial |
+| DFMA (FP64) | **63.96** | 1/16 FP32 rate |
+
+**FMA dual-issue**: two independent FMA chains execute at 2.03 cy/fma, confirming the heavy+lite FMA sub-units. Adding IADD (pipe_alu) adds zero overhead — it runs on a separate pipe concurrently.
+
+### FMA throughput vs warp count (single-chain serial FMA per warp)
+
+| Warps | Per-warp cy/fma | Total FMA/cy | % of 2/cy peak | Notes |
+|------:|----------------:|-------------:|---------------:|-------|
+| 1 | 4.03 | 0.25 | 12% | Latency-limited |
+| 2 | 4.03 | 0.50 | 25% | Perfect scaling |
+| 4 | 4.03 | 0.99 | 50% | 1 warp/partition |
+| **8** | **4.03** | **1.98** | **99%** | **Saturates 1 pipe (heavy)** |
+| 12 | 4.03 | 2.98 | 149% | 3 partitions fully active |
+| **16** | 4.07 | **3.93** | **197%** | **Saturates all 4 partitions** |
+| 24 | 6.13 | 3.92 | 196% | Over-subscribed, per-warp slowdown |
+| 32 | 8.22 | 3.89 | 195% | Diminishing returns |
+
+**SM occupancy rules for FMA:**
+1. **4 warps**: 1 per SMSP partition → 1 fma/cy (single-pipe ceiling)
+2. **8 warps**: 2 per partition → enough to hide 4-cy latency → **99% of single-pipe peak**
+3. **16 warps**: 4 per partition → saturates heavy pipe across all 4 partitions = **4 fma/cy**
+4. To reach **8 fma/cy** (heavy+lite dual-issue): need 2 independent chains per warp (ILP), which with 8+ warps = up to ~60 TFLOPS/SM scalar FMA
+
 ### PRMT (byte permute) throughput
 
 `prmt.b32 d, a, b, selector` — arbitrary byte permute across two 32-bit sources.
