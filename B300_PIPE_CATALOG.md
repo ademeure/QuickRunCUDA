@@ -9355,7 +9355,19 @@ Real model sizes are fine (designed as clean multiples): Llama-7B FFN (11008) = 
 | 8 (lda=4104) | **1632** | **-5.5% WORSE** |
 | 16-128 | ~1725 | no effect |
 
-**LDA padding does NOT help** — power-of-2 dimensions are already optimal. Padding to non-aligned lda (pad=8) actually hurts. The worst algorithm can be up to 46% slower than the best — cuBLAS's heuristic saves you from the bad ones. Auto-tuning (e.g., `cublasLtMatmulAlgoGetHeuristic` with N>1) helps ~5% for mid-size GEMMs.
+**LDA padding does NOT help** — power-of-2 dimensions are already optimal. Padding to non-aligned lda (pad=8) actually hurts.
+
+### cuBLAS dispatch overhead (measured, host-side)
+
+| GEMM size | Dispatch | GPU time | Overhead |
+|:---------:|:--------:|:--------:|:--------:|
+| 128³ | 5.0 µs | ~0 ms | **100%** (dispatch IS the cost) |
+| 512³ | 4.9 µs | ~0 ms | 95% |
+| 1024³ | 4.9 µs | 0.005 ms | 94% |
+| 4096³ | 4.8 µs | 0.080 ms | 6% |
+| 8192³ | 4.8 µs | 0.519 ms | 0.9% |
+
+**Constant 5 µs dispatch overhead** regardless of GEMM size. For small GEMMs (≤1024), the dispatch IS the entire cost — tensor cores finish before the host returns. For 70B model (4 GEMMs × 80 layers): 1.6 ms pure dispatch overhead → **use cudaGraph to eliminate**. The worst algorithm can be up to 46% slower than the best — cuBLAS's heuristic saves you from the bad ones. Auto-tuning (e.g., `cublasLtMatmulAlgoGetHeuristic` with N>1) helps ~5% for mid-size GEMMs.
 
 ### cuBLAS with REAL model shapes (measured, BF16, cuBLAS 13.4)
 
