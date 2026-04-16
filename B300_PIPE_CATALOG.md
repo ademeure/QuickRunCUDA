@@ -1116,8 +1116,17 @@ Full alloc + st/ld + dealloc round-trip verified working on sm_103a (write patte
 | `tcgen05.wait::st.sync.aligned`       | 12      |    —       |    —          | slightly more for state check |
 | `tcgen05.fence::before_thread_sync`   |  1.9    |    —       |    —          | |
 | `tcgen05.fence::after_thread_sync`    |  1.9    |    —       |    —          | |
-| `tcgen05.cp.128x256b` with `wait::st` |  2048   |  4 KB      |     2 B/cy (3.8 GB/s/warp) | full cp completion = ~1 μs for 4 KB |
-| `tcgen05.dealloc.cta_group::1`        |   ~8    |    —       |    —          | |
+| `tcgen05.cp.128x128b` (smem→TMEM)     |  **47** |  2 KB      |   **43 B/cy** | verified working; 128x256b crashes |
+| `tcgen05.st.32x32b.x1` (new shape)    |  2.78   |   128 B    |     46        | |
+| `tcgen05.st.32x32b.x2`                |  2.63   |   256 B    |     97        | |
+| `tcgen05.st.32x32b.x4`                |  3.38   |   512 B    |    151        | best st throughput |
+| `tcgen05.ld.32x32b.x1` (new shape)    |  **0.88** | 128 B    |    145        | sub-cycle pipelined |
+| `tcgen05.ld.32x32b.x4`                |  **0.88** | 512 B    |  **582**      | reads 4× faster than writes |
+
+**TMEM capacity and alloc sizes:**
+- Total: 512 columns × 128 lanes × 4 bytes = **256 KB per SM**
+- Valid alloc sizes: 32, 64, 128, 256, 512 columns (powers of 2 only)
+- Must `relinquish_alloc_permit` after each alloc before any TMEM access
 
 **CORRECTED numbers (strict DCE defeat via forced xor accumulator + conditional output):**
 
@@ -4799,11 +4808,21 @@ Only `.cg` intentionally bypasses L1 (use for streaming data you won't re-access
 | DRAM (L2 miss) | **813** | **423** |
 
 Measured via pointer chase with varying working-set sizes:
-- Small WS (< L1 capacity): lands in L1, 52 cy
-- Medium WS (> L1, < L2 ~128 MB): lands in L2, 295 cy
+- Small WS (< L1 capacity): lands in L1, 39-52 cy
+- Medium WS (> L1, < L2 ~128 MB): lands in L2, 295-301 cy
 - Large WS (> L2): each load hits DRAM, 813 cy
 
 L1→L2 step = +243 cy. L2→DRAM step = +518 cy. DRAM latency dominates when working set exceeds L2 capacity.
+
+**L1 data cache effective capacity = 192 KB per SM** (verified by pointer-chase sweep):
+
+| Working set | cy/ld | Hit level |
+|:------------|------:|-----------|
+| ≤ 192 KB | 39 | L1 |
+| 256 KB | 235 | L1/L2 mixed |
+| ≥ 320 KB | 301 | L2 |
+
+The transition is sharp: 192 KB → L1 at 39 cy, 256 KB → L2 at 235 cy. This is with 228 KB total smem, confirming the L1/smem partition: **192 KB L1 data + 36 KB overhead or other use** out of the 228 KB unified smem/L1.
 
 ### PRMT (byte permute) throughput
 
