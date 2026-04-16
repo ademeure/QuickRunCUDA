@@ -7843,7 +7843,25 @@ tcgen05.mma.cta_group::1.kind::mxf4nvf4.block_scale.block16
 - **No `{disable_lane_mask}`** operand — replaced by scale operands
 - Scale factor type: UE8M0 or UE4M3 (per Table 57 of PTX ISA)
 
-**Next step**: build full benchmark kernel with `tcgen05.cp` to load A+scales into TMEM, then run the block-scaled MMA to measure real K=64 FP4 throughput. The instruction compiles and emits SASS — the hardware path exists.
+## MEASURED: 9.9 PFLOPS via mxf4nvf4.block16 (K=64 FP4, 2× baseline)
+
+| Path | K | cy/mma | TFLOPS/SM | Chip | × f8f6f4 |
+|------|--:|-------:|----------:|-----:|---------:|
+| `kind::f8f6f4` E2M1 (baseline) | 32 | 128.02 | 33.29 | **4.9 PFLOPS** | 1.0× |
+| **`kind::mxf4nvf4.block_scale.block16`** | **64** | **128.01** | **66.58** | **9.9 PFLOPS** | **2.0×** |
+
+Same 128 cy/mma, double the K (64 vs 32), double the FLOPs. Perfect 148-SM scaling.
+
+SASS: `UTCOMMA.BLOCK16` — processes K=64 FP4 elements with per-block-16 UE4M3 scale factors.
+
+**This is the REAL B300 FP4 tensor core throughput: 9.9 PFLOPS dense FP4.**
+
+Note: A matrix data was uninitialized TMEM (not loaded via tcgen05.cp) — throughput is correct, output data meaningless. For a correct GEMM, A must be loaded to TMEM via `tcgen05.cp` and scale factors written to their TMEM slots.
+
+**Comparison to published specs:**
+- NVIDIA B300 FP4 dense spec: ~10 PFLOPS → **9.9 PFLOPS = 99 % of spec**
+- FP8 dense: 4.9 PFLOPS (measured) vs 5 PFLOPS spec = 98 %
+- **FP4 = 2× FP8** via block-scaled path ✓
 
 
 
