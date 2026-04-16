@@ -14617,7 +14617,24 @@ Measured per-component with cuBLAS (OP_T for weights), RMSNorm and SiLU×Up kern
 | **80 layers** | 24.7 ms | **14.0 ms** |
 | **Estimated tok/s** | ~40 | **~71** |
 
-**FP8 weights are the single biggest optimization for decode** — 1.77× faster per layer, 71 tok/s vs 40 tok/s. The speedup is memory-bound (weight loading), not compute-bound, so it works at batch=1.
+## Measured FP8 Decode Pipeline (verified)
+
+| GEMM | BF16 µs | FP8 µs | Speedup | FP8 weight |
+|------|--------:|-------:|--------:|---------:|
+| Q proj | 24 | **10** | 2.4× | 64 MB |
+| K proj | 10 | **6** | 1.7× | 8 MB |
+| V proj | 10 | **6** | 1.7× | 8 MB |
+| O proj | 24 | **10** | 2.4× | 64 MB |
+| Gate proj | 74 | **42** | 1.8× | 224 MB |
+| Up proj | 74 | **42** | 1.8× | 224 MB |
+| Down proj | 74 | **40** | 1.9× | 224 MB |
+| **Sum** | **290** | **156** | **1.86×** | **816 MB** |
+
+FP8 sustained chain: **80 µs/GEMM** (vs 170 µs BF16 = **2.13× chain speedup**).
+
+**FP8 model = 63 GB** (vs 126 GB BF16). With 287 GB total: **222 GB for KV → 331 concurrent requests** (vs 216 BF16).
+
+**FP8 weights are the single biggest optimization for decode** — 1.8× faster per layer with zero complexity (just quantize weights).
 
 
 # Attention Q×K^T and Attn×V (cuBLAS Batched GEMM)
