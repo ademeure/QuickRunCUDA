@@ -4564,6 +4564,21 @@ Pairs well with HMMA/tcgen05.mma: `ldmatrix → register → HMMA` is the canoni
 
 Design: for CTA-local sync use `__syncthreads` (~20 cy for 4 warps) or `__threadfence_block` (8.6 cy); avoid `__threadfence` unless you need chip-wide memory ordering (273 cy). System fence (2818 cy) should be used only for CPU-GPU synchronization.
 
+### Fence cost by scope and semantics
+
+| Fence | Scope | Cycles |
+|-------|-------|-------:|
+| `fence.sc.cta` / `membar.cta` / `__threadfence_block` | CTA | **8.6** |
+| `fence.acq_rel.cta` | CTA | **9.6** |
+| `fence.sc.gpu` / `membar.gl` / `__threadfence` | GPU | **274** |
+| `fence.acq_rel.gpu` | GPU | **274** |
+| `fence.acq_rel.sys` / `__threadfence_system` | System | **2810** |
+| `nanosleep.u32 100` | — | 230 (113 ns actual, 13% over) |
+
+**SC and acq_rel have identical cost on Blackwell** — sequential consistency is free. Always use `fence.sc` (strongest guarantee) since there's no performance reason to prefer `acq_rel`.
+
+Cost hierarchy: CTA (9 cy) → GPU (274 cy = **32× CTA**) → SYS (2810 cy = **10× GPU**). Use narrowest scope possible.
+
 ### Register bank conflicts (FP32 FMA, ncu-verified)
 
 Blackwell has 2 register banks (odd/even). Instructions reading 3 register operands may conflict.
