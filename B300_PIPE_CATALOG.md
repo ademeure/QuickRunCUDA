@@ -5459,7 +5459,27 @@ Attention becomes significant at seq≥4096 (11%+ of decode). At seq=8192: atten
 
 **Batch=1 is 0.2% of tensor peak** — purely weight-loading-bound. Tensor cores become significant at batch≥64 (15%). Full compute-bound at batch≈400 where OI crosses the FP16 ridge point (314 FLOP/B).
 
-**For LLM serving**: maximize batch size via continuous batching. Each doubling of batch ≈ 2× throughput until batch≈400.
+### Exhaustive M sweep: decode-relevant range (measured, BF16, N=K=8192)
+
+| M (batch) | ms | TFLOPS | MFU | Weight BW |
+|----------:|---:|-------:|----:|----------:|
+| **1** | 0.023 | 6 | 0.2% | **5775 GB/s** |
+| **2** | 0.049 | 5 | 0.2% | 2730 (WORSE!) |
+| **3** | 0.116 | 3 | 0.1% | **1155 (PATHOLOGICAL!)** |
+| 4 | 0.049 | 11 | 0.4% | 2729 |
+| 8 | 0.026 | 41 | 1.7% | 5138 |
+| 16 | 0.025 | 87 | 3.5% | 5433 |
+| 32 | 0.024 | 178 | 7.2% | 5552 |
+| 64 | 0.024 | 354 | 14.4% | 5538 |
+| 128 | 0.025 | 692 | 28.1% | 5406 |
+| 256 | 0.030 | 1144 | 46.4% | 4467 |
+| 512 | 0.041 | 1666 | 67.6% | 3253 |
+
+**CRITICAL: M=2 and M=3 are SLOWER than M=1!** cuBLAS switches kernel implementations at M boundaries, and the M=2/3 kernels are pathologically bad. **Never serve batches of 2-3 tokens. Use M=1 or M≥4.**
+
+M=1 achieves 5.8 TB/s effective weight bandwidth (better than raw DRAM streaming due to L2 caching of weight tiles). Powers of 2 and multiples of 8 get the best throughput.
+
+**For LLM serving**: maximize batch size via continuous batching. But avoid M=2,3. Each doubling of batch ≈ 2× throughput until batch≈400.
 
 ### Prefill throughput (compute-bound, FP16 tensor, W=4096²)
 
@@ -9373,7 +9393,24 @@ Real model sizes are fine (designed as clean multiples): Llama-7B FFN (11008) = 
 | b=128 | 1805 | 686 | **2.6×** |
 | s=4096 | 4396 | 2233 | **2.0×** |
 
-FP8 approaches the theoretical 2× over BF16 at large M (prefill). At batch=1: both memory-bound, FP8 advantage = 2× from half the weight bytes.
+### FP8 vs BF16 M sweep: decode-critical comparison (N=K=8192, measured)
+
+| M | BF16 TFLOPS | FP8 TFLOPS | FP8/BF16 | FP8 wt BW |
+|---:|:----------:|:---------:|:--------:|:---------:|
+| 1 | 6 | **14** | **2.3×** | 6798 GB/s |
+| 2 | 5 | **UNSUP** | — | — |
+| 4 | 11 | **10** | **0.9× (SLOWER!)** | 1193 |
+| 8 | 41 | **19** | **0.5× (SLOWER!)** | 1181 |
+| 16 | 87 | 137 | 1.6× | 4284 |
+| 32 | 178 | 286 | 1.6× | 4468 |
+| 64 | 354 | **959** | **2.7×** | 7490 |
+| 128 | 692 | 1764 | 2.6× | 6891 |
+| 256 | 1144 | 2809 | 2.5× | 5486 |
+| 512 | 1666 | 3102 | 1.9× | 3029 |
+
+**CRITICAL: FP8 is SLOWER than BF16 at M=4 and M=8!** cuBLAS FP8 kernels are poorly optimized for very small M (4-8). FP8 M=2 is completely unsupported. **For LLM serving: use FP8 at M=1 or M≥16, BF16 at M=4-8.**
+
+FP8 advantage peaks at M=64 (2.7×) where L2 caching amplifies the half-sized weight reads.
 
 **Mixtral expert FP8 E4M3:**
 
