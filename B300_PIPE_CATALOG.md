@@ -14942,6 +14942,41 @@ The key serving throughput question: at what batch size do GEMMs become compute-
 - batch=64: 1/70µs × 64 = 914K tok/s (**68× batch=1**)
 - batch=256: 1/89µs × 256 = 2876K tok/s (**213× batch=1**)
 
+
+# Prefill Throughput (Llama-70B, BF16)
+
+## Gate projection at various sequence lengths
+
+| Seq len | µs | TFLOPS | Prefill tok/s |
+|--------:|---:|-------:|--------------:|
+| 128 | 72 | 837 | 1.78M |
+| 256 | 89 | 1356 | 2.89M |
+| **512** | **151** | **1591** | **3.39M** (peak) |
+| 1024 | 531 | 906 | 1.93M |
+| 4096 | 1991 | 966 | 2.06M |
+
+Peak gate-projection throughput at **seq=512** (1591 TFLOPS) — the sweet spot where memory and compute are balanced.
+
+## Full layer prefill (7 GEMMs × 80 layers)
+
+| Seq len | ms/layer | 80 layers | **Prefill tok/s** |
+|--------:|---------:|----------:|--------------:|
+| 128 | 0.29 | 23 ms | 5537 |
+| **512** | **0.54** | **43 ms** | **11853** |
+| 2048 | 3.44 | 275 ms | 7442 |
+| 4096 | 7.51 | 600 ms | 6821 |
+
+**Peak prefill: ~12K tok/s at seq=512** (43 ms for 512 tokens through 80 layers). The per-token throughput is U-shaped:
+- **Short sequences (≤128)**: memory-bound (weight loading dominates, low utilization)
+- **Sweet spot (512)**: balanced (maximum GPU utilization)
+- **Long sequences (≥2048)**: compute-bound (per-token cost grows linearly)
+
+**Prefill time estimates** (80 layers, BF16, excluding attention):
+- 512 tokens: **43 ms** = 12K tok/s
+- 2K tokens: **275 ms** = 7.4K tok/s
+- 4K tokens: **600 ms** = 6.8K tok/s
+- 8K tokens: ~1.2 s = ~6.8K tok/s (extrapolated)
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
