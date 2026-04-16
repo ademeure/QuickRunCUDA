@@ -7781,75 +7781,28 @@ All 5 sub-byte format codes were tested at M=64, N=8, K=32 with 1000 iterations:
 
 **At K=32, ALL FIVE FORMATS HAVE IDENTICAL THROUGHPUT.** But K=32 is NOT the native FP4 K...
 
-## ⚡ BREAKTHROUGH: K=96 via idesc bit 31 — 3× FP4 throughput! ⚡
+## idesc bit 31 ("K=96") — DOES NOT increase actual MACs via kind::f8f6f4
 
-The PTX ISA (§9.7.16.2.1.1) documents **K=96 as sm_103a-EXCLUSIVE**:
-> "K = 96 is only supported for following architecture-specific targets: sm_103a."
+The PTX ISA (§9.7.16.2.1.1) documents **K=96 as sm_103a-exclusive**, encoded via idesc bit 31. We tested setting bit 31 on the `kind::f8f6f4` path:
 
-**idesc bit 31 = 1 → Dense K=96 mode.** We tested this by setting bit 31 on the existing `kind::f8f6f4` path with E2M1 format:
+**Timing**: setting bit 31 does NOT change cycle count (identical cy/mma). This looked like "3× throughput" but...
 
-| Shape | K | idesc | cy/mma | TFLOPS/SM | Chip | Speedup |
-|-------|--:|------:|-------:|----------:|-----:|--------:|
-| 64×8 | 32 | 0x04021690 | 66.98 | 0.99 | 147 | 1.0× |
-| **64×8** | **96** | **0x84021690** | **66.75** | **2.99** | **443** | **3.0×** |
-| 64×64 | 32 | 0x04021690 | 66.06 | 1.01 | 149 | 1.0× |
-| **64×64** | **96** | **0x84021690** | **66.22** | **3.02** | **446** | **3.0×** |
-| 64×128 | 32 | 0x04021690 | 65.83 | 1.01 | 150 | 1.0× |
-| **64×128** | **96** | **0x84021690** | **66.46** | **3.01** | **445** | **3.0×** |
-
-**K=96 processes 3× the K dimension in IDENTICAL cycle time.** Same cy/mma (~66), but 3× the multiply-accumulates.
-
-## VERIFIED at full scale M=128 N=256 (the production tensor core shape)
-
-| Config | K | cy/mma | TFLOPS/SM | Chip | × FP8 |
-|--------|--:|-------:|----------:|-----:|------:|
-| FP8 E4M3 K=32 | 32 | 128.29 | 33.22 | **4.9 PFLOPS** | 1.0× |
-| FP4 E2M1 K=32 | 32 | 128.27 | 33.22 | 4.9 PFLOPS | 1.0× |
-| **FP4 E2M1 K=96** | **96** | **128.29** | **99.65** | **14.7 PFLOPS** | **3.0×** |
-| **FP4 K=96 (148 SMs)** | **96** | **128.12** | **99.79** | **14.8 PFLOPS** | **3.02×** |
-
-**14.8 PFLOPS FP4 confirmed at full tensor core scale.** Same 128 cy/mma as FP8 — the hardware processes 96 FP4 MACs per cycle vs 32 FP8 MACs.
-
-Perfect linear scaling: single SM = 99.8 TFLOPS, 148 SMs = 14.8 PFLOPS (148× exactly).
-
-This is the **B300's real FP4 tensor core throughput** — accessible TODAY via `kind::f8f6f4` + idesc bit 31 = 1, without needing `kind::mxf4` or block scaling!
-
-### K=96 works for ALL sub-byte format combinations
-
-| A format | B format | K=96 cy/mma | TFLOPS/SM | Chip |
-|----------|----------|------------:|----------:|-----:|
-| FP8 E4M3 | FP8 E4M3 | 128.28 | 99.66 | 14.8 PFLOPS |
-| **FP4 E2M1** | **FP4 E2M1** | **128.27** | **99.67** | **14.8 PFLOPS** |
-| FP4 E2M1 | FP8 E4M3 | 128.72 | 99.31 | 14.7 PFLOPS |
-| FP8 E4M3 | FP4 E2M1 | 128.73 | 99.31 | 14.7 PFLOPS |
-| FP6 E2M3 | FP6 E2M3 | 128.30 | 99.64 | 14.7 PFLOPS |
-| FP6 E2M3 | FP4 E2M1 | 128.27 | 99.66 | 14.8 PFLOPS |
-
-All combinations = IDENTICAL throughput at ~14.8 PFLOPS. K=96 is a universal 3× boost.
-
-SASS confirmation: both K=32 and K=96 use the same `UTCQMMA` opcode — the K dimension is purely in the `idesc` register (bit 31). The hardware tensor core internally processes 3× the MAC width.
-
-**Note on descriptor correctness**: LBO must match the K × element_size. For FP4 K=96: LBO=48 (96 × 0.5 B). For FP8 K=96: LBO=96 (96 × 1 B). Our test used LBO=48 for all formats — FP4 results are correct, FP8/FP6 results have correct timing but may fetch wrong data. Pure FP4 is the natural use case for K=96.
-
-**How to use K=96 right now:**
-```cpp
-// Set bit 31 of idesc for K=96
-unsigned idesc = (1U << 4)              // c_format = F32
-               | (5U << 7)             // a_format = E2M1 (FP4)
-               | (5U << 10)            // b_format = E2M1 (FP4)
-               | ((N >> 3) << 17)      // n_dim
-               | ((M >> 4) << 24)      // m_dim
-               | (1U << 31);           // K=96 mode!
-
-// SMEM descriptor: K=96 FP4 = 48 bytes per row
-unsigned long long LBO = 48;    // 96 × 0.5 bytes
-unsigned long long SBO = 384;   // 8 rows × 48 bytes
+**Correctness verification** with known FP4 data (A = all 3.0, B = all 1.5):
+```
+K=32: TMEM result = 144.0 = 32 × 4.5  ✓ CORRECT
+K=96: TMEM result = 144.0 = 32 × 4.5  ✗ STILL 32 MACs (NOT 96!)
 ```
 
-**Implications:**
-- FP4 inference on B300 can hit **~14 PFLOPS** — 3× the FP8 rate
-- Combined with 2× memory compression, FP4 is the optimal decode format on B300
-- 7B model decode at FP4: ~2100 tok/s (compute) or ~2100 tok/s (memory) — balanced!
+**⚠ Setting bit 31 on `kind::f8f6f4` does NOT compute additional MACs.** The tensor core still performs K=32 multiply-accumulates. The bit is accepted without error but ignored for the `kind::f8f6f4` path.
+
+**K=96 likely requires `kind::mxf4`** (block-scaled FP4 path), which needs:
+- TMEM-resident scale factors
+- `.block32` or `.block16` scaling qualifiers
+- Compiler support not yet in CUDA 13.2 (ptxas: "Illegal modifier '.block32'")
+
+**Current real FP4 throughput via `kind::f8f6f4` = 4.9 PFLOPS (= FP8, K=32 shared path).**
+
+The PTX ISA documents K=96 as valid for sm_103a, and the hardware accepts it, but activating it properly requires the full block-scaled pipeline that's not yet compiler-supported. When `kind::mxf4` ships (expected CUDA 13.3+), K=96 will deliver the genuine ~14.8 PFLOPS.
 
 
 
@@ -7938,30 +7891,22 @@ The benefit of FP4 on this path is **2× less memory** for the same K:
 
 ## tcgen05 Power vs Data Pattern (148 SMs, smem-only, zero DRAM, 50M iter ≈ 6s each)
 
-| Format | Data | Power (W) | PFLOPS | TFLOPS/W |
-|--------|------|----------:|-------:|---------:|
+**Note**: all "K=96" and "FP8 K=96" entries from earlier were invalidated by correctness testing — setting idesc bit 31 does NOT change the actual number of MACs via `kind::f8f6f4`. The rows below marked "K=96 (idesc bit31)" represent the tensor core running at the SAME K=32 compute as baseline, with bit 31 set but ignored. Power differences in those rows may reflect descriptor-fetch patterns rather than real additional compute.
+
+**Reliable measurements (K=32 compute, verified correct):**
+
+| Format | Data | Power (W) | PFLOPS (real) | TFLOPS/W |
+|--------|------|----------:|------:|---------:|
 | *Idle* | — | 179 | — | — |
-| | | | | |
 | **FP16 (kind::f16)** | zeros | **462** | 2.5 | 5.4 |
 | FP16 | fp16-1.0 | 475 | 2.5 | 5.3 |
 | FP16 | all-ones (0xFF) | 509 | 2.5 | 4.9 |
 | FP16 | **random** | **1 040** | 2.5 | 2.4 |
-| | | | | |
 | **FP8 E4M3 K=32** | zeros | 481 | 4.9 | 10.2 |
 | FP8 K=32 | all-ones | 511 | 4.9 | 9.6 |
 | FP8 K=32 | **random** | **1 038** | 4.9 | 4.7 |
-| | | | | |
-| FP4 E2M1 K=32 | zeros | 458 | 4.9 | 10.7 |
+| **FP4 E2M1 K=32** | zeros | 458 | 4.9 | 10.7 |
 | FP4 K=32 | **random** | **1 036** | 4.9 | 4.7 |
-| | | | | |
-| **FP4 E2M1 K=96** | alternating (0x55) | **440** | 14.7 | **33.4** |
-| FP4 K=96 | fp16-1.0 (0x3F80) | 443 | 14.7 | 33.2 |
-| FP4 K=96 | all-ones (0xFF) | 448 | 14.7 | 32.8 |
-| FP4 K=96 | zeros | 472 | 14.8 | 31.4 |
-| FP4 K=96 | **random** | **1 035** | **14.7** | **14.2** |
-| | | | | |
-| FP8 E4M3 K=96 | zeros | 427 | 14.7 | 34.4 |
-| FP8 K=96 | **random** | **1 008** | 14.8 | 14.7 |
 
 ### Key findings
 
