@@ -5617,6 +5617,21 @@ Peak FP8 advantage: **1.87-1.90×** at batch=8 (8B) and batch=128 (70B). At batc
 
 **8B FP8 at batch=2048: 222K tok/s.** BF16 ceiling: 115K. FP8 ceiling: 222K (1.93×).
 
+### Model FLOPS Utilization (MFU) — measured across all configs
+
+| Config | b=1 | b=8 | b=128 | b=512 | b=2048 |
+|:-------|:---:|:---:|:-----:|:-----:|:------:|
+| 70B BF16 | **0.2%** | 2.0% | — | 64.3% | **78.8%** |
+| 70B FP8 | **0.2%** | 1.9% | 22.6% | 55.1% | **78.1%** |
+| 8B BF16 | — | 1.6% | 11.0% | 31.5% | 64.8% |
+| 8B FP8 | — | 1.6% | 9.5% | 25.0% | 63.0% |
+
+**Batch=1 decode = 0.2% MFU** — the GPU is **99.8% idle** during single-token decode. This is the fundamental inefficiency of LLM serving.
+
+**The GPU needs batch≥512 to reach >50% MFU.** At batch=2048: 78-79% MFU for 70B, 63-65% for 8B (smaller GEMMs = less tile utilization).
+
+**FP8 and BF16 achieve the same MFU at matched batch** — FP8's advantage is purely from the higher peak (4929 vs 2465 TFLOPS), not better utilization.
+
 ### Llama-3.1-405B TP=2 per-GPU layer (BF16, measured)
 
 d=16384, qkv/gpu=9216, ffn/gpu=26624, **126 layers**
