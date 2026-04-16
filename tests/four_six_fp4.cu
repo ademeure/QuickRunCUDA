@@ -415,7 +415,11 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
 #else
         int grp = group + g;
 #endif
-#ifdef COLS_PARAM_CONST
+#ifdef CONTIGUOUS_SCALES
+        // Simple linear layout: scale[group] — no swizzle computation.
+        // Saves ~12 ALU instructions per scale write vs cuBLAS swizzled layout.
+        long long tgt = grp;
+#elif defined(COLS_PARAM_CONST)
         int col = grp & (COLS_PARAM_CONST - 1);
         int row = grp / COLS_PARAM_CONST;
         long long tgt = sf_out_offset(row, col, COLS_PARAM_CONST >> 2);
