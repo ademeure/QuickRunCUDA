@@ -129,8 +129,9 @@ static __device__ __forceinline__ void quant_dequant_fused(
     out_dq = *reinterpret_cast<half2*>(&dq_bits);
 }
 
-// BF16_LO: extract low bf16 as f32 (zero lower 16 bits, exact)
-#define BF16_LO(w) __int_as_float((unsigned int)((w) & 0xFFFFu) << 16)
+// BF16_LO: extract low bf16 as f32. The & 0xFFFF mask is redundant because
+// u32 << 16 discards the upper 16 bits (overflow), giving the same result.
+#define BF16_LO(w) __int_as_float((unsigned int)(w) << 16)
 // BF16_HI: reinterpret u32 as f32 WITHOUT masking lower 16 bits.
 // The low bf16 value contaminates the mantissa, but e2m1 quantization (1-bit
 // mantissa) is coarse enough that the rounding result is identical in >99.9% of
