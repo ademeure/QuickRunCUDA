@@ -16004,9 +16004,9 @@ SAXPY (read A, read+write B) achieves ~3.5 TB/s total HBM traffic at ≥74 SMs. 
 | Model | Decode tok/s | Prefill tok/s | Concurrent (ctx=2K) |
 |-------|------------:|:-------------:|:-------------------:|
 | **Llama-70B BF16** | **40** (314 µs/layer at 2032 MHz boost) | 11853 (seq=512) | **218** (verified) |
-| Llama-70B FP8 + FP8 KV | ~30 | — | **648** |
-| **Llama-8B BF16** | **142** | — | **1019** |
-| 70B + spec decode K=7 | **62** | — | 218 |
+| Llama-70B FP8 | **~61** (estimated at boost) | — | **648** |
+| **Llama-8B BF16** | **345** (2.9 ms, 32 layers at boost) | — | **1019** |
+| 70B BF16 + spec decode K=7 | **~100+** | — | 218 |
 | 70B INT4 + FP8 KV | — | — | **755** |
 
 ## Top Optimization Priority (decode)
