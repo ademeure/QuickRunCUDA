@@ -5507,7 +5507,18 @@ M=1 achieves 5.8 TB/s effective weight bandwidth (better than raw DRAM streaming
 | 256 | 0.470 ms | **0.402 ms** | **-14.4%** | 32.2 ms | **6809** |
 | 512 | 0.567 ms | 0.513 ms | -9.6% | 41.0 ms | 11278 |
 
-**Measured decode throughput: 40 tok/s at batch=1, 365 at batch=8, 11.3K at batch=512** (GEMM-only, add ~15% for attention+norm).
+### DEFINITIVE: full 80-layer sequential pass (different weights per layer, measured)
+
+| Batch | 80-layer total | ms/layer | Tokens/s | Weight BW | Total wt loaded |
+|------:|:--------------:|:--------:|:--------:|:---------:|:---------------:|
+| 1 | **24.2 ms** | 0.303 | **41** | 5651 GB/s | 137 GB |
+| 8 | **21.8 ms** | 0.272 | **367** | **6282 GB/s** | 137 GB |
+| 64 | 25.6 ms | 0.320 | 2497 | 5342 GB/s | 137 GB |
+| 256 | 34.6 ms | 0.433 | 7396 | 3955 GB/s | 137 GB |
+
+**7% faster than single-layer × 80** at batch=1 (24.2 vs 26.1 ms): cuBLAS pipelines dispatch between layers. **137 GB weights loaded in 24.2 ms = 5.7 TB/s = 77% of HBM spec** — excellent for a real workload.
+
+With ~15% attention+norm: batch=1 ≈ **36 tok/s real-world**.
 
 **Batch=8 is fastest per-layer** (0.273 ms = 21.9 ms for 80L). NOT batch=1! Better dispatch efficiency at M=8.
 
