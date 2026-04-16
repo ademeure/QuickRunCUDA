@@ -10549,6 +10549,21 @@ Without this, each `cudaFreeAsync` hands memory back to the OS, and the next `cu
 
 **Overhead decomposition**:
 - Launch enqueue (host-side): ≈ 1 µs (CUDA API overhead on host).
+
+### Host-side CUDA API overhead (B300, measured)
+
+| API call | Latency |
+|----------|--------:|
+| **Kernel launch (async, no sync)** | **0.04 µs** |
+| cudaStreamQuery (idle) | 1.24 µs |
+| Kernel launch + sync (empty kernel) | 1.30 µs |
+| cudaDeviceSynchronize (idle) | 1.35 µs |
+| cudaMemsetAsync 4 KB | 1.76 µs |
+| cudaMemcpyAsync H→D 4 KB | 3.22 µs |
+| cudaMallocAsync + FreeAsync 4 KB | 3.26 µs |
+| cudaEventRecord + EventSynchronize | 7.38 µs |
+
+**Async kernel launch = 40 ns** — just CPU-side enqueue. Full GPU round-trip = 1.3 µs. cudaStreamQuery (polling) = 1.24 µs — nearly as expensive as sync; avoid tight poll loops.
 - Scheduling / kernel dispatch: ≈ 1 µs (GPU scheduler picks up the launch).
 - Kernel minimum execution: ≈ 1 µs.
 - `cudaDeviceSynchronize` round-trip: ≈ 4 µs.
