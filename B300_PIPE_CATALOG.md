@@ -9485,6 +9485,27 @@ FP8 advantage peaks at M=64 (2.7×) where L2 caching amplifies the half-sized we
 
 **Scaling is FREE.** The scale factor multiplication hides in the GEMM epilogue. No reason to avoid per-tensor scaling.
 
+### Weight-loading bandwidth at M=1 decode (measured via cuBLAS GEMM)
+
+| Weight size | N=K | BW (GB/s) | Cache |
+|:----------:|:---:|:---------:|:-----:|
+| 2 MB | 1024 | 522 | L2 (dispatch-limited) |
+| 34 MB | 4096 | 4191 | L2 |
+| 75 MB | 6144 | **6251** | L2 peak |
+| 134 MB | 8192 | 5858 | DRAM |
+| 537 MB | 16384 | **6598** | DRAM |
+
+**cuBLAS achieves 5.9-6.6 TB/s weight BW** at M=1 — 80-89% of HBM3E spec. Much higher than raw DRAM streaming (4.2 TB/s) because cuBLAS tiles weights into L2-sized chunks.
+
+### cudaGraph for cuBLAS GEMM: NO benefit (measured)
+
+| Mode | ms/layer (4×GEMM, M=1, d=8192) |
+|------|------:|
+| Regular (4 dispatch) | 0.092 |
+| cudaGraph (1 launch) | 0.094 |
+
+**cudaGraph gives zero speedup for cuBLAS GEMMs.** cuBLAS already pipelines dispatch efficiently via streams. Graph overhead (capture + instantiate) slightly hurts. Use graphs for custom kernel pipelines, not cuBLAS.
+
 ### Concurrent GEMMs on different streams (measured, BF16)
 
 | Streams | 1024³ TFLOPS | 4096³ TFLOPS | Throughput boost |
