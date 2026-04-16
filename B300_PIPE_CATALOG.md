@@ -7345,6 +7345,49 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# __syncthreads variants
+
+| Op | cy/iter |
+|----|--------:|
+| `__syncthreads()` | **86** |
+| `__syncthreads_count(pred)` | 150 (+75 %) |
+| `__syncthreads_and(pred)` | 150 |
+| `__syncthreads_or(pred)` | 150 |
+
+**The `_count/_and/_or` variants cost ~75 % more than plain `__syncthreads`** (64 cy extra for the block-wide reduction). Still **FAR cheaper than manual sync + smem-reduce + sync** (which would be 86 + 70 + 86 = 242 cy minimum).
+
+**Practical**: use `__syncthreads_and(cond)` for branch-convergence-aware barriers where you also need to know if any thread in the block would take a branch. Avoids a separate reduce pass.
+
+
+# cg::reduce vs manual shuffle tree (warp-wide reduction)
+
+| Pattern | cy/iter (with control-flow overhead) |
+|---------|-------------------------------------:|
+| `__reduce_add_sync(0xFFFFFFFF, x)` | 154 |
+| `cg::reduce(warp, x, cg::plus<unsigned>())` | 155 |
+| **Manual 5-step shuffle-xor tree** | **215 (+40 %)** |
+
+**`cg::reduce` compiles to `__reduce_add_sync`** — same cost. The manual shuffle tree with 5 `__shfl_xor_sync` + 4 adds costs ~40 % MORE than the native intrinsic.
+
+**Design rule**: **use `__reduce_add_sync` / `cg::reduce`** for warp reductions — they map to the dedicated REDUX SASS on Blackwell, faster than any manual approach.
+
+(Baseline for comparison: isolated `__reduce_add_sync` without control-flow overhead = 54 cy from earlier test.)
+
+
+# cudaMemcpy2D is 2.7× slower than cudaMemcpy even with same stride
+
+256 MB D2D copy:
+
+| API | Time | GB/s |
+|-----|-----:|-----:|
+| `cudaMemcpy` (linear) | **0.11 ms** | **2 380** |
+| `cudaMemcpy2D` (stride = width, no actual 2D pattern) | 0.30 ms | 885 |
+
+**2D API overhead is 2.7× penalty** even when the 2D copy degenerates to a linear copy (pitch = width). For strided patterns, flatten into linear copies of each row if possible.
+
+**Practical**: use `cudaMemcpy` (or `cudaMemcpyAsync`) with a flat buffer. If you have strided data in 2D layout, stage through a temporary packed buffer or use the 2D API sparingly.
+
+
 # cudaArray (texture / surface memory) allocation
 
 Operations for a 4K × 4K float texture (64 MB):
