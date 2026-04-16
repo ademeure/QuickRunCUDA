@@ -14515,3 +14515,50 @@ L1-cached global load interleaved with FMA chain, single warp:
 
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
+
+# Store Throughput
+
+| Pattern | cy/store | Notes |
+|---------|--------:|-------|
+| Coalesced global store | **23** | Fire-and-forget — same as loop overhead |
+| Stride-32 global store | 25 | Only +2 cy even with worst-case striding |
+| 4 independent global stores | 23 total = **5.75** | LSU sustains ~1 store/6 cy |
+| 4 smem stores | 23 total = **5.75** | Identical to global stores |
+| Store + 4 FMA | 28 | Store is nearly free alongside FMA (+4 cy) |
+
+**Stores are fire-and-forget** — the LSU dispatches them and the warp continues immediately. With 4 independent stores, the LSU achieves ~1 store per 6 cycles. Smem and global stores have identical throughput through the same LSU pipe.
+
+**Stride-32 writes only cost +2 cy** — minimal penalty for uncoalesced writes, unlike reads where stride matters more for L1/L2 efficiency.
+
+
+# MUFU (Special Function Unit) Pipeline
+
+All MUFU instructions have ~23 cy loop-iteration cost (including overhead), with the MUFU operation itself taking ~6 cy:
+
+| Instruction | PTX | cy (in loop) |
+|------------|-----|-------------:|
+| RCP (1/x) | `rcp.approx.ftz.f32` | 23 |
+| RSQ (1/√x) | `rsqrt.approx.ftz.f32` | 23 |
+| EX2 (2^x) | `ex2.approx.ftz.f32` | 23 |
+| LG2 (log2) | `lg2.approx.ftz.f32` | 23 |
+| SIN | `sin.approx.ftz.f32` | 24 |
+| COS | `cos.approx.ftz.f32` | 24 |
+
+## MUFU throughput with ILP
+
+| Pattern | cy/iter | cy/MUFU |
+|---------|--------:|--------:|
+| 1 MUFU chain | 23 | 23 |
+| 4 independent MUFU | 81 | **20** |
+
+## MUFU + FMA co-issue
+
+| Pattern | cy/iter | Notes |
+|---------|--------:|-------|
+| 4 FMA only | 24 | Baseline |
+| **1 MUFU + 4 FMA** | **25** | **MUFU is FREE (+1 cy)** |
+
+**MUFU operations run on a separate pipe and co-issue with FMA at essentially zero cost.** The `rcp`, `rsqrt`, `ex2`, `lg2`, `sin`, `cos` intrinsics are free when interleaved with FMA compute.
+
+**Caveat**: High-level functions like `__expf()`, `__logf()`, `__sinf()` expand to MUFU + range reduction + normalization FMAs, adding 3-10 extra instructions. For peak throughput, use raw PTX (`ex2.approx.ftz.f32`) rather than library functions.
+
