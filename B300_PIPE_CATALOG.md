@@ -15997,7 +15997,7 @@ SAXPY (read A, read+write B) achieves ~3.5 TB/s total HBM traffic at ≥74 SMs. 
 | **FP8 tensor** | 3411 TFLOPS | — | 2× BF16 |
 
 ## The Single Most Important Finding
-**Individual GEMM benchmarks overstate real decode throughput by ~2×** due to L2 eviction contention between back-to-back weight loads. The gap vanishes for weights ≤ 34 MB (fits half L2) and reaches 2.3× for 470 MB weights (Llama-70B).
+**GPU clock locks cause severe L2 contention.** At 1800 MHz (cloud-provider lock), GEMM chains show 2.3× degradation for large weights. At the GPU's natural **2032 MHz boost, chain contention is ZERO for ALL weight sizes** (470 MB ratio = 1.00). Always verify your B300 isn't clock-locked — the difference is **2.35× decode throughput** (17 → 40 tok/s for Llama-70B).
 
 ## LLM Serving Summary (single GPU)
 
