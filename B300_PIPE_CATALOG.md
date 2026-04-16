@@ -8355,6 +8355,21 @@ Using published specs + our B300 measurements. A100/H100 numbers from NVIDIA dat
 
 NVLink gains are modest (+1.06× vs H100) — same NV18 fabric, similar topology.
 
+## Measured latency hierarchy (B300 at 1920 MHz)
+
+| Level | Latency (cy) | Latency (ns) | BW (per SM) |
+|-------|-------------:|-------------:|------------:|
+| Register | 0 | 0 | — |
+| Smem | **24** | 12.5 | ~17 TB/s chip |
+| L1 cache | **39** | 20.3 | ~14 TB/s chip |
+| L2 cache | **301** | 157 | 14 TB/s (read) |
+| **HBM3E** | **824** | **429** | 4.2 TB/s (read) |
+| Local mem (spill) | 43 | 22.4 | — |
+| NVLink P2P | ~12000 | 6100 | 756 GB/s |
+| PCIe H→D | ~14000 | 7200 | 39 GB/s |
+
+**HBM3E latency = 429 ns (824 cy)** — constant across 1-8 GB working sets. Slightly higher than H100's ~350 ns due to larger capacity (274 GB → more address decode time).
+
 
 # Kernel optimization checklist (ordered by impact)
 
