@@ -9319,13 +9319,20 @@ FP8 approaches the theoretical 2× over BF16 at large M (prefill). At batch=1: b
 | 32 | 361 | 7.3% |
 | 128 | 2003 | 40.6% |
 
-**GQA attention GEMMs (seq=4096, head_dim=128):**
+**Strided batched GEMM for attention QK^T (measured, FP16→F32):**
 
-| Operation | Shape | TFLOPS | MFU |
-|-----------|:-----:|-------:|----:|
-| QK^T (1 head) | 4096×128×128 | 37 | 1.5% |
-| QK^T (batched) | 4096×4096×128 | 563 | 22.8% |
-| Attn×V | 128×4096×4096 | 716 | 29.0% |
+| seq | head_dim | heads | TFLOPS | MFU |
+|----:|:--------:|------:|-------:|----:|
+| 512 | 128 | 64 | 288 | 11.7% |
+| 1024 | 128 | 64 | 360 | 14.6% |
+| 2048 | 128 | 64 | 384 | 15.6% |
+| 4096 | 128 | 64 | **393** | **16.0%** |
+| 8192 | 128 | 64 | **395** | **16.0%** |
+| 4096 | 64 | 64 | 209 | 8.5% |
+
+**Attention QK^T peaks at 16% MFU** — K=head_dim (128) is too small for tensor core efficiency (only 8 MMA steps, barely above the 6-step crossover). **This is why FlashAttention exists**: fused tiled computation avoids the cuBLAS batched GEMM inefficiency.
+
+Scaling with heads: 1→64 heads at seq=4096 K=128 gives 304→393 TFLOPS (only 1.3× improvement for 64× more work — excellent batching efficiency once saturated).
 
 ### cuBLAS FP8 E4M3 GEMM (via cublasLt, CUDA 13.2)
 
@@ -9351,6 +9358,29 @@ FP8 approaches the theoretical 2× over BF16 at large M (prefill). At batch=1: b
 | 1024 | 28672 | 8192 | 3787 | 76.8% |
 
 **FP8 E5M2×E5M2: UNSUPPORTED in cuBLAS.** Mixed E4M3×E5M2: supported, identical throughput to E4M3×E4M3. Use E4M3 for weights, E5M2 for gradients (standard practice).
+
+**FP8 output type comparison (measured at 8192³):**
+
+| Output type | TFLOPS | MFU | Penalty vs BF16 |
+|:----------:|-------:|----:|:---------------:|
+| BF16 | 4464 | 90.6% | — |
+| FP16 | 4466 | 90.6% | **0%** |
+| F32 | 4402 | 89.3% | **-1.4%** |
+| FP8 E4M3 | — | — | UNSUPPORTED |
+
+**BF16 and FP16 output: identical.** F32 output: 1-6% penalty from 2× output write bytes.
+
+### cuBLAS scaling to very large GEMMs (BF16)
+
+| M=N=K | TFLOPS | MFU |
+|------:|-------:|----:|
+| 8192 | 2229 | 90.4% |
+| 12288 | 2139 | 86.8% |
+| 16384 | 2204 | 89.4% |
+| 20480 | 2212 | 89.7% |
+| **24576** | **2238** | **90.8%** |
+
+**Scales cleanly to 24K³** with no MFU degradation — no DRAM or L2 bottleneck even at the largest sizes.
 
 ### cuBLAS TF32 GEMM scaling
 
