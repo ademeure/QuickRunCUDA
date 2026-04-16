@@ -14845,6 +14845,19 @@ For the decode gate projection (1×28672×8192 BF16):
 
 cuBLAS uses the **maximum register allocation** — 255 registers per thread leaves only 1 block per SM. This maximizes data reuse in the register file (each thread holds its tile of the output matrix). The 1568-block grid runs in ~10.6 waves of 148 blocks.
 
+## SASS Instruction Mix (ncu pipe breakdown)
+
+| Pipe | Instructions | % | Role |
+|------|----------:|:--:|:-----|
+| **ALU** | **453K** | **69%** | Address calc, loops, predication |
+| **Tensor** | 119K | 18% | MMA operations |
+| LSU | 77K | 12% | Load/store (HBM→smem→regs) |
+| FMA | 6K | 1% | Scalar math (scale, bias) |
+
+**The decode GEMM is 69% ALU overhead** — address computation and loop control dominate because M=1 has minimal compute per weight load. Only 18% of instructions are actual tensor MMA. At larger M (prefill), the ALU overhead fraction shrinks as tensor instructions dominate.
+
+**12.5% occupancy** confirmed by ncu (8 warps / 64 max = 12.5%). Despite this low occupancy, the kernel achieves 6.4 TB/s HBM bandwidth — proving that occupancy is irrelevant for memory-bound decode.
+
 
 # Cross-Pipe Dependency Latency Table
 
