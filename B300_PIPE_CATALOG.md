@@ -6055,9 +6055,20 @@ There is NO true hardware predicated LDG instruction on Blackwell. The LDG is wa
 @!P0 FFMA R24, R24, R24, R24   ← (NOT branch-based)
 ```
 
-**Architecture difference**: LDG uses branch-based skip (binary fast/slow). FFMA uses true `@P` predication but takes the same 1.18 cy/fma regardless of predicate value — **the FMA pipe doesn't check the active mask for early termination.**
+### Complete SASS predication architecture (VERIFIED)
 
-Shared memory: @false ld.shared = DCE'd (0 cy). @false st.shared = 4.07 cy (same as real). @half ld.shared (16/32) = 1.16 cy.
+| Instruction | SASS encoding | Mechanism | All-false speedup |
+|:------------|:-------------|:----------|:-----------------:|
+| **LDG (load)** | `@P0 BRA` + `LDG.E` | **Branch-based skip** | **3× (0.42 cy)** |
+| **STG (store)** | `@!P0 STG.E` | True `@P` predication | **None (4.21 cy)** |
+| **FFMA** | `@!P0 FFMA` | True `@P` predication | **None (1.18 cy)** |
+| **STS (smem store)** | `@!P0 STS` | True `@P` predication | None (4.07 cy) |
+
+**Loads are the ONLY instruction using branch-based skip.** Stores and FMA use true hardware `@P` predication — but the pipe doesn't short-circuit. The instruction enters at full speed; the predicate only suppresses writeback/commit at the output stage.
+
+**Design rationale**: loads use branch-based skip because memory access is expensive and has side effects (cache line fill, TLB lookup). Stores/FMA are processed at full speed with output suppression — cheaper than branch overhead for short sequences.
+
+Shared memory: @false ld.shared = DCE'd (0 cy). @false st.shared = 4.07 cy. @half ld.shared (16/32) = 1.16 cy.
 
 ### Memory bandwidth scaling with occupancy
 
