@@ -14897,6 +14897,51 @@ Llama-70B GQA: 8 KV-heads × 128 dim × 2 (K+V) = 2048 bytes per position (BF16)
 3. **Context length directly affects latency**: ctx=32K adds ~3.7 ms per layer, ~300 ms total for 80 layers
 4. **GQA with 8 KV-heads needs multi-warp parallelism** — naive 1-block-per-head gets only 65 GB/s from DRAM
 
+
+# Batch Size → Compute-Bound Crossover
+
+The key serving throughput question: at what batch size do GEMMs become compute-bound?
+
+## Gate projection (batch × 28672 × 8192, weight = 448 MB)
+
+| Batch | µs | TFLOPS | Regime |
+|------:|---:|-------:|:------:|
+| 1 | 74 | 6 | Memory-bound |
+| 8 | 83 | 45 | Memory-bound |
+| 32 | 69 | 218 | Memory-bound |
+| 64 | 70 | 427 | Memory-bound |
+| **128** | **72** | **841** | **Transition** |
+| **256** | **89** | **1359** | **Compute-bound** |
+| 1024 | 524 | 919 | Compute (batch-proportional) |
+
+## Q projection (batch × 8192 × 8192, weight = 128 MB)
+
+| Batch | µs | TFLOPS | MFU |
+|------:|---:|-------:|----:|
+| 1-64 | ~24 | 6-377 | Memory-bound (constant time) |
+| 256 | 29 | 1205 | Transition |
+| **1024** | **78** | **1774** | **83% MFU** |
+
+## Crossover analysis
+
+**Memory-bound regime (batch ≤ 64)**: GEMM time is nearly constant regardless of batch size — it's just loading the weight matrix from HBM. Each additional token in the batch is free.
+
+**Compute-bound regime (batch ≥ 256)**: GEMM time grows proportionally with batch. Tensor core utilization matters. Peak at batch=1024: 1774 TFLOPS (83% MFU).
+
+**The crossover at batch ≈ 128-256** is determined by: `arithmetic_intensity = 2 × batch > HBM_BW / peak_TFLOPS × weight_size`. For gate proj: B > 448MB × 2.13 PFLOPS / (7 TB/s × 2 × 28672 × 8192) ≈ 143. Matches observed crossover.
+
+**Practical serving guidance**:
+| Batch regime | Optimization priority |
+|:------------|:---------------------|
+| batch ≤ 32 | **FP8 weights** (2× less HBM reads) |
+| batch 64-256 | **Both** (transition zone) |
+| batch ≥ 512 | **Tensor core utilization** (tile sizes, GEMM algo) |
+
+**Throughput scaling** (tokens/sec for gate proj alone):
+- batch=1: 1/74µs × 1 = 13.5K tok/s
+- batch=64: 1/70µs × 64 = 914K tok/s (**68× batch=1**)
+- batch=256: 1/89µs × 256 = 2876K tok/s (**213× batch=1**)
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
