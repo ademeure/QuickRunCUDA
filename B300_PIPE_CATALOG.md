@@ -7345,6 +7345,60 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# Error-check primitives are essentially FREE
+
+| Call | µs/call |
+|------|--------:|
+| `cudaGetLastError` alone | **0.011** |
+| `cudaPeekAtLastError` alone | **0.011** |
+| kernel launch | 2.050 |
+| kernel launch + `cudaGetLastError` | 2.049 (no diff) |
+| kernel launch + `cudaPeekAtLastError` | 2.049 (no diff) |
+
+Both error-checking APIs cost ~11 ns — **negligible**. Always call `cudaGetLastError()` after kernel launches to catch configuration errors (invalid grid shape, insufficient smem, etc.) — the runtime cost is in the noise.
+
+`PeekAtLastError` retrieves without clearing; `GetLastError` retrieves + clears. Same cost; pick based on semantic intent.
+
+
+# CTA size vs memory-bound throughput (same total work)
+
+1 GB streaming read with `stride × threads` total ≈ 2.4 M threads, varying threads per CTA:
+
+| Threads/CTA | # CTAs | GB/s |
+|------------:|-------:|-----:|
+| 32 | 75 776 | 6 921 |
+| **64** | **37 888** | **7 035 (peak)** |
+| 128 | 18 944 | 6 976 |
+| 256 | 9 472 | 6 956 |
+| 512 | 4 736 | 6 890 |
+| 1 024 | 2 368 | 6 879 |
+
+**CTA size barely matters** for memory-bound streaming: all sizes achieve 93-95 % of HBM peak, with at most 2 % spread between fastest (64 thr) and slowest (1024 thr).
+
+**Practical**: choose CTA size based on **register pressure, smem requirements, occupancy constraints** — not based on HBM BW. For memory-bound kernels, 64-128 threads/CTA is a reasonable default.
+
+
+# cg::coalesced_threads has significant overhead
+
+Divergent path where only odd lanes execute, then reduce across active lanes:
+
+| Pattern | cy/iter |
+|---------|--------:|
+| **`cg::coalesced_threads()` + `cg::reduce`** | **183** |
+| Manual shuffle-xor tree with explicit `__ballot_sync` mask | 37 |
+| `__reduce_add_sync(0xFFFFFFFF, ...)` (full warp) | 37 |
+
+**`cg::coalesced_threads` is ~5× slower** than manual shuffle or full-warp reduce. The API dynamically builds a group from `__activemask()` — significant setup cost per call.
+
+**Use cg::coalesced_threads** when:
+- You truly don't know the active mask ahead of time (unpredictable divergence).
+- Code readability matters more than the 150 cy overhead.
+
+**Otherwise** (99 % of cases):
+- Compute the `__ballot_sync` mask once.
+- Use `__reduce_add_sync(mask, val)` or manual shuffle tree with that mask.
+
+
 # __syncthreads variants
 
 | Op | cy/iter |
