@@ -15805,3 +15805,25 @@ SAXPY (read A, read+write B) achieves ~3.5 TB/s total HBM traffic at ≥74 SMs. 
 
 **INT4 memory advantage**: 35 GB model (vs 140 GB BF16) → 250 GB for KV cache → **372 concurrent requests** (vs 216 BF16).
 
+
+# B300 Roofline Model (BF16 GEMM, M=N=4096)
+
+| K | FLOP/byte | TFLOPS | % peak | Regime |
+|--:|:--------:|-------:|:------:|:------:|
+| 32 | 31.5 | 136 | 8% | Memory-bound |
+| 64 | 62 | 276 | 15% | Memory |
+| 128 | 121 | 507 | 28% | Memory |
+| 256 | 228 | 855 | 48% | Transition |
+| **512** | **410** | **1341** | **75%** | **Compute** |
+| 1024 | 683 | 1582 | 89% | Compute |
+| 2048 | 1024 | 1703 | 96% | Compute |
+| **4096** | **1365** | **1774** | **100%** | **Peak** |
+| 8192 | 1638 | 970 | 55% | L2 pressure ↓ |
+| 16384 | 1820 | 773 | 43% | L2 pressure ↓ |
+
+**Roofline crossover: ~254 FLOP/byte** (K ≈ 509 for 4096² GEMM). Below this, memory-bound; above, compute-bound.
+
+**B300 has an inverted roofline at high K**: Beyond K=4096, TFLOPS DECREASES because the GEMM tile working set exceeds L2 capacity. The "optimal" K is 2048-4096, not infinity. This is unique to the B300's 126 MB L2 and means **there's a sweet spot for GEMM K dimension**.
+
+**Practical**: For model design, hidden dimensions of 4096 (K=4096 GEMMs) achieve 100% of peak tensor throughput. Larger dimensions (8192+) waste 45-55% of potential throughput due to L2 pressure.
+
