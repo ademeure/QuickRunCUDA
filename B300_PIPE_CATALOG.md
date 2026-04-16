@@ -15284,7 +15284,24 @@ The `.cs` (streaming) cache hint provides **only 5% improvement** in chains. The
 
 **The absolute inter-kernel gap is ~96-113 µs** regardless of GEMM speed. Persistent kernels reduce it to ~68 µs (saving ~45 µs). The 2.3× *ratio* for cuBLAS appears large only because cuBLAS is so fast (74 µs) that the absolute ~96 µs gap dominates. For slower custom kernels, the same absolute gap is a smaller fraction.
 
-**Practical**: The ~96 µs gap per GEMM × 7 GEMMs/layer × 80 layers = **54 ms of pure scheduling overhead** in a Llama-70B decode pass. This is ~75% of the total 729 µs/layer pipeline cost. Persistent/fused kernels could theoretically recover up to 40% of this.
+## Definitive gap analysis: scales with weight size
+
+| Weight | Single µs | Chain/7 µs | **Gap µs** |
+|-------:|----------:|---------:|---------:|
+| 2 MB | 3 | 3 | **0** |
+| 8 MB | 5 | 5 | **0** |
+| 34 MB | 8 | 7 | **0** |
+| **67 MB** | 10 | **19** | **9** |
+| **134 MB** | 24 | **51** | **27** |
+| **470 MB** | 141 | **178** | **37** |
+
+**The gap vanishes for weights ≤ L2 (34 MB) and grows with weight size.** This proves the contention is L2/HBM related, not pure kernel scheduling. When weights fit in L2, back-to-back GEMMs run at full speed with zero overhead.
+
+**Revised understanding**: The 2.3× degradation for 470 MB weights is from:
+1. **L2 eviction write-back competing with HBM reads** (dominant factor)
+2. **Kernel launch gap** (small — only ~0-9 µs based on small-weight data)
+
+Persistent kernels help modestly (7%) because they reduce the small scheduling component. But the L2 eviction component can only be addressed by **reducing weight size below L2 capacity** (FP8, INT4, tensor parallelism).
 
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
