@@ -1090,6 +1090,15 @@ Relative tier: smem (17 TB/s) ≈ L2 (10 TB/s) × 1.7; 3× DRAM (7.3 TB/s). The 
 
 32-banks × 4 B/bank. Conflict multiplier matches theory: slowdown = (stride gcd with 32) + small overhead. Rule: if your natural stride is a multiple of 32, add +1 dword of padding per row to restore peak bandwidth.
 
+### Shared memory load latency (pointer-chase, single thread)
+
+| Method | Latency |
+|--------|--------:|
+| `ld.shared.u32 [%0]` pointer chase (`+r` constraint) | **24 cy** |
+| Array-based chase (`smem[idx & mask]`) | 34 cy (includes index compute overhead) |
+
+**B300 smem load latency = 24 cycles.** Consistent with Blackwell's 228 KB distributed shared memory. Latency is stride-independent (no cache hierarchy in smem).
+
 ### tcgen05 tensor-memory R/W throughput (measured — single warp, serial chain)
 
 Full alloc + st/ld + dealloc round-trip verified working on sm_103a (write pattern read back correctly):
@@ -7871,6 +7880,29 @@ A data written to TMEM via `tcgen05.st`, scale factors set to UE4M3 1.0 (0x70), 
 
 Completion mechanism: `tcgen05.wait::ld.sync.aligned` after the MMA (mbarrier path also works but requires careful `expect_tx` setup).
 
+### UE4M3 scale factor sweep (both scale_A and scale_B set to same value)
+
+A = 0x55 (FP4 3.0), B = 0x33 (FP4 1.5), M=128 N=8 K=64. Scale byte varied:
+
+| Scale byte | UE4M3 value | D[0] | Ratio vs scale=0x70 |
+|-----------:|------------:|-----:|--------------------:|
+| 0x00 | 0 (zero) | 0.0 | 0× |
+| 0x30 | 2^(-1) = 0.5 | 9.0 | 1.5e-5× |
+| 0x38 | 2^0 = **1.0** | 36.0 | 6.1e-5× |
+| 0x40 | 2^1 = 2.0 | 144.0 | 2.4e-4× |
+| 0x48 | 2^2 = 4.0 | 576.0 | 9.8e-4× |
+| 0x50 | 2^3 = 8.0 | 2304.0 | 3.9e-3× |
+| 0x60 | 2^5 = 32.0 | 36864.0 | 0.0625× |
+| 0x70 | 2^7 = 128.0 | 589824.0 | 1.0× |
+| 0x78 | 2^8 = 256.0 | 2359296.0 | 4.0× |
+
+Each 0x08 step = 2× in scale value → 4× in output (because `D ∝ scale_A × scale_B` and both are set equal). UE4M3 = unsigned E4M3 with bias=7:
+- Byte 0x38 = exponent 7, value = 2^(7-7) = **1.0** (unit scale)
+- Each +0x08 = exponent +1 = 2× scale value
+- Zero byte = zero output (special zero encoding)
+
+**The block-scaling pipeline is fully functional: `D = Σ_k (scale_A × A_ik) × (scale_B × B_kj)`.**
+
 ## K=96 idesc bit 31 — DOES NOT increase MACs (correctness verified)
 
 Setting idesc bit 31 on mxf4nvf4.block16:
@@ -7966,33 +7998,99 @@ SASS emits: `F2FP.SATFINITE.E2M1.F32.PACK_AB_MERGE_C` (pack) / `F2FP.F16.E2M1.UN
 **3. BF16 → NVFP4 quantization kernel** (`tests/quantize_bf16_to_nvfp4.cu`):
 Working kernel that computes per-block absmax scaling + converts via `cvt.rn.satfinite.e2m1x2.f32`.
 
-### What's BLOCKED
+### ✓ tcgen05.cp smem→TMEM: WORKING (128x128b shape)
 
-**1. `kind::mxf4` (block-scaled FP4) — the REAL FP4 path for ~9 PFLOPS:**
+**Key breakthrough**: `tcgen05.cp.cta_group::1.128x128b` correctly copies shared memory data into TMEM for the A matrix.
 
+**Valid shapes and status (sm_103a, ptxas 13.2):**
+
+| Shape | Compiles | Runs | Notes |
+|-------|:--------:|:----:|-------|
+| `128x128b` | ✓ | **✓** | 128 rows × 16 bytes = 2048 bytes per copy |
+| `128x256b` | ✓ | ✗ | Crashes (illegal memory access, descriptor issue) |
+| `64x128b` | ✗ | — | Needs `.warptype` modifier |
+| `32x128b` | ✗ | — | Needs `.warptype` modifier |
+| `64x256b` | ✗ | — | Syntax error |
+| `32x256b` | ✗ | — | Syntax error |
+| `32x32b` | ✗ | — | Not a valid cp shape |
+
+**Descriptor format** (64-bit, same as B operand descriptor):
 ```
-PTX: tcgen05.mma.cta_group::1.kind::mxf4 [d], a_desc, b_desc, idesc, {...}, P;
-NVRTC/ptxas lowering: adds '.block32' modifier to SASS
-ptxas error: "Illegal modifier '.block32' for instruction 'tcgen05.mma'"
+auto de = [](u64 x) -> u64 { return (x & 0x3FFFF) >> 4; };
+desc = de(smem_addr) | (de(LBO) << 16) | (de(SBO) << 32);
+// LBO = 16 (bytes per row for 128x128b)
+// SBO = 2048 (128 rows × 16 bytes)
 ```
 
-The `.block32` modifier controls block-scaling granularity (32 FP4 elements share one scale factor stored in TMEM). **The PTX ISA defines this; ptxas cannot generate SASS for it in CUDA 13.2.**
+**TMEM data layout** (from round-trip test):
+- Thread T reads TMEM lane T. Each lane stores 4 consecutive smem dwords across 4 TMEM columns.
+- 128x128b fills 4 TMEM columns. For K=64 FP4 (32 bytes/row), do **two** 128x128b copies at column offsets +0 and +4.
+- Requires ≥ 32 KB smem allocation or kernel will crash.
 
-This blocks:
-- `kind::mxf4` — native FP4 with per-block-32 scaling
-- `kind::mxf8f6f4` — block-scaled mixed narrow
-- `kind::f8f6f4.block_scale` — alternate syntax
-- All `.scale_vec::2X` modifiers
+**Full K=64 correctness (tcgen05.cp + MMA, 15/15 tests pass):**
 
-**What `kind::mxf4` would unlock**: K=64 FP4 per MMA (double K, double throughput) → **~9.3 PFLOPS** (2× current 4.65). The hardware appears to support this (LDSM.U4x16P64TO8 exists in SASS), but the software path is missing.
+| A (FP4 E2M1) | B (FP4 E2M1) | scale_A | scale_B | D[0] | Expected | ✓ |
+|--------------:|-------------:|--------:|--------:|-----:|---------:|:-:|
+| 3.0 (0x55) | 1.5 (0x33) | 1.0 (0x38) | 1.0 (0x38) | 288 | 64×4.5 | ✓ |
+| 1.5 (0x33) | 3.0 (0x55) | 1.0 | 1.0 | 288 | 64×4.5 | ✓ |
+| 6.0 (0x77) | 1.5 (0x33) | 1.0 | 1.0 | 576 | 64×9 | ✓ |
+| 3.0 (0x55) | 6.0 (0x77) | 1.0 | 1.0 | 1152 | 64×18 | ✓ |
+| 0.5 (0x11) | 0.5 (0x11) | 1.0 | 1.0 | 16 | 64×0.25 | ✓ |
+| 0.0 (0x00) | 3.0 (0x55) | 1.0 | 1.0 | 0 | 0 | ✓ |
+| 6.0 (0x77) | 6.0 (0x77) | 1.0 | 1.0 | 2304 | 64×36 | ✓ |
+| 3.0 | 1.5 | 2.0 (0x40) | 1.0 | 576 | 2×288 | ✓ |
+| 3.0 | 1.5 | 1.0 | 2.0 (0x40) | 576 | 2×288 | ✓ |
+| 3.0 | 1.5 | 8.0 (0x50) | 1.0 | 2304 | 8×288 | ✓ |
+| 3.0 | 1.5 | 1.0 | 8.0 (0x50) | 2304 | 8×288 | ✓ |
+| 3.0 | 1.5 | 8.0 | 8.0 | 18432 | 64×288 | ✓ |
+| 3.0 | 1.5 | 128.0 (0x70) | 1.0 | 36864 | 128×288 | ✓ |
+| 3.0 | 1.5 | 1.0 | 128.0 (0x70) | 36864 | 128×288 | ✓ |
 
-**2. `mma.sync.kind::f8f6f4` with E2M1 (warp-sync path):**
+**All results match `D = scale_A × scale_B × K × A_val × B_val` exactly.** The complete block-scaled FP4 pipeline is verified end-to-end: smem → tcgen05.cp → TMEM (A + scales) + smem (B) → tcgen05.mma.kind::mxf4nvf4.block_scale.block16 → TMEM (D) → tcgen05.ld → registers.
 
+### What's still blocked
+
+**1. `kind::mxf4` (block-scaled FP4 with `.block32` granularity):**
+ptxas 13.2 rejects `.block32` modifier. The `.block16` path via `kind::mxf4nvf4` is fully functional.
+
+**2. K=96**: idesc bit 31 is accepted but doesn't compute additional MACs. May require `kind::mxf4.block32` which isn't available yet.
+
+**3. `mma.sync.kind::f8f6f4` with E2M1 (warp-sync path):**
 ```
 ptxas error: "Feature '.kind::e2m1' not supported on .target 'sm_103a'"
 ```
-
 Datacenter Blackwell (sm_103a) only exposes FP4/FP6 tensor via the async `tcgen05.mma` path. The warp-sync `mma.sync` path is reserved for consumer Blackwell (sm_120a).
+
+### tcgen05.cp latency, throughput, and MMA overlap
+
+**tcgen05.cp.cta_group::1.128x128b** copies 2048 bytes from smem to TMEM.
+
+| Metric | Value |
+|--------|------:|
+| cp serial latency (cp + wait per iter) | **47 cy** |
+| cp pipelined throughput (many cp, single wait) | **44 cy/cp** |
+
+**MMA latency vs N dimension (mxf4nvf4.block16, M=128 K=64):**
+
+| N | MMA cy | TFLOPS/SM | Notes |
+|---:|-------:|----------:|-------|
+| 8 | 44.3 | 6.0 | Minimum latency floor |
+| 64 | 44.3 | 48.1 | Still at floor |
+| 128 | **64.0** | **66.6** | Linear scaling begins |
+| 256 | **128.0** | **66.6** | Full throughput |
+
+MMA latency = max(44, N/2) cycles. TFLOPS/SM saturates at N≥128.
+
+**MMA + cp overlap (can cp hide behind MMA?):**
+
+| MMA N | MMA only | +1 cp | +2 cp | cp overhead |
+|------:|---------:|------:|------:|-------------|
+| 256 | 128 | **128** | 140 | **0 cy** (1cp fully free!) |
+| 128 | 64 | 88 | 133 | 24 cy (51% hidden) |
+| 64 | 44 | 88 | 133 | 44 cy (no overlap) |
+| 8 | 44 | 88 | 133 | 44 cy (no overlap) |
+
+**For production N=256 GEMM: reloading A into TMEM via tcgen05.cp is completely free** — 1 cp (2 KB) hides fully in MMA shadow, 2 cp (4 KB for full K=64) adds only 12 cy (9%). The tensor core compute dominates.
 
 ### Observed SASS opcodes for FP4
 
@@ -8016,6 +8114,41 @@ The benefit of FP4 on this path is **2× less memory** for the same K:
 - But NOT double the compute rate
 
 **To get double compute**: need `kind::mxf4` which processes K=64 FP4 per MMA → 64 MACs per element-pair → **2× the FLOPs** in the same cycle time.
+
+## tcgen05 Infrastructure Costs (TMEM management)
+
+### TMEM alloc / dealloc
+
+| Operation | Cycles | Notes |
+|-----------|-------:|-------|
+| `tcgen05.alloc` (128 cols) | **239** | Allocates TMEM region |
+| `tcgen05.dealloc` (128 cols) | **195** | Frees TMEM region |
+| `tcgen05.relinquish_alloc_permit` | ~0 (pipelined) | Required after alloc |
+
+Alloc size must be multiples of 32, range [32..512]. Re-alloc within the same kernel (dealloc + alloc) can crash — safer to alloc once at kernel start and dealloc at end.
+
+### TMEM read/write bandwidth (tcgen05.ld / tcgen05.st)
+
+| Instruction | Width | cy/op | Bytes/op | Bytes/cy |
+|-------------|------:|------:|---------:|---------:|
+| `tcgen05.st.32x32b.x1` | 1 col (128 B) | 2.78 | 128 | 46 |
+| `tcgen05.st.32x32b.x2` | 2 cols (256 B) | 2.63 | 256 | 97 |
+| `tcgen05.st.32x32b.x4` | 4 cols (512 B) | 3.38 | 512 | **151** |
+| `tcgen05.ld.32x32b.x1` | 1 col (128 B) | **0.88** | 128 | 145 |
+| `tcgen05.ld.32x32b.x4` | 4 cols (512 B) | **0.88** | 512 | **582** |
+
+**TMEM reads are 4× faster than writes.** The ld instruction is fully pipelined at sub-cycle throughput — consecutive ld.x4 ops sustain 582 bytes/cy per warp. This makes sense: the MMA unit reads D from TMEM continuously, so read bandwidth must match tensor core throughput.
+
+At the chip level (per-warp, single SM): write ≈ 307 GB/s, read ≈ 1.18 TB/s.
+
+### setmaxnreg cost
+
+| Operation | Cycles |
+|-----------|-------:|
+| `setmaxnreg.dec + .inc` pair (32 regs) | **87** |
+| FMA latency (unchanged by setmaxnreg) | 4.03 |
+
+setmaxnreg is expensive — 87 cy per register redistribution. In warp-specialized code (e.g., 1 warp does MMA while another does data movement), minimize transitions between high-register and low-register phases.
 
 ### Practical NVFP4 usage today (CUDA 13.2)
 
@@ -8111,6 +8244,68 @@ For **70B models**:
 - **FP4: 35 GB** → fits with **233 GB for KV cache** (4.7× more KV headroom)
 
 
+### Independent scale_A vs scale_B verification (hardware-measured)
+
+Tested with A=0x55 (FP4 3.0), B=0x33 (FP4 1.5), M=128 N=8 K=64.
+
+| scale_A | scale_B | D[0] | Expected (s_A × s_B × K_eff × 4.5) |
+|--------:|--------:|-----:|------------------------------------:|
+| 0x50 | 0x50 | 2304 | 8 × 8 × 8 × 4.5 = 2304 ✓ |
+| 0x70 | 0x50 | 36864 | 128 × 8 × 36 = 36864 ✓ |
+| 0x50 | 0x70 | 36864 | 8 × 128 × 36 = 36864 ✓ |
+| 0x38 | 0x50 | 288 | 1 × 8 × 36 = 288 ✓ |
+| 0x00 | 0x50 | 0 | 0 (zero scale) ✓ |
+
+**Findings:**
+1. **scale_A and scale_B are independently applied** — varying one while fixing the other gives perfect linearity.
+2. **Commutative**: swapping scale_A ↔ scale_B gives identical results (36864 = 36864).
+3. **Zero scale = zero output** — correct handling of the zero encoding.
+4. **K_effective = 8** with tcgen05.st.32x32b.x1 (only 1 TMEM column written = 1/8 of K=64 A data).
+
+### Format details: UE4M3 (block scale factor, hardware-verified)
+
+**Bit layout (7-bit unsigned float, stored in 8-bit byte, MSB ignored):**
+
+```
+Byte: [x e3 e2 e1 e0 m2 m1 m0]
+       ^ignored   ^exp(4b) ^man(3b)
+```
+
+| Property | Value |
+|----------|-------|
+| Exponent bits | 4 (unsigned) |
+| Mantissa bits | 3 (implicit leading 1 for normals) |
+| Bias | **7** |
+| Max finite | **448** (0x7E: exp=15, man=6) |
+| Min normal | 2^(-6) ≈ 0.0156 (0x08: exp=1, man=0) |
+| Min subnormal | 2^(-9) ≈ 0.00195 (0x01: exp=0, man=1) |
+| Zero | 0x00 (exp=0, man=0) |
+| NaN | 0x7F (exp=15, man=7) |
+| Bit 7 | **Ignored by hardware** (0x80 = 0x00, 0xFF = 0x7F) |
+| Storage | 1 byte per scale factor |
+
+**Value formula (verified against 20 hardware measurements, 100% match):**
+- Normal (exp > 0): `value = 2^(exp - 7) × (1 + man/8)`
+- Subnormal (exp = 0, man > 0): `value = man × 2^(-9)`
+- Zero: exp = 0, man = 0
+- NaN: exp = 15, man = 7
+
+**UE4M3 = unsigned FP8 E4M3fn** — identical to NVIDIA's E4M3 variant (no Inf, single NaN at all-ones mantissa) but without the sign bit. 7 functional bits in an 8-bit container.
+
+**Key scale values:**
+| Byte | Exponent | Mantissa | Scale value | Use case |
+|-----:|---------:|---------:|------------:|---------|
+| 0x00 | 0 | 0 | 0 | Zero (kills output) |
+| 0x38 | 7 | 0 | **1.0** | Unit scale (neutral) |
+| 0x40 | 8 | 0 | 2.0 | 2× amplification |
+| 0x50 | 10 | 0 | 8.0 | |
+| 0x70 | 14 | 0 | 128.0 | |
+| 0x7E | 15 | 6 | 448.0 | Max finite |
+| 0x51 | 10 | 1 | 9.0 | Non-power-of-2 |
+| 0x7F | 15 | 7 | NaN | Poison value |
+
+Mantissa sweep at exponent 10 (bytes 0x50-0x57): values 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0 — exactly `8 × (1 + m/8)` for m=0..7. ✓
+
 ### Format details: E2M1 (NVFP4)
 
 | Property | Value |
@@ -8124,7 +8319,7 @@ For **70B models**:
 | Dynamic range | [0.5, 6.0] (7 distinct magnitudes per sign) |
 | Storage | 4 bits per element, packed 2 per byte |
 
-E2M1 is the MX (Microscaling) standard's 4-bit float. Combined with a per-block scale factor (FP8 or BF16), the effective dynamic range is much larger than the raw 4-bit format suggests.
+E2M1 is the MX (Microscaling) standard's 4-bit float. Combined with a per-block UE4M3 scale factor, the effective dynamic range is much larger than the raw 4-bit format: with scale range [2^(-9), 448], the combined representable range is [2^(-9) × 0.5, 448 × 6.0] = [~0.001, 2688].
 
 
 # cuBLAS GEMM at scale — FP32 / TF32 / FP16 practical peaks
