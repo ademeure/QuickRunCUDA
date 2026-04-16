@@ -14549,6 +14549,42 @@ Replacing `expf(-x)` with `ex2.approx.ftz.f32(-x * 1.4427)` improves SiLU throug
 
 Naive softmax achieves only 5-10% of HBM bandwidth — heavily compute-bound from 3 passes over data (max, exp+sum, normalize). FlashAttention fuses softmax into the MMA loop to avoid these passes.
 
+
+# Transformer Layer Latency Breakdown (Llama-70B-like)
+
+BF16, hidden=8192, FFN=28672, GQA with 64 Q-heads / 8 KV-heads, head_dim=128.
+Measured per-component with cuBLAS (OP_T for weights), RMSNorm and SiLU×Up kernels.
+
+## Per-component latency (µs)
+
+| Component | Batch=1 | Batch=8 | Batch=32 | Batch=128 |
+|-----------|--------:|--------:|---------:|----------:|
+| RMSNorm | 16 | 17 | 17 | 17 |
+| Q projection (8192→8192) | 23 | 28 | 24 | 23 |
+| K projection (8192→1024) | 10 | 10 | 8 | 10 |
+| V projection (8192→1024) | 10 | 10 | 8 | 10 |
+| O projection (8192→8192) | 24 | 27 | 24 | 24 |
+| SiLU×Up (elementwise) | 4 | 4 | 6 | 11 |
+| Gate projection (8192→28672) | 74 | 83 | 69 | 72 |
+| Up projection (8192→28672) | 74 | 84 | 69 | 71 |
+| Down projection (28672→8192) | 74 | 81 | 77 | 79 |
+| **Total (excl. attention QKV)** | **309** | **344** | **302** | **317** |
+
+## Analysis
+
+**FFN dominates**: Gate + Up + Down = ~222 µs = 72% of layer time. Each loads 448 MB of weights from HBM at ~7 TB/s ≈ 64 µs (actual ~74 µs with overhead).
+
+**Batch scaling is flat**: GEMMs cost the same from batch=1 to batch=128 because they are **weight-loading dominated** (memory-bound). The weight matrix must be read from HBM for every batch, and at batch≤128 the compute-to-memory ratio is too low to be compute-bound.
+
+**RMSNorm is 94% launch overhead**: 16 µs for a 2-16 MB data operation that should take ~1-4 µs at 4 TB/s. The CUDA kernel launch + scheduling overhead dominates.
+
+**For 80 layers at batch=1**: 309 µs × 80 = **24.7 ms** for linear layers alone (excluding attention). This gives ~40 tokens/sec for decode, consistent with our earlier cuBLAS-based estimates. In practice, attention adds another 30-50%, bringing total to ~35-55 ms/token = **18-29 tok/s** for single-GPU Llama-70B decode.
+
+**Optimization opportunities**:
+1. **Fuse Gate + Up GEMMs** into one 8192→57344 GEMM: saves 1 kernel launch + 1 weight load pass
+2. **Use cudaGraph** to reduce the ~16 µs/kernel launch overhead across 9 kernels: saves ~130 µs/layer
+3. **FP8 weights**: 2× less weight data = 2× faster memory-bound GEMMs
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
