@@ -8847,6 +8847,20 @@ Square GEMM (M=N=K), warm cuBLAS:
 
 **Practical**: for inference serving, use **FP8 or FP16 with ≥ 4K matrices** to hit tensor peak. For training, TF32 gives ~1 PFLOPS at 8K with FP32-level accuracy.
 
+### cuBLAS FP16 GEMM scaling (square and rectangular)
+
+| Shape | TFLOPS | % of 2465 peak | Notes |
+|-------|-------:|---------------:|-------|
+| 1024³ | 326 | 13% | Launch overhead dominates |
+| 2048³ | 1096 | 44% | |
+| 4096³ | 1672 | 68% | |
+| **8192³** | **2075** | **84%** | **Best square** |
+| 16384³ | 2024 | 82% | Slight L2 pressure |
+| 128×8192² | 632 | 26% | Small M = poor tiling |
+| 8192²×128 | 336 | **14%** | **Small K confirms K-depth thesis** |
+
+Small K (128) cuBLAS result (336 TFLOPS = 14%) perfectly validates our microbench finding: small K makes GEMM TMA-limited. At K=128 = 8 FP16 MMA steps, we predict ~99% efficiency, but cuBLAS overhead (prologue, epilogue, scheduling) drops it to 14%.
+
 **Not yet measured via cuBLAS**: FP8 (E4M3) GEMMs — expected ~4 000 TFLOPS at 8K based on our 4.65 PFLOPS tcgen05.mma micro-bench.
 
 
