@@ -186,3 +186,14 @@ This means:
 - f32 FMA path is optimal (FHFMA, FMUL2, FFMA2 on high-throughput FMA pipe)
 - f16x2 SIMD (HFMA2/HMUL2) HURTS because it runs on the low-throughput ALU pipe
 - Moving work from ALU→FMA is valuable; moving from FMA→ALU is harmful
+
+## bf16 Input is Better Than f16 for ALU-Bound Kernels
+
+bf16→f32: `shl 16` (IMAD on FMA pipe) + `and 0xffff0000` (LOP3 on ALU) = 1 ALU + 1 FMA per pair
+f16→f32:  `HADD2.F32` (ALU pipe) × 2 per pair = 2 ALU per pair
+
+bf16 format is just f32 with lower mantissa bits zeroed → pure bit operation that uses the
+high-throughput FMA pipe (via IMAD × 0x10000). f16→f32 requires actual exponent remapping
+which runs on the low-throughput ALU pipe via HADD2.F32.
+
+For ALU-bound kernels: bf16 input ≈ 50% less ALU for extraction vs f16 input.
