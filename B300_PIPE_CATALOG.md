@@ -14381,3 +14381,36 @@ The 1100W TDP is achievable with full tensor core utilization + HBM streaming si
 
 **Power efficiency**: cuBLAS BF16 at 448W peak delivering ~920 TFLOPS = **2.05 TFLOPS/W** peak. At average 252W: 3.66 TFLOPS/W (but avg includes idle gaps).
 
+
+# L1/Shared Memory Partition — Non-Monotonic Behavior
+
+The L1 data cache and shared memory share 228 KB of SRAM per SM. Their partition is **wildly non-monotonic** — L1 effectiveness depends on which SRAM banks are allocated to smem:
+
+Pointer chase through 64 KB working set, varying shared memory:
+
+| smem (KB) | cy/chase | L1 status |
+|----------:|--------:|:----------|
+| 0 | 42 | L1 hit |
+| 4 | 42 | L1 hit |
+| **8** | **555** | **L2 (L1 disabled!)** |
+| 16-40 | 555 | L2 |
+| 48 | 218 | Partial L1 |
+| 56 | 644 | L2 |
+| 64 | 222 | Partial L1 |
+| **80** | **42** | **L1 hit!** |
+| 100 | 648 | L2 |
+| **128** | **42** | **L1 hit!** |
+| **160** | **42** | **L1 hit!** |
+| 192 | 221 | Partial L1 |
+
+**smem=8KB kills L1 for a 64KB working set, but smem=128KB does not!** This is not a bug — the SRAM is organized in physical banks, and different smem sizes consume different banks. Some configurations leave L1 with good address coverage; others create cache set gaps that cause systematic misses.
+
+**Practical guidance**:
+1. **smem=0-4 KB**: full L1 (~200 KB)
+2. **smem=8-40 KB**: L1 severely degraded — **avoid these sizes if L1 matters!**
+3. **smem=48-64 KB**: partial L1
+4. **smem=80-160 KB**: L1 works well for moderate working sets (**sweet spot**)
+5. **smem>192 KB**: L1 too small for most workloads
+
+This means **using more shared memory can paradoxically IMPROVE L1 performance** if it shifts the SRAM bank allocation to a more favorable configuration. Test your specific kernel's smem size against L1-sensitive working sets.
+
