@@ -9497,6 +9497,21 @@ FP8 advantage peaks at M=64 (2.7×) where L2 caching amplifies the half-sized we
 
 **cuBLAS achieves 5.9-6.6 TB/s weight BW** at M=1 — 80-89% of HBM3E spec. Much higher than raw DRAM streaming (4.2 TB/s) because cuBLAS tiles weights into L2-sized chunks.
 
+### M=1 decode: output type, N×K asymmetry, L2 caching (measured)
+
+**Output type at M=1 (N=K=8192):** F32=5878 GB/s, FP16=5874 GB/s → **identical** (output is just 1 row, write BW doesn't matter). BF16 output unsupported via cublasGemmEx.
+
+**FFN N×K asymmetry (M=1):** gate_up (N=28672,K=8192) = 6383 GB/s, down (N=8192,K=28672) = 6448 GB/s → **<1% difference**. Same total weight bytes regardless of direction.
+
+**L2 caching between calls (8192², 134 MB weights):**
+
+| Condition | BW (GB/s) | vs warm |
+|-----------|----------:|--------:|
+| Warm (repeated, L2 hot) | 4686 | baseline |
+| Cold (L2 flushed) | 3435 | **-27%** |
+
+**25-30% L2 caching benefit** for repeated access to the same weight matrix. In LLM inference, each layer uses different weights → no caching benefit between layers.
+
 ### cudaGraph for cuBLAS GEMM: NO benefit (measured)
 
 | Mode | ms/layer (4×GEMM, M=1, d=8192) |
