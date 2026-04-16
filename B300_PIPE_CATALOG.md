@@ -5536,6 +5536,24 @@ With ~15% attention+norm: batch=1 ≈ **36 tok/s real-world**.
 
 **Throughput ceiling: 28K tok/s at batch=2048** (deeply compute-bound, 940 GB/s weight BW → compute dominates). FP8 68 GB total weights loaded at up to 5.9 TB/s = 80% of HBM spec.
 
+### COMPLETE: BF16 vs FP8 full 80-layer comparison (measured)
+
+| Batch | BF16 ms | BF16 tok/s | FP8 ms | FP8 tok/s | **FP8/BF16** |
+|------:|:-------:|:----------:|:------:|:---------:|:------------:|
+| 1 | 24.2 | 41 | 14.1 | **71** | **1.73×** |
+| 8 | 21.8 | 367 | 11.5 | **693** | **1.89×** |
+| 64 | 25.6 | 2497 | 14.6 | 4371 | 1.75× |
+| 256 | 34.6 | 7396 | 20.6 | 12444 | 1.68× |
+| 512 | 44.2 | 11584 | 25.8 | **19820** | 1.71× |
+| 1024 | 80.2 | 12765 | 40.4 | 25324 | **1.98×** |
+| **2048** | **144.4** | **14183** | **72.8** | **28120** | **1.98×** |
+
+**FP8 advantage is U-shaped**: 1.73× (b=1, dispatch-limited) → **1.89× (b=8, peak memory-bound)** → 1.68× (b=256, transition) → **1.98× (b=1024+, compute-bound = theoretical 2×)**.
+
+At large batch: FP8 converges to exactly 2× because the tensor core does K=32 (FP8) vs K=16 (BF16) per MMA at the same 128 cy.
+
+BF16 throughput ceiling: **14K tok/s**. FP8 ceiling: **28K tok/s** (exactly 2×).
+
 With ~15% attention+norm: batch=1 FP8 ≈ **62 tok/s real-world**.
 
 **Batch=8 is fastest per-layer** (0.273 ms = 21.9 ms for 80L). NOT batch=1! Better dispatch efficiency at M=8.
