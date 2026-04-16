@@ -15303,6 +15303,39 @@ The `.cs` (streaming) cache hint provides **only 5% improvement** in chains. The
 
 Persistent kernels help modestly (7%) because they reduce the small scheduling component. But the L2 eviction component can only be addressed by **reducing weight size below L2 capacity** (FP8, INT4, tensor parallelism).
 
+
+# Llama-8B Decode on B300 (Small Model, Zero Contention)
+
+hidden=4096, ffn=14336, 32 layers, BF16. Weight matrices: Q/O = 32 MB (fits L2!), Gate/Up/Down = 117 MB.
+
+## Per-GEMM latency
+
+| GEMM | Weight | µs | L2 fit? |
+|------|-------:|---:|:-------:|
+| Q/O projection | 32 MB | **8** | YES |
+| Gate/Up projection | 117 MB | 19-23 | Edge |
+| Down projection | 117 MB | 23 | Edge |
+
+## Full model decode
+
+| Metric | Llama-8B | Llama-70B | Ratio |
+|--------|----------:|----------:|------:|
+| Per layer (7 GEMMs) | **220 µs** | 729 µs | 3.3× |
+| Total (all layers) | **7.0 ms** | 58.3 ms | 8.3× |
+| **Decode tok/s** | **142** | 17 | **8.4×** |
+
+**Llama-8B is 8.4× faster than 70B** — more than the 2.5× from layer count (32 vs 80). The additional 3.4× comes from smaller weight matrices having less L2 contention.
+
+## Batch scaling (Gate proj)
+
+| Batch | µs | TFLOPS |
+|------:|---:|-------:|
+| 1-64 | 19-20 | memory-bound (flat!) |
+| 128 | 22 | 697 (transition) |
+| 256 | 26 | **1153** (compute-bound) |
+
+Memory-bound regime extends to batch ~128 for 8B (vs ~64 for 70B). At batch=64: each additional token is free.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
