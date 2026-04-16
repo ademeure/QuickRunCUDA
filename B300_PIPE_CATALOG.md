@@ -7795,14 +7795,28 @@ K=96: TMEM result = 144.0 = 32 × 4.5  ✗ STILL 32 MACs (NOT 96!)
 
 **⚠ Setting bit 31 on `kind::f8f6f4` does NOT compute additional MACs.** The tensor core still performs K=32 multiply-accumulates. The bit is accepted without error but ignored for the `kind::f8f6f4` path.
 
-**K=96 likely requires `kind::mxf4`** (block-scaled FP4 path), which needs:
-- TMEM-resident scale factors
-- `.block32` or `.block16` scaling qualifiers
-- Compiler support not yet in CUDA 13.2 (ptxas: "Illegal modifier '.block32'")
+**K=64/K=96 FP4 requires `kind::mxf4`** (block-scaled FP4 path), which needs:
+- A matrix loaded into TMEM via `tcgen05.cp` (not smem descriptor)
+- Scale factors in TMEM (per-block-32 or per-block-16 scaling)
+- `.block_scale` / `.scale_vec` qualifiers
+- Operand form: `[d_tmem], [a_tmem], b_desc, [scale_tmem], idesc, {mask}, pred`
+
+**PTX ISA 9.2 defines `kind::mxf4` and `kind::mxf8f6f4` as VALID for sm_103a.**
+The specification is complete: K=96 support, block-scale layouts, scale-factor TMEM geometry are all documented.
+
+**Status on this system: ptxas V13.2.78 rejects the codegen:**
+```
+ptxas: Illegal modifier '.block32' for instruction 'tcgen05.mma'
+ptxas: Illegal modifier '.block_scale' for instruction 'tcgen05.mma'
+```
+All tested syntax variants (`.block_scale`, `.scale_vec::2X`, `.kind::mxf4`, `.kind::mxf8f6f4`, both `.ws` and non-`.ws` forms, raw PTX assembly) produce "Arguments mismatch" or "Illegal modifier" from ptxas 13.2 on this system.
+
+**The PTX ISA specification is valid and complete. The ptxas assembler codegen is the gap.** A ptxas update (possibly already available in a newer toolkit point-release) should resolve this.
 
 **Current real FP4 throughput via `kind::f8f6f4` = 4.9 PFLOPS (= FP8, K=32 shared path).**
+FP4 saves 2× smem/HBM bytes but does NOT compute more MACs per instruction via this path.
 
-The PTX ISA documents K=96 as valid for sm_103a, and the hardware accepts it, but activating it properly requires the full block-scaled pipeline that's not yet compiler-supported. When `kind::mxf4` ships (expected CUDA 13.3+), K=96 will deliver the genuine ~14.8 PFLOPS.
+**When ptxas gains `.block_scale` codegen**: K=64 (`kind::mxf8f6f4`) or K=96 (`kind::mxf4`) will unlock the real FP4 tensor throughput of ~10-15 PFLOPS on sm_103a.
 
 
 
