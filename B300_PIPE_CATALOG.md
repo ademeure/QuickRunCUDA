@@ -14789,6 +14789,22 @@ Final verification of key catalog numbers (end of session):
 **All key numbers verified within ±3%.** Variations are from thermal/power state across a multi-hour session. The catalog data is reliable and reproducible.
 
 
+# Minimum Useful Compute Latency
+
+The absolute floor for any GPU computation:
+
+| Kernel | µs (event-based) | Notes |
+|--------|------------------:|-------|
+| 1 FMA × 32 threads | **4.64** | **Absolute floor** |
+| 32 FMA × 32 threads | 5.37 | +0.7 µs for 31 more FMAs |
+| 32 FMA × 1024 threads | 6.35 | +1.7 µs for 32× threads |
+| 32 FMA × all SMs | 8.54 | +3.9 µs for full chip |
+
+**4.6 µs is the irreducible CUDA kernel cost** — host dispatch + PCIe signaling + SM scheduling. No kernel can execute faster than this regardless of computation.
+
+**Serving implication**: 4.6 µs × 11 kernels × 80 layers = **4 ms of irreducible launch overhead** per decode token (7% of 59 ms total). This confirms launch overhead is minor for GEMM-heavy inference.
+
+
 # Power Efficiency & Serving Economics
 
 ## Power efficiency
