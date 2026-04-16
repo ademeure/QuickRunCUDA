@@ -15272,7 +15272,19 @@ The `.cs` (streaming) cache hint provides **only 5% improvement** in chains. The
 
 **Same and different weights show identical contention!** The degradation is NOT from L2 eviction of different data — it's a **kernel scheduling pipeline effect**. Between back-to-back GEMMs, there's an inherent underutilization gap where the HBM controllers aren't fully loaded. Each 470 MB weight exceeds L2 anyway, so re-reading the same weight requires a full HBM re-read.
 
-**The ~96 µs overhead per GEMM** (170-74) is from the inter-kernel scheduling gap: thread block dispatch, SM warmup, and memory pipeline fill time. This is fundamental to CUDA's kernel-per-GEMM execution model — only kernel fusion (custom GEMM pipelines) could eliminate it.
+## Persistent kernel test
+
+| Method | µs/GEMV | Overhead µs |
+|--------|--------:|:----------:|
+| Single custom GEMV | 532 | 0 |
+| 7× separate launches | 645 | **113** |
+| **Persistent chain** (1 kernel) | **600** | **68** |
+| cuBLAS single | 74 | 0 |
+| cuBLAS chain/7 | 170 | **96** |
+
+**The absolute inter-kernel gap is ~96-113 µs** regardless of GEMM speed. Persistent kernels reduce it to ~68 µs (saving ~45 µs). The 2.3× *ratio* for cuBLAS appears large only because cuBLAS is so fast (74 µs) that the absolute ~96 µs gap dominates. For slower custom kernels, the same absolute gap is a smaller fraction.
+
+**Practical**: The ~96 µs gap per GEMM × 7 GEMMs/layer × 80 layers = **54 ms of pure scheduling overhead** in a Llama-70B decode pass. This is ~75% of the total 729 µs/layer pipeline cost. Persistent/fused kernels could theoretically recover up to 40% of this.
 
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
