@@ -14643,3 +14643,29 @@ Two half-SM kernels from different streams share the GPU perfectly — each gets
 
 Both are essentially free — thread-local variable reads with no kernel/driver interaction.
 
+
+# HFMA2 (f16×2 FMA) Pipeline
+
+| Measurement | cy | Notes |
+|------------|---:|-------|
+| HFMA2 latency (1 chain) | 23 | Same as FFMA |
+| HFMA2 throughput (8 chains) | **3.25** cy/HFMA2 | 4 FLOP/op → 1.23 FLOP/cy/warp |
+| **HFMA2 + FFMA interleaved** | **23** | **HFMA2 is FREE alongside FFMA** |
+
+HFMA2 and FFMA use **different FMA pipes** and co-issue with zero additional cost. An HFMA2 + FFMA pair executes in the same time as either alone. With 8-chain ILP, HFMA2 achieves 3.25 cy/op (each op = 2× FP16 FMA = 4 FLOP).
+
+**Practical**: For mixed FP16/FP32 workloads (e.g., attention score computation in FP16 + FP32 accumulation), interleave HFMA2 with FFMA for maximum throughput. The FP16 work is free when the FP32 chain is the bottleneck.
+
+
+# Vectorized Load Performance (L1-Cached)
+
+| Load width | cy/load (single) | cy/load (4-way ILP) |
+|-----------|------------------:|--------------------:|
+| LDG.32 (4 bytes) | 23 | 5.75 |
+| LDG.64 (8 bytes) | 24 | — |
+| LDG.128 (16 bytes) | 23 | **5.75** |
+
+**Load width does not affect L1 latency** — LDG.32, LDG.64, and LDG.128 all show ~23 cy for L1 hits. The L1 cache delivers a full 128-byte cache line on every access regardless of request width.
+
+**LSU throughput**: ~5.75 cy per load with 4-way ILP, identical for all load widths. The benefit of wider loads (float4 vs float) is not latency but **bandwidth** — one LDG.128 moves 4× more data per LSU slot than LDG.32.
+
