@@ -111,6 +111,24 @@ static __device__ __forceinline__ half2 e2m1x2_to_f16x2(unsigned char byte) {
     return *reinterpret_cast<half2*>(&f16_pair);
 }
 
+// Fused quantize+dequantize: the .b8 register stays INSIDE the asm block,
+// so the compiler never inserts a LOP3 & 0xff between PACK and UNPACK.
+// Returns both the e2m1x2 byte (for output packing) AND the f16x2 (for error).
+static __device__ __forceinline__ void quant_dequant_fused(
+    float lo, float hi,
+    unsigned short& out_byte,  // e2m1x2 byte in low 8 bits of u16
+    half2& out_dq)             // dequantized f16x2
+{
+    unsigned int dq_bits;
+    asm("{ .reg .b8 t;\n\t"
+        "  cvt.rn.satfinite.e2m1x2.f32 t, %3, %2;\n\t"
+        "  cvt.rn.f16x2.e2m1x2 %1, t;\n\t"
+        "  mov.b16 %0, {t, 0}; }"
+        : "=h"(out_byte), "=r"(dq_bits)
+        : "f"(lo), "f"(hi));
+    out_dq = *reinterpret_cast<half2*>(&dq_bits);
+}
+
 #define BF16_LO(w) __int_as_float((unsigned int)((w) & 0xFFFFu) << 16)
 #define BF16_HI(w) __int_as_float((unsigned int)((w) & 0xFFFF0000u))
 
@@ -158,19 +176,9 @@ static __device__ __forceinline__ void process_group(
     float factor_0 = rcp_approx_ftz(s_round_0 * scale);
     float factor_1 = rcp_approx_ftz(s_round_1 * scale);
 
-    // Quantize: scale by both factors, convert to e2m1x2
-    unsigned char bits_0[E2M1_PAIRS], bits_1[E2M1_PAIRS];
-    #pragma unroll
-    for (int k = 0; k < VSIZE; k += 2) {
-        // Pack candidates into .x/.y: x*factor_0 and x*factor_1
-        float2 sx0 = fmul_ftz_f32x2(x_f32[k],   x_f32[k],   factor_0, factor_1);
-        float2 sx1 = fmul_ftz_f32x2(x_f32[k+1], x_f32[k+1], factor_0, factor_1);
-        bits_0[k >> 1] = f32x2_to_e2m1x2(sx0.x, sx1.x);  // candidate 0
-        bits_1[k >> 1] = f32x2_to_e2m1x2(sx0.y, sx1.y);  // candidate 1
-    }
-
-    // Error: compute both candidates' reconstruction error with FFMA2 accumulation.
-    // err_pair.x = candidate 0 error, err_pair.y = candidate 1 error
+    // Fused quantize+dequant+error: the .b8 register stays inside the asm block
+    // for the dequant path, eliminating the LOP3 byte-extract between PACK→UNPACK.
+    // Both candidates computed in lockstep with FFMA2 error accumulation.
     float descale_0 = s_round_0 * scale;
     float descale_1 = s_round_1 * scale;
     half  neg_ds0 = static_cast<half>(-descale_0);
@@ -178,38 +186,51 @@ static __device__ __forceinline__ void process_group(
     short ns0 = *reinterpret_cast<short*>(&neg_ds0);
     short ns1 = *reinterpret_cast<short*>(&neg_ds1);
 
+    unsigned short bits_0[E2M1_PAIRS], bits_1[E2M1_PAIRS];
     unsigned long long err_pair = 0;
     #pragma unroll
-    for (int k = 0; k < E2M1_PAIRS; ++k) {
-        half2 dq0 = e2m1x2_to_f16x2(bits_0[k]);
-        half2 dq1 = e2m1x2_to_f16x2(bits_1[k]);
+    for (int k = 0; k < VSIZE; k += 2) {
+        float2 sx0 = fmul_ftz_f32x2(x_f32[k],   x_f32[k],   factor_0, factor_1);
+        float2 sx1 = fmul_ftz_f32x2(x_f32[k+1], x_f32[k+1], factor_0, factor_1);
+
+        // Fused: quantize + immediately dequantize (keeps .b8 in register)
+        half2 dq0, dq1;
+        quant_dequant_fused(sx0.x, sx1.x, bits_0[k >> 1], dq0);  // candidate 0
+        quant_dequant_fused(sx0.y, sx1.y, bits_1[k >> 1], dq1);  // candidate 1
+
+        // Error accumulation with FFMA2
         short d0x = *reinterpret_cast<short*>(&dq0.x);
         short d0y = *reinterpret_cast<short*>(&dq0.y);
         short d1x = *reinterpret_cast<short*>(&dq1.x);
         short d1y = *reinterpret_cast<short*>(&dq1.y);
         float e0_c0, e0_c1, e1_c0, e1_c1;
         asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e0_c0) : "h"(d0x), "h"(ns0), "f"(x_f32[2*k]));
+            : "=f"(e0_c0) : "h"(d0x), "h"(ns0), "f"(x_f32[k]));
         asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e0_c1) : "h"(d1x), "h"(ns1), "f"(x_f32[2*k]));
+            : "=f"(e0_c1) : "h"(d1x), "h"(ns1), "f"(x_f32[k]));
         ffma_ftz_f32x2_acc(err_pair, e0_c0, e0_c1, e0_c0, e0_c1);
 
         asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e1_c0) : "h"(d0y), "h"(ns0), "f"(x_f32[2*k+1]));
+            : "=f"(e1_c0) : "h"(d0y), "h"(ns0), "f"(x_f32[k+1]));
         asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e1_c1) : "h"(d1y), "h"(ns1), "f"(x_f32[2*k+1]));
+            : "=f"(e1_c1) : "h"(d1y), "h"(ns1), "f"(x_f32[k+1]));
         ffma_ftz_f32x2_acc(err_pair, e1_c0, e1_c1, e1_c0, e1_c1);
     }
     float2 errs = unpack_f32x2(err_pair);
 
     // Select best candidate
+    // Pack u16 bytes into u32 for output
+    unsigned int lo0 = (bits_0[0]&0xFF) | ((bits_0[1]&0xFF)<<8) | ((bits_0[2]&0xFF)<<16) | ((bits_0[3]&0xFF)<<24);
+    unsigned int hi0 = (bits_0[4]&0xFF) | ((bits_0[5]&0xFF)<<8) | ((bits_0[6]&0xFF)<<16) | ((bits_0[7]&0xFF)<<24);
+    unsigned int lo1 = (bits_1[0]&0xFF) | ((bits_1[1]&0xFF)<<8) | ((bits_1[2]&0xFF)<<16) | ((bits_1[3]&0xFF)<<24);
+    unsigned int hi1 = (bits_1[4]&0xFF) | ((bits_1[5]&0xFF)<<8) | ((bits_1[6]&0xFF)<<16) | ((bits_1[7]&0xFF)<<24);
     if (errs.y < errs.x) {
-        out_lo   = *reinterpret_cast<int*>(bits_1);
-        out_hi   = *reinterpret_cast<int*>(bits_1 + 4);
+        out_lo   = lo1;
+        out_hi   = hi1;
         out_fp8s = fp8_1;
     } else {
-        out_lo   = *reinterpret_cast<int*>(bits_0);
-        out_hi   = *reinterpret_cast<int*>(bits_0 + 4);
+        out_lo   = lo0;
+        out_hi   = hi0;
         out_fp8s = fp8_0;
     }
 
