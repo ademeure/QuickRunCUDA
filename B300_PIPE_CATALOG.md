@@ -5310,6 +5310,30 @@ v4 writeback is 1.2× faster. For full M128×N256 epilogue (128 KB): ~4096 cy, w
 
 SAXPY achieves 42% of DRAM spec due to write-allocate overhead (each store reads the cache line first → effective 16 B/elem not 12). With write-allocate correction: ~56% effective utilization.
 
+### Hardware resource limits (cudaDeviceProp, B300)
+
+| Resource | Value |
+|----------|------:|
+| SM count | **148** |
+| sharedMemPerBlock (default) | **48 KB** |
+| sharedMemPerBlock (opt-in max) | **227 KB** |
+| sharedMemPerMultiprocessor | **228 KB** |
+| Registers per SM | **65536** (256 KB) |
+| Max threads per SM | **2048** (64 warps) |
+| L2 cache | **126 MB** |
+| Total global memory | **274 GB** (HBM3E) |
+
+**To use >48 KB smem**: call `cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes)` before launch. Max = 227 KB per block.
+
+### Accumulator precision is FREE
+
+| Format | F32 accum | F16 accum |
+|--------|----------:|----------:|
+| FP16 MMA | 128.0 cy | 128.0 cy |
+| TF32 MMA | 128.0 cy | 128.0 cy |
+
+**Zero performance difference** between F32 and F16 accumulators. Always use F32 for better precision at no cost.
+
 ### Clock frequency behavior
 
 | Condition | SM clock |
