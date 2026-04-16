@@ -7345,6 +7345,27 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# cudaArray (texture / surface memory) allocation
+
+Operations for a 4K × 4K float texture (64 MB):
+
+| Operation | Time |
+|-----------|-----:|
+| `cudaMallocArray` (4K × 4K float) | 59 µs |
+| `cudaMalloc` (64 MB linear) | 45.5 µs |
+| `cudaMallocMipmappedArray` (8 levels) | **37 µs (fastest)** |
+| `cudaFreeArray` | 79 µs |
+| `cudaFree` | 82 µs |
+| `cudaFreeMipmappedArray` | 69 µs |
+
+**Findings:**
+- **cudaArray ≈ 30 % slower to allocate** than linear cudaMalloc (59 vs 45 µs) — texture-format metadata setup.
+- **Mipmapped arrays are FASTER** than regular cudaArray (37 µs) — single contiguous region with preallocated level descriptors.
+- Free operations are similar across all forms (~70-82 µs).
+
+**Practical**: use `cudaArray` only when you need texture filtering / 2D-3D spatial locality. For raw storage, `cudaMalloc` is faster to allocate.
+
+
 # PCIe full-duplex concurrency (H2D + D2H)
 
 128 MB transfers on 4 nonblocking streams:
