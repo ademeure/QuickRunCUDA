@@ -5289,6 +5289,26 @@ All FP32 value ranges run at identical 4.03 cy: normal, subnormal, overflow, NaN
 
 v4 writeback is 1.2× faster. For full M128×N256 epilogue (128 KB): ~4096 cy, which hides behind the next tile's MMA pipeline.
 
+### Practical kernels: softmax and SAXPY throughput
+
+**SAXPY (y = α×x + y, vectorized v4, persistent grid):**
+
+| Working set | Chip BW | Location |
+|:-----------|--------:|----------|
+| 1 MB | 6440 GB/s | L2 cached |
+| 4 MB | 5587 GB/s | L2 → DRAM transition |
+| 16-256 MB | **3130 GB/s** | **DRAM-bound (42% of 7.4 TB/s)** |
+
+SAXPY achieves 42% of DRAM spec due to write-allocate overhead (each store reads the cache line first → effective 16 B/elem not 12). With write-allocate correction: ~56% effective utilization.
+
+### SASS instruction encoding
+
+**Every Blackwell instruction = 16 bytes** (fixed-width). Verified across 4168 instructions — no variable-length encoding. L1I capacity of ~16 KB = ~1024 instructions.
+
+### FMA precision advantage
+
+FMA computes `(a×b)+c` with single rounding (IEEE 754 fused). Kahan summation with FMA: **13× more precise** than naive (error 4.7e-11 vs 6.3e-10 for summing 1000 × 1e-7).
+
 ### Practical kernel: softmax throughput
 
 Softmax (1024 rows × 4096 cols, 256 threads/block): **0.0107 ms, 7.8 TB/s effective BW** (105% of DRAM spec). The 16 MB working set fits in L2, achieving near-peak bandwidth. 3 passes (max reduction + exp+sum + normalize) with SHFL warp reductions.
