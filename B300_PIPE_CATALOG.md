@@ -7871,27 +7871,33 @@ A data written to TMEM via `tcgen05.st`, scale factors set to UE4M3 1.0 (0x70), 
 
 Completion mechanism: `tcgen05.wait::ld.sync.aligned` after the MMA (mbarrier path also works but requires careful `expect_tx` setup).
 
-## K=96 on mxf4nvf4.block16 — 14.8 PFLOPS (sm_103a exclusive!)
+## K=96 idesc bit 31 — DOES NOT increase MACs (correctness verified)
 
-Setting idesc bit 31 = 1 on the block-scaled path DOES give K=96:
+Setting idesc bit 31 on mxf4nvf4.block16:
 
-| Path | K | cy/mma | TFLOPS/SM | Chip | × FP8 |
-|------|--:|-------:|----------:|-----:|------:|
-| `kind::f8f6f4` (baseline) | 32 | 128.02 | 33.29 | 4.9 PF | 1.0× |
-| `kind::mxf4nvf4.block16` | 64 | 128.01 | 66.58 | **9.9 PF** | **2.0×** |
-| **`kind::mxf4nvf4.block16` K=96** | **96** | **128.02** | **99.86** | **14.8 PF** | **3.0×** |
+| K (idesc) | cy/mma | D[0] output (A=3.0 B=1.5 scale=1.0) |
+|----------:|-------:|-------------------------------------:|
+| 64 | 128.01 | **589,824** |
+| 96 (bit31=1) | 128.02 | **589,824 (SAME!)** |
 
-**K=96 is real on the block-scaled path.** Same 128 cy/mma; 3× the FP8 throughput.
+**K=96 does NOT compute additional MACs** — output is identical to K=64. The bit is accepted but the tensor core still processes K=64 elements. Same finding as `kind::f8f6f4` where K=96 didn't change the K=32 result.
 
-## Power at K=64 and K=96 (mxf4nvf4.block16, 148 SMs, constant smem_B data)
+K=96 likely requires additional hardware configuration (different TMEM layout, different A packing format, or a specific B descriptor stride) that isn't triggered by just setting the idesc bit. The PTX ISA documents K=96 as valid for sm_103a, but activating it properly may require the full `kind::mxf4` path (with `.block32`) which ptxas 13.2 doesn't codegen.
 
-| Config | PFLOPS | Power (W) | TFLOPS/W |
-|--------|-------:|----------:|---------:|
-| K=64 | 9.9 | 421-423 | 23.4 |
-| **K=96** | **14.8** | **453-457** | **32.4** |
-| *(FP8 f8f6f4 K=32 random for comparison)* | *(4.9)* | *(1038)* | *(4.7)* |
+**Real verified FP4 throughput: 9.9 PFLOPS via mxf4nvf4.block16 K=64 = 2× FP8 = ~10 PFLOPS spec.**
 
-K=96 draws only 7 % more power than K=64 for 50 % more throughput. At 457 W for 14.8 PFLOPS, the block-scaled FP4 path is **32.4 TFLOPS/W** — the most power-efficient tensor-core mode on B300.
+## Power (mxf4nvf4.block16 K=64, 148 SMs, verified compute)
+
+| Config | Real PFLOPS | Power (W) | TFLOPS/W |
+|--------|------------:|----------:|---------:|
+| K=64 constant data | 9.9 | 399-401 | 24.8 |
+| K=64 random (xorshift) | 9.9 | **661** | **15.0** |
+| K=64 gaussian | 9.8 | 602 | 16.3 |
+| *(FP8 f8f6f4 random for ref)* | *(4.9)* | *(1092)* | *(4.5)* |
+
+**Block-scaled FP4 at 9.9 PFLOPS / 661 W = 15.0 TFLOPS/W** — 3.3× more power-efficient than FP8 random (4.5 TFLOPS/W). The UTCOMMA.BLOCK16 instruction draws 40 % less power than UTCQMMA for the same data patterns.
+
+⚠ Earlier "K=96 power" entries (425-457 W) were measured with idesc bit 31 set but correctness testing proved K=96 doesn't compute additional MACs. Those entries reflected K=64 compute power with uninitialized TMEM (low switching activity).
 
 ### Full data-pattern power sweep (mxf4nvf4.block16, smem_B varied, 30 NVML samples, ~6s each)
 
@@ -7903,29 +7909,23 @@ K=96 draws only 7 % more power than K=64 for 50 % more throughput. At 457 W for 
 | 64 | half-random half-zero | 540 | 9.9 | 18.3 |
 | 64 | **pseudo-gaussian (hash)** | **602** | 9.8 | **16.3** |
 | 64 | **random (xorshift)** | **661** | 9.9 | **15.0** |
-| | | | | |
-| 96 | constant 0x55 | 424 | 14.8 | **34.9** |
-| 96 | zeros | 428 | 14.8 | 34.6 |
-| 96 | all-ones 0xFF | 428 | 14.8 | 34.6 |
-| 96 | half-random half-zero | 644 | 14.8 | 23.0 |
-| 96 | **pseudo-gaussian** | **785** | 14.8 | **18.9** |
-| 96 | **random (xorshift)** | **825** | 14.8 | **17.9** |
 
-**Key findings:**
-1. **Random data draws 65 % more power** than constant data (661 vs 399 W at K=64; 825 vs 424 W at K=96).
-2. **Pseudo-gaussian slightly less than pure random** (602 vs 661 at K=64; 785 vs 825 at K=96) — gaussian has more near-zero values = less switching.
-3. **Half-random half-zero is intermediate** (540/644 W) — exactly what you'd expect from 50 % zero data.
-4. **Constant patterns (zeros, 0x55, 0xFF) are all identical** (~400/425 W) — the tensor core doesn't distinguish constant values, only switching activity matters.
-5. **K=96 draws ~25 % more power than K=64 for the same data pattern** — 50 % more compute, 25 % more power = positive efficiency scaling.
+
+⚠ K=96 entries removed — correctness testing showed K=96 doesn't compute additional MACs (output identical to K=64). K=96 power entries reflected K=64 compute with different TMEM state, not real K=96.
+
+**Key findings (K=64 verified):**
+1. **Random data draws 65 % more power** than constant (661 vs 399 W).
+2. **Pseudo-gaussian slightly less than random** (602 vs 661 W) — more near-zero values = less switching.
+3. **Half-random half-zero is intermediate** (540 W) — 50 % zero data → ~50 % of the random delta.
+4. **Constant patterns all identical** (~400 W) — only switching activity matters, not the constant value.
 
 ### Cross-format power comparison (all at 128 cy/mma, varied data)
 
-| Format | PFLOPS | Zeros/const (W) | Random (W) | Δ power | TFLOPS/W (random) |
-|--------|-------:|----------------:|-----------:|--------:|------------------:|
+| Format | Real PFLOPS | Zeros/const (W) | Random (W) | Δ power | TFLOPS/W (random) |
+|--------|------------:|----------------:|-----------:|--------:|------------------:|
 | FP16 (kind::f16) | 2.5 | 470-484 | **1 099** | 2.3× | 2.3 |
 | FP8 E4M3 (f8f6f4) | 4.9 | 487-497 | **1 092** | 2.2× | 4.5 |
 | **FP4 mxf4nvf4 K=64** | **9.9** | 399-401 | **661** | **1.65×** | **15.0** |
-| **FP4 mxf4nvf4 K=96** | **14.8** | 424-428 | **825** | **1.94×** | **17.9** |
 
 **The block-scaled FP4 path (UTCOMMA) draws MUCH less power than f8f6f4/f16 (UTCQMMA) with random data.** 661 W vs 1092 W for random → block-scaled consumes 40 % less power per tensor-core cycle.
 
