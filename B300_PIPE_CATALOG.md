@@ -16053,3 +16053,20 @@ After cold start, subsequent GEMMs run at full speed (2.4 ms for warm 4096³).
 
 **Zero misalignment penalty on B300.** The L1 cache handles cross-cache-line access splitting at full speed. Kernel code does not need to worry about base pointer alignment for scalar loads — the hardware is fully transparent.
 
+
+# Practical Warp-Level Pattern Costs
+
+Each pattern includes 1 FMA in the loop body (23 cy baseline):
+
+| Pattern | Total cy | Overhead | Practical use |
+|---------|--------:|---------:|:-------------|
+| `__all_sync` + FMA | 37 | **+14** | Warp early exit / convergence |
+| FMA + `__any_sync` | 41 | +18 | Termination check |
+| FMA + `ballot` + `popc` | 63 | +40 | Active lane counting |
+| FMA + `redux.sync.add` | **81** | +58 | **HW warp sum** |
+| FMA + 5×`shfl_down` reduce | 160 | +137 | Manual warp sum |
+
+**`redux.sync.add` is 2× faster than manual shuffle reduction** (81 vs 160 cy). Always use `redux.sync` on sm_80+ for warp reductions. The manual 5-step shuffle costs 137 cy from sync wrapper overhead (5 × ~28 cy).
+
+**Warp early exit (`__all_sync`) at 14 cy is cheap** — use it freely for convergence checks, sampling loops, or conditional compute skipping.
+
