@@ -5375,6 +5375,18 @@ Cycle counts (cy/op) are clock-independent. Throughput numbers (TFLOPS, TB/s) in
 
 FMA computes `(a×b)+c` with single rounding (IEEE 754 fused). Kahan summation with FMA: **13× more precise** than naive (error 4.7e-11 vs 6.3e-10 for summing 1000 × 1e-7).
 
+### Practical kernels: fused elementwise (GELU+bias+residual)
+
+**Fused GELU+bias+residual with v4 loads** (3 reads + 1 write = 16 B/element):
+
+| Working set | Chip BW | % DRAM | Notes |
+|:-----------|--------:|-------:|-------|
+| 1 MB | 6.4 TB/s | — | L2 cached |
+| 4 MB | 5.6 TB/s | — | L2 → DRAM |
+| 16-64 MB | **3.7 TB/s** | **50%** | **DRAM-bound** |
+
+**Compute (exp, sigmoid, FMA) fully hides behind memory access.** The kernel is purely memory-bound despite heavy math (GELU activation). Scalar loads reduce this to 1.1 TB/s (15%) — **always vectorize elementwise kernels**.
+
 ### Practical kernel: softmax throughput
 
 Softmax (1024 rows × 4096 cols, 256 threads/block): **0.0107 ms, 7.8 TB/s effective BW** (105% of DRAM spec). The 16 MB working set fits in L2, achieving near-peak bandwidth. 3 passes (max reduction + exp+sum + normalize) with SHFL warp reductions.
@@ -9075,7 +9087,19 @@ Square GEMM (M=N=K), warm cuBLAS:
 
 Small K (128) cuBLAS result (336 TFLOPS = 14%) perfectly validates our microbench finding: small K makes GEMM TMA-limited. At K=128 = 8 FP16 MMA steps, we predict ~99% efficiency, but cuBLAS overhead (prologue, epilogue, scheduling) drops it to 14%.
 
-**Not yet measured via cuBLAS**: FP8 (E4M3) GEMMs — expected ~4 000 TFLOPS at 8K based on our 4.65 PFLOPS tcgen05.mma micro-bench.
+### cuBLAS TF32 GEMM scaling
+
+| M=N=K | TFLOPS | % of 1232 peak |
+|------:|-------:|---------------:|
+| 1024 | 213 | 17% |
+| 2048 | 674 | 55% |
+| 4096 | 903 | 73% |
+| **8192** | **1113** | **90%** |
+| **16384** | **1130** | **92%** |
+
+TF32 peaks at 92% of tensor peak — higher efficiency than FP16 (84%) due to simpler epilogue (FP32 output, no conversion needed). Absolute TFLOPS: FP16 (2075) > TF32 (1130) by 1.8×.
+
+**Not yet measured via cuBLAS**: FP8 (E4M3) GEMMs — expected ~4000 TFLOPS at 8K.
 
 
 # Common ML ops mapped to B300 roofline
