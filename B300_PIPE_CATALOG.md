@@ -15060,6 +15060,41 @@ Gate projection (M × 28672 × 8192, BF16), varying mix of decode and prefill to
 
 **Practical**: The marginal cost of adding one more decode token to a continuous batch is ~0 µs for the linear layers (until total M exceeds ~128 and becomes compute-bound). The real cost of continuous batching is in **attention**, where each decode token must independently scan its full KV cache.
 
+
+# GEMM K-Dimension Efficiency (M=N=4096, BF16)
+
+| K | TFLOPS | % peak | Weight MB | Notes |
+|--:|-------:|:------:|---------:|-------|
+| 64 | 273 | 15% | 0.5 | Very inefficient |
+| 128 | 505 | 28% | 1 | Attention head_dim |
+| 512 | 1342 | 76% | 4 | |
+| 1024 | 1584 | 89% | 8 | |
+| 2048 | 1705 | 96% | 17 | Near peak |
+| **4096** | **1776** | **100%** | **34** | **Peak** |
+| 8192 | 975 | 55% | 67 | L2 pressure |
+| 16384 | 782 | 44% | 134 | Exceeds L2 |
+
+**Peak GEMM efficiency at K=2048-4096.** Below K=1024: not enough compute to amortize tile setup. Above K=4096: L2 working set overflow degrades throughput.
+
+**For attention QK^T (K=128)**: Only 28% GEMM efficiency — head_dim=128 is too small for efficient standalone GEMM. This is why FlashAttention fuses the QK^T GEMM with softmax and AV into a single kernel.
+
+
+# Fused QKV Projection
+
+Batch=32, Llama-70B GQA (Q=8192, KV=1024 each):
+
+| Method | µs | TFLOPS | Speedup |
+|--------|---:|-------:|--------:|
+| Separate Q+K+V (3 GEMMs) | 39 | — | 1.0× |
+| **Fused QKV (1 GEMM, N=10240)** | **33** | — | **1.17×** |
+
+**Fusing Q+K+V saves 17%** from:
+1. Two fewer kernel launches (~8 µs saved)
+2. Input X loaded once instead of 3 times
+3. Wider N=10240 tile fills the SM better
+
+**Practical**: Always fuse QKV into a single GEMM (concatenate Wq, Wk, Wv along the N dimension). Similarly, fuse Gate+Up projections into a single N=57344 GEMM.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
