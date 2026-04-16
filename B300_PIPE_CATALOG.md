@@ -5017,6 +5017,26 @@ The measured "latency" for rcp/lg2 without `.ftz` includes compiler-generated de
 
 **Practical rule: prefer predication (`@P FMA`) over branches for small divergent code.** The compiler generates predication automatically for 2-way branches with equal work (0.19 cy), but uses full branches for complex patterns (66+ cy). For manual optimization, use `selp` / `@P` instead of if-else chains.
 
+### Precise FP32 math (compound MUFU + refinement)
+
+| Operation | Latency | vs FMA (4 cy) |
+|-----------|--------:|--------------:|
+| `div.rn.f32` (IEEE division) | **50.9 cy** | 12.6× |
+| `sqrt.rn.f32` (IEEE sqrt) | **56.6 cy** | 14.0× |
+| `rcp.rn.f32` (IEEE reciprocal) | **78.2 cy** | 19.4× |
+| `div.approx.f32` | ~4 cy | 1× (MUFU.RCP path) |
+| `sqrt.approx.f32` | ~14 cy | MUFU.RSQ |
+
+Precise ops compile to MUFU + Newton-Raphson refinement + special-case handling. `rcp.rn` is slower than `div.rn` because it needs more refinement for IEEE-correct rounding.
+
+### Register bank conflicts: NOT observed on Blackwell
+
+All tested patterns (1-reg self-FMA, 3-reg distinct sources, cross-chain, interleaved) give identical 4.03 cy. No bank conflict penalty detected — the operand collector handles all combinations.
+
+### Warp scheduling fairness
+
+8 warps of identical FMA work complete within **0.38%** of each other (41980–42139 cy). The scheduler is perfectly fair across warps in a CTA.
+
 SHFL is fully pipelined with 6-stage pipeline (24/4 = 6). With ≥6 independent SHFL chains, throughput saturates at 4 cy/op.
 
 Local memory (register spill) = **43 cy** per load — approximately L1 cache latency (39 cy) + addressing overhead. Register access = 0 cy (part of FMA pipeline). **Spilling costs 10× vs register access.**
