@@ -15209,6 +15209,27 @@ Measured fusion threshold at M=1 (fused N vs 2× separate N/2):
 
 **Key lesson**: The sum of individual GEMM measurements **underestimates real pipeline cost by ~1.5-1.8×** due to memory contention. Always measure the full layer pipeline, not individual GEMMs, when estimating serving throughput.
 
+## L2 Eviction Contention in GEMM Chains
+
+Measured 1×28672×8192 BF16 GEMMs in a chain (470 MB weight each):
+
+| Chain depth | Total µs | Per GEMM | vs isolated | Sustained BW |
+|------------:|---------:|---------:|:-----------:|-----------:|
+| 1 | 74 | **74** | 1.0× | **6.4 TB/s** |
+| 2 | 282 | 141 | 1.91× | 3.3 TB/s |
+| 3 | 489 | 163 | 2.21× | 2.9 TB/s |
+| 4 | 696 | 174 | 2.35× | 2.7 TB/s |
+| 7 | 1177 | **168** | **2.28×** | **2.8 TB/s** |
+
+**After the first GEMM, each subsequent one costs ~207 µs** (vs 74 µs isolated). Sustained HBM bandwidth for weight-loading chains = **2.3-2.8 TB/s** vs 6.4 TB/s cold-start.
+
+**Root cause**: Each 470 MB weight matrix overflows the 126 MB L2 cache. Loading a new weight evicts the previous one, generating L2 write-back traffic that competes with the new read stream. The HBM controllers must handle simultaneous read (new weight) + write (evicted L2 lines).
+
+**Practical**: This 2.3× sustained degradation is the fundamental limit for memory-bound decode. Optimizations:
+1. **FP8 weights** reduce per-weight data by 2×, which may reduce L2 thrashing
+2. **L2 cache partitioning** could pin frequently-used data
+3. Smaller models have smaller weight matrices that fit (or nearly fit) in L2, avoiding eviction
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
