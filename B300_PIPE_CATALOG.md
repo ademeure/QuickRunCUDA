@@ -14871,6 +14871,22 @@ cuBLAS uses the **maximum register allocation** — 255 registers per thread lea
 
 **Read amplification: 1.04×** — nearly perfect (490 MB L2 vs 470 MB DRAM). The L2 is used purely as a pass-through cache with minimal amplification.
 
+## Decode vs Compute GEMM: ncu Side-by-Side
+
+| Metric | Decode (1×28672×8192) | Compute (4096³) |
+|--------|----------:|----------:|
+| **DRAM read** | **470 MB** | **93 MB** (L2-cached!) |
+| Grid | 1568 blocks | 512 blocks |
+| ALU | 69% | 47% |
+| Tensor | 18% | 4% |
+| LSU | 12% | 34% |
+| FMA | 1% | 15% |
+| **FLOP/tensor insn** | **3950** | **2.09M** (530× more!) |
+
+The compute GEMM achieves **530× more FLOP per tensor instruction** because its 4096² output matrix allows massive tile reuse. It reads only 93 MB from DRAM (A+B fit in L2!), while decode must stream the entire 470 MB weight.
+
+**The decode GEMM is architecturally wasteful**: 69% ALU overhead for 18% useful tensor work, all to stream 470 MB of data that each thread touches once. This is the fundamental M=1 inefficiency — the tensor core is barely utilized while the memory controller works at full capacity.
+
 
 # Cross-Pipe Dependency Latency Table
 
