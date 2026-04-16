@@ -16145,3 +16145,19 @@ All threads atomicAdd to SAME global address:
 
 **Practical**: No need for manual block-to-SM affinity tricks — the hardware's GPC-round-robin achieves perfect balance automatically. Block indices are NOT assigned sequentially to SM IDs.
 
+
+# Pathological Access Pattern Tolerance
+
+Single warp streaming through 256 MB array with different access patterns:
+
+| Pattern | cy/load | vs coalesced | Warp footprint |
+|---------|--------:|:----------:|:---------:|
+| Coalesced (sequential) | 801 | 1.0× | 128 B |
+| **Broadcast (all same addr)** | **107** | **7.5× faster** | 4 B |
+| Stride-128B (scattered) | 961 | 1.2× slower | 4 KB |
+| Reverse order | 806 | **1.0× (zero penalty)** | 128 B |
+
+**B300 is remarkably tolerant of scatter**: stride-128B (each thread in a different cache line, 32 sectors per load) is only 20% slower than perfect coalescing. The L2 handles scattered requests efficiently.
+
+**Broadcast is 7.5× faster** — all threads reading the same address is optimal (L1 serves once, broadcasts). **Reverse thread order has zero penalty** — the hardware doesn't care about thread-to-address mapping within a coalesced range.
+
