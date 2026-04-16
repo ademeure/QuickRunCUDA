@@ -14812,6 +14812,8 @@ Re-locking to 1800 MHz via NVML no longer takes effect (GPU stays at 2032), conf
 
 **Practical**: Always verify your B300 isn't clock-locked: `nvidia-smi -q -d CLOCK` should show SM boost at 2032 MHz, not locked to 1800.
 
+**Clock verified**: clock64 / wall-time = **2.032 GHz exactly** (404M cy / 199 ms). All cycle-based measurements in the earlier catalog sections are at 1800 MHz; multiply ns values by 0.886 for 2032 MHz equivalents.
+
 **GPU clock confirmed at exactly 1.800 GHz** via kernel clock64 vs cudaEvent wall time correlation (4.9B cycles / 2.722s = 1800.0 MHz).
 
 ## 60-Second Sustained GEMM (4096³ BF16)
