@@ -14833,6 +14833,32 @@ Reading 500 KB of FP32 logits and finding the max.
 
 The 80 transformer layers dominate at 96%. FP8 weights would bring this to ~17 ms → **~59 tok/s**.
 
+
+# Memory Bandwidth by Data Type
+
+512M elements, 148 SMs × 8 blocks × 256 threads, read-only:
+
+| Data type | Load style | GB/s | Gelem/s | % HBM peak |
+|-----------|-----------|-----:|--------:|-----------:|
+| FP32 | scalar | 6164 | 1541 | 83% |
+| FP32 | **float4** | **7027** | 1757 | **95%** |
+| BF16 | scalar | 3764 | 1882 | 51% |
+| BF16 | **bf16x2** | **5926** | **2963** | 80% |
+| INT8 | scalar | 1927 | 1927 | 26% |
+
+**Vectorization is critical for narrow types.** BF16 scalar wastes 49% of bandwidth (2B element in 128B cache line = poor utilization). BF16x2 (4B loads) recovers to 80%. INT8 scalar at 26% is terrible — always use int4/int8x4 vectorized loads.
+
+**Element throughput**: BF16 bf16x2 delivers **2963 Gelem/s** — 69% more elements than FP32 float4 (1757). For activation-like workloads, BF16 is the clear winner.
+
+## Format Conversion Throughput
+
+| Conversion | GB/s (R+W) | Gelem/s | Time (512M) |
+|-----------|----------:|---------:|------------:|
+| FP32 → BF16 | 3189 | 532 | 1010 µs |
+| BF16 → FP32 | 2900 | 483 | 1111 µs |
+
+~500 Gelem/s conversion throughput — adequate for one-time model quantization but too slow for per-inference conversion. Always store weights in the target format.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
