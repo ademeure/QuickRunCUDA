@@ -5289,6 +5289,10 @@ All FP32 value ranges run at identical 4.03 cy: normal, subnormal, overflow, NaN
 
 v4 writeback is 1.2× faster. For full M128×N256 epilogue (128 KB): ~4096 cy, which hides behind the next tile's MMA pipeline.
 
+### Practical kernel: softmax throughput
+
+Softmax (1024 rows × 4096 cols, 256 threads/block): **0.0107 ms, 7.8 TB/s effective BW** (105% of DRAM spec). The 16 MB working set fits in L2, achieving near-peak bandwidth. 3 passes (max reduction + exp+sum + normalize) with SHFL warp reductions.
+
 ### Epilogue phase breakdown (per 4-element chunk)
 
 | Phase | cy |
