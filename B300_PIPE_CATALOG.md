@@ -14583,7 +14583,41 @@ Measured per-component with cuBLAS (OP_T for weights), RMSNorm and SiLU×Up kern
 **Optimization opportunities**:
 1. **Fuse Gate + Up GEMMs** into one 8192→57344 GEMM: saves 1 kernel launch + 1 weight load pass
 2. **Use cudaGraph** to reduce the ~16 µs/kernel launch overhead across 9 kernels: saves ~130 µs/layer
-3. **FP8 weights**: 2× less weight data = 2× faster memory-bound GEMMs
+3. **FP8 weights**: 2× less weight data = 2× faster memory-bound GEMMs (see below)
+
+
+# FP8 E4M3 GEMM Performance (cublasLt)
+
+## FP8 vs BF16 at Llama-70B decode (batch=1)
+
+| Operation | BF16 (µs) | FP8 (µs) | **Speedup** |
+|-----------|----------:|----------:|:-----------:|
+| Q proj (1×8192²) | 23 | **10** | **2.3×** |
+| K proj (1×1024×8192) | 10 | **6** | 1.7× |
+| Gate proj (1×28672×8192) | 74 | **42** | **1.8×** |
+| Down proj (1×8192×28672) | 74 | **39** | **1.9×** |
+
+## FP8 compute-bound peak
+
+| Shape | FP8 TFLOPS | BF16 TFLOPS | Speedup |
+|-------|----------:|----------:|:---------:|
+| 4096³ | **3411** | 1732 | **1.97×** |
+| 8192³ | 2073 | 923 | **2.25×** |
+
+**FP8 peaks at 3411 TFLOPS** (4096³) — nearly 2× the BF16 compute throughput, matching the theoretical 2× from the tensor core's higher FP8 issue rate.
+
+## Projected Llama-70B decode with FP8
+
+| Component | BF16 (µs) | FP8 (µs) |
+|-----------|----------:|----------:|
+| Attention projections | 67 | **32** |
+| FFN (gate+up+down) | 222 | **123** |
+| Elementwise | 20 | 20 |
+| **Total/layer** | **309** | **~175** |
+| **80 layers** | 24.7 ms | **14.0 ms** |
+| **Estimated tok/s** | ~40 | **~71** |
+
+**FP8 weights are the single biggest optimization for decode** — 1.77× faster per layer, 71 tok/s vs 40 tok/s. The speedup is memory-bound (weight loading), not compute-bound, so it works at batch=1.
 
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
