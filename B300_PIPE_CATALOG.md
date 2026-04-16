@@ -165,6 +165,15 @@ Custom ring all-reduce using cudaMemcpyPeer. **21 µs floor** for small tensors.
 
 **NCCL latency floor = 10 µs** — 2× faster than custom for small messages (kernel-based P2P, no cudaMemcpyPeer overhead). Custom is faster for large transfers (DMA engine > kernel-based copy). For LLM tensor parallelism: NCCL gives 10 µs per layer → 0.8 ms for 80-layer model (< 5% of decode time).
 
+### P2P GEMM: remote weights via NVLink (measured)
+
+| Size | Local TFLOPS | Remote (NVLink) | Slowdown |
+|-----:|:------------:|:---------------:|:--------:|
+| 4096³ | 1778 | 1789 | **1.01× (none)** |
+| 8192³ | 2247 | 2250 | **1.00× (none)** |
+
+**Zero penalty for accessing weights on the other GPU via NVLink!** cuBLAS tiles the weight matrix into L2-sized chunks; after first tile fetch, subsequent accesses hit L2 cache. This means 2×B300 (548 GB total HBM) can serve models larger than single-GPU capacity with no compute overhead.
+
 ---
 
 ## 1. Pipe topology
