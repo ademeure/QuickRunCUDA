@@ -16086,3 +16086,18 @@ How evenly does the SM distribute execution time across warps doing identical wo
 
 Per-warp FMA cost doubles from 4 to 32 warps (4.56 → 9.37 cy) — the round-robin overhead of 8 warps per scheduler. Total SM throughput still increases (16× more warps doing 2× less each = 8× more total work).
 
+
+# Special Float Handling: Zero Penalty
+
+| Input type | FMA cy | Penalty |
+|-----------|-------:|:------:|
+| Normal float | 23.0 | 0% |
+| FTZ (flush-to-zero) | 23.0 | 0% |
+| **Denormalized (subnormal)** | **23.0** | **0%** |
+| **INF (infinity)** | **23.0** | **0%** |
+| **NaN** | **23.0** | **0%** |
+
+**B300 handles ALL special float values at full speed** — no denormalized-float penalty, no INF/NaN trap overhead. Unlike older architectures that incur 10-100× penalties for denorms, the B300 FMA pipeline processes them in hardware at full throughput.
+
+**Practical**: No reason to use FTZ mode for performance — `fma.rn.f32` and `fma.rn.ftz.f32` are identical speed. Use full IEEE 754 semantics without cost.
+
