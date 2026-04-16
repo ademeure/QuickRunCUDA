@@ -7380,6 +7380,33 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 **Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
 
 
+# cuBLAS GEMM at scale — FP32 / TF32 / FP16 practical peaks
+
+Square GEMM (M=N=K), warm cuBLAS:
+
+| M=N=K | FP32 (non-tensor) | TF32 (tensor) | FP16 (tensor) |
+|------:|-----------:|-----------:|-----------:|
+| 4 096 | 57.6 TFLOPS | 788 TFLOPS | **1 355 TFLOPS** |
+| **8 192** | 60.5 TFLOPS | **1 016 TFLOPS** | **2 034 TFLOPS** |
+
+**Achieved % of theoretical peak:**
+| Precision | 4K peak | 8K peak | Theoretical | % at 8K |
+|-----------|--------:|--------:|------------:|--------:|
+| FP32 scalar | 57.6 | 60.5 | ~72 | 84 % |
+| TF32 tensor | 788 | 1 016 | ~1 200 | 85 % |
+| **FP16 tensor** | 1 355 | **2 034** | 2 325 | **87 %** |
+
+**Key findings:**
+1. **FP16 at 8K = 2 034 TFLOPS (87 % of peak)** — excellent for a library call.
+2. **TF32 at 8K = 1 016 TFLOPS** — good middle ground for training (FP32 accuracy, tensor speed).
+3. **FP32 non-tensor ≈ 60 TFLOPS** — matches scalar FFMA ceiling from roofline model.
+4. **Matrix size matters hugely**: 4K→8K improves FP16 utilization from 58 % → 87 %. At 4K, the tensor cores are partially starved.
+
+**Practical**: for inference serving, use **FP8 or FP16 with ≥ 4K matrices** to hit tensor peak. For training, TF32 gives ~1 PFLOPS at 8K with FP32-level accuracy.
+
+**Not yet measured via cuBLAS**: FP8 (E4M3) GEMMs — expected ~4 000 TFLOPS at 8K based on our 4.65 PFLOPS tcgen05.mma micro-bench.
+
+
 # Common ML ops mapped to B300 roofline
 
 Using measured ridge points: **scalar FFMA = 18 FLOP/B, FP16 tensor = 314 FLOP/B, FP8 tensor = 628 FLOP/B**.
