@@ -15825,5 +15825,18 @@ SAXPY (read A, read+write B) achieves ~3.5 TB/s total HBM traffic at ≥74 SMs. 
 
 **B300 has an inverted roofline at high K**: Beyond K=4096, TFLOPS DECREASES because the GEMM tile working set exceeds L2 capacity. The "optimal" K is 2048-4096, not infinity. This is unique to the B300's 126 MB L2 and means **there's a sweet spot for GEMM K dimension**.
 
-**Practical**: For model design, hidden dimensions of 4096 (K=4096 GEMMs) achieve 100% of peak tensor throughput. Larger dimensions (8192+) waste 45-55% of potential throughput due to L2 pressure.
+## Roofline varies with M/N — it's about total data vs L2
+
+| M×N | Peak K | Peak TFLOPS | Total data at peak |
+|:---:|-------:|-----------:|:------------------:|
+| 1K×1K | 8192+ | 1126 | 36-69 MB (fits L2) |
+| 2K×2K | 16384 | 1783 | 143 MB (≈ L2) |
+| 4K×4K | 4096 | 1776 | 101 MB (fits L2) |
+| **8K×8K** | **1024** | **1909** | 168 MB |
+
+**8K×8K at K=1024 = 1909 TFLOPS — highest measured!** The large 8K² output matrix maximizes tile utilization across 148 SMs.
+
+**The drop happens when total GEMM data (A+B+C) exceeds ~126 MB L2.** At 4K×4K: the drop is at K=8192 (168 MB total). At 8K×8K: the drop starts at K=2048 (201 MB). At 2K×2K: no drop even at K=16384 (143 MB ≈ L2).
+
+**For model design**: Choose M/N/K combinations where total A+B+C ≤ 126 MB for peak throughput. For hidden=4096, this means K ≤ ~4096. For hidden=8192, K ≤ ~1024 for peak (but real layers use K=8192, accepting the 55% throughput hit).
 
