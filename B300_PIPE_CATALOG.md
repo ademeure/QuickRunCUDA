@@ -4878,10 +4878,52 @@ The L1 data cache fills in 32-byte sectors from L2, not full 128-byte lines. Con
 | LOP3×2 (2 ALU chains) | **8.05** | — | **✗ single ALU pipe** |
 
 **Co-issue rules on Blackwell (per SMSP partition):**
-- **FMA_heavy + FMA_lite + ALU**: all three co-issue freely (4.15 cy for 3 ops)
+- **FMA_heavy + FMA_lite + ALU + LSU**: all four co-issue freely (**quad co-issue confirmed**, 4.17 cy for 4 ops)
+- **FMA + smem/global load**: load is completely free (4.03 = FMA baseline)
 - **FMA + ALU (LOP3/SHF/PRMT)**: ALU adds zero overhead — runs on separate pipe
 - **FMA + MUFU**: strictly serial (FMA_lat + MUFU_lat)
 - **ALU + ALU**: serial — single pipe_alu per partition, no dual-ALU
+
+### MUFU (pipe_xu) latency and throughput
+
+| Metric | Value |
+|--------|------:|
+| ex2.approx.ftz latency (1 chain) | **14 cy** |
+| ex2.approx.ftz throughput (4+ chains) | **4 cy/op** |
+| Pipeline ratio (lat/tp) | 3.5 (perfect match: 4 chains → 3.5× speedup) |
+| lg2.approx.ftz (PTX = 2 MUFU.LG2) | 18 cy/op (9 cy/MUFU) |
+| sin.approx.ftz (compound sequence) | 24 cy/op |
+| rcp.approx (compound: MUFU + 6 refinement ops) | 42 cy/op |
+| tanh.approx | 18 cy/op |
+
+The measured "latency" for rcp/lg2 without `.ftz` includes compiler-generated denormal handling (+22 cy for lg2). With `.ftz`, lg2 drops from 40 → 18 cy. The raw MUFU pipe has ~4 cy throughput and ~14 cy latency.
+
+### Warp shuffle and reduction latency
+
+| Operation | Latency (1 chain) | Throughput (8 chains) | Pipelined? |
+|-----------|------------------:|----------------------:|:----------:|
+| SHFL.BFLY (butterfly) | **24 cy** | **4.09 cy/op** | ✓ (6-stage) |
+| SHFL.DOWN + FADD | 29 cy | — | — |
+| Full warp reduce (5×SHFL+ADD) | **149 cy** | — | — |
+| **redux.sync.add** | **8.5 cy** | **8.77 cy/op** | ✗ (synchronous) |
+
+**redux.sync.add is 17× faster than SHFL-based reduction** (8.5 vs 149 cy). For integer warp reductions, always use `redux.sync`.
+
+### Branch divergence cost
+
+| Scenario | cy/iter | Overhead vs no-branch |
+|----------|--------:|----------------------:|
+| No branch (FMA) | 4.03 | — |
+| Uniform branch (all same path) | 4.03 | **0 cy** |
+| Divergent 16/16 (same work) | 4.22 | **0.19 cy** (predication) |
+| Divergent 1/31 (same work) | 4.22 | 0.19 cy (split-ratio independent) |
+| Divergent 16/16 (2 FMA vs 1 FMA) | **8.28** | longest path dominates |
+
+**Divergence with equal work costs only 0.19 cy** (predication overhead). The compiler factors common operations out of branches — for the 2-vs-1 FMA test, the shared first FMA runs unconditionally and only the extra FMA is predicated (cost = 2 FMAs = 8.28 cy, not 3 FMAs).
+
+SHFL is fully pipelined with 6-stage pipeline (24/4 = 6). With ≥6 independent SHFL chains, throughput saturates at 4 cy/op.
+
+Local memory (register spill) = **43 cy** per load — approximately L1 cache latency (39 cy) + addressing overhead. Register access = 0 cy (part of FMA pipeline). **Spilling costs 10× vs register access.**
 
 ### FMA throughput vs warp count (single-chain serial FMA per warp)
 
