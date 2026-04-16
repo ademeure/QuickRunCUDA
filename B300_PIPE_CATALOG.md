@@ -7380,6 +7380,43 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 **Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
 
 
+# cudaDeviceSetCacheConfig — marginal effect on Blackwell
+
+| Config | Memory-bound (256 MB stream) | Smem-heavy (32 KB) |
+|--------|-----------------------------:|-------------------:|
+| PreferNone | 5 458 GB/s | 0.006 ms |
+| PreferShared | 5 333 GB/s (−2 %) | 0.007 ms |
+| **PreferL1** | **5 710 GB/s (+5 %)** | 0.007 ms |
+| PreferEqual | 5 653 GB/s (+4 %) | 0.006 ms |
+
+**Effect is 0-5 % — mostly irrelevant on Blackwell.** The unified L1/smem pool partitions automatically. `PreferL1` gives a slight edge for memory-bound streaming (+5 %) by making more L1 available for data. For smem-heavy kernels, no measurable change.
+
+**Practical**: leave at default (`PreferNone`). Only set `PreferL1` if profiling shows L1 miss rate as a bottleneck.
+
+
+# 64-bit atomicAdd — FLAT contention curve (no scaling with CTAs)
+
+32 threads × N CTAs all atomicAdd to same u64 address, 1000 iters:
+
+| CTAs | cy/atom |
+|-----:|--------:|
+| 1 | 156 |
+| 8 | 156 |
+| 32 | 156 |
+| **148** | **156** |
+
+**64-bit atomic latency does NOT increase with contention** — unlike 32-bit (51→132 cy). The u64 atomic unit is already at max throughput with a single warp.
+
+| Comparison | 1 CTA | 148 CTAs | Global throughput |
+|------------|------:|---------:|------------------:|
+| `atom.add.u32` | 51 cy | 132 cy | 73 G atoms/s |
+| `atom.add.u64` | **156 cy** (3× u32) | 156 cy | 62 G atoms/s |
+
+Per-thread u64 atomic is **3× slower** than u32, but global chip-wide throughput is only **15 % less** (62 vs 73 G atoms/s). The u64 unit serializes at its own rate regardless of traffic.
+
+**Practical**: use u64 atomics when you need 64-bit counters or addresses. The 3× per-thread latency is the real cost; contention doesn't make it worse.
+
+
 # Shared memory STORE bank conflicts (less costly than loads)
 
 Single warp × 1000 iter, varying store patterns:
