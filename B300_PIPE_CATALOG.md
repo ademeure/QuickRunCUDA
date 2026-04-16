@@ -15743,3 +15743,49 @@ SAXPY (read A, read+write B) achieves ~3.5 TB/s total HBM traffic at ≥74 SMs. 
 - **Write-only kernels**: use all SMs (6.1 TB/s)
 - **R+W kernels**: ~296 total blocks (2/SM) or very high block counts work well (~6.4 TB/s); intermediate block counts may regress. **Always benchmark your specific R+W pattern.**
 
+
+---
+
+# Executive Summary: B300 in 60 Seconds
+
+## Hardware
+- **sm_103a**, 148 SMs, 1800 MHz fixed clock, 287 GB HBM3E, 126 MB L2, 228 KB smem/SM
+- 7680-bit memory bus (60 HBM3E channels), PCIe Gen6 x16, 4 async copy engines, ECC ON
+
+## Measured Peaks
+| | Isolated | Sustained chain | Notes |
+|--|--------:|----------------:|-------|
+| **HBM read** | 7.0 TB/s | 2.8 TB/s (7-GEMM chain) | L2 eviction contention |
+| **L2 read** | 8.5 TB/s | — | 21% faster than HBM |
+| **BF16 tensor** | 1776 TFLOPS | 737 TFLOPS (60s sustained) | Zero degradation |
+| **FP8 tensor** | 3411 TFLOPS | — | 2× BF16 |
+
+## The Single Most Important Finding
+**Individual GEMM benchmarks overstate real decode throughput by ~2×** due to L2 eviction contention between back-to-back weight loads. The gap vanishes for weights ≤ 34 MB (fits half L2) and reaches 2.3× for 470 MB weights (Llama-70B).
+
+## LLM Serving Summary (single GPU)
+
+| Model | Decode tok/s | Prefill tok/s | Concurrent (ctx=2K) |
+|-------|------------:|:-------------:|:-------------------:|
+| **Llama-70B BF16** | **17** | 11853 (seq=512) | 216 |
+| Llama-70B FP8 | ~30 | — | 642 |
+| **Llama-8B BF16** | **142** | — | 1003 |
+| 70B + spec decode K=7 | **62** | — | — |
+
+## Top Optimization Priority (decode)
+1. **Speculative decode** (3.6× with K=7, 80% acceptance)
+2. **FP8 weights** (1.71× in GEMM chains)
+3. **Batch scaling** (free throughput ≤ batch 128)
+4. TP=2 (1.18× speed, 2× capacity)
+5. Fused QKV (1.17× at batch≥32, neutral at batch=1)
+
+## Non-Obvious Findings
+- **6-way co-issue**: FMA×2 + ALU + LSU + MUFU + Shuffle all simultaneously
+- **Branch predication threshold**: if-path ≤ 6, else-path ≤ 7 SASS insns → free; 7+ → BSSY (8× penalty)
+- **L1/smem tradeoff is wildly non-monotonic**: smem=8-32KB destroys L1; smem=128KB doesn't
+- **No register bank conflicts** on B300
+- **BSSY costs +85 cy even when runtime-uniform**; only BRA.U (compile-time) is free
+- **Continuous batching is free for GEMMs** (decode tokens ride on prefill weight load)
+- **MoE is 13.4× slower** than equivalent dense (8× weight loading)
+- **All glue operations (KV append, gather, D2D) cost ~6-9 µs** regardless of data size (launch overhead)
+
