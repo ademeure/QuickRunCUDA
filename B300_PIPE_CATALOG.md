@@ -7524,6 +7524,30 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 Most ML inference ops are below OI = 1 → **memory-bound → fusion is king**.
 
 
+# Power efficiency — TFLOPS per watt across precisions
+
+8K × 8K × 8K GEMM sustained, NVML power sampling:
+
+| Precision | TFLOPS | Total power | Incremental (above 180 W idle) | TFLOPS/kW (incremental) |
+|-----------|-------:|------------:|-------------------------------:|------------------------:|
+| Idle | — | **180 W** | 0 W | — |
+| TF32 tensor | 1 017 | **468 W** | 288 W | 3 531 |
+| **FP16 tensor** | **2 045** | **490 W** | **310 W** | **6 597** |
+
+**FP16 is 1.9× more energy-efficient than TF32** per incremental watt (6.6 vs 3.5 TFLOPS/kW).
+
+**Key observations:**
+1. **Idle draws 180 W** — the board's baseline power (memory refresh, fabric, PCIe, etc.).
+2. **Tensor-core GEMM adds only 290-310 W** above idle — the compute fabric is power-efficient.
+3. **Total system power under full tensor load = 490 W** — well under the B300 SXM6 AC's TGP.
+4. **FP16 gives 2× the TFLOPS for ~7 % more power** vs TF32 — nearly free to go from TF32 to FP16.
+
+**Practical for deployment:**
+- At 490 W sustained: ~10 server GPUs per 5 kW rack (standard density).
+- FP16 inference at 2 045 TFLOPS / 490 W = **4.17 TFLOPS/W** total.
+- For LLM decode (memory-bound, 7.4 TB/s at ~490 W): ~15 GB/s/W — compute dark during decode.
+
+
 # End-to-end LLM workload model on B300 (7B-parameter Llama-like)
 
 Using our measured B300 numbers to model a **single-GPU 7B LLM** (32 layers, d=4096, 32 heads, GQA 8 KV heads).
