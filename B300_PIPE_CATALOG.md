@@ -5605,6 +5605,18 @@ The speedup is less than theoretical 2× because: output is still BF16 (same wri
 
 Peak FP8 advantage: **1.87-1.90×** at batch=8 (8B) and batch=128 (70B). At batch=1: only 1.1-1.4× (dispatch overhead dominates). Add ~15% for attention + RMSNorm.
 
+### Llama-3-8B full 32-layer pass (measured, end-to-end)
+
+| Batch | BF16 tok/s | FP8 tok/s | FP8/BF16 |
+|------:|:----------:|:---------:|:--------:|
+| 8 | 2833 | **5615** | **1.98×** |
+| 128 | 19405 | **33890** | 1.75× |
+| 512 | 55523 | 87801 | 1.58× |
+| 1024 | 86764 | 144899 | 1.67× |
+| **2048** | **114713** | **221695** | **1.93×** |
+
+**8B FP8 at batch=2048: 222K tok/s.** BF16 ceiling: 115K. FP8 ceiling: 222K (1.93×).
+
 ### Llama-3.1-405B TP=2 per-GPU layer (BF16, measured)
 
 d=16384, qkv/gpu=9216, ffn/gpu=26624, **126 layers**
