@@ -7380,6 +7380,85 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 **Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
 
 
+# Histogram patterns: smem-privatized is 200× faster than naive
+
+64 M elements, random distribution, varying bin counts:
+
+**16 bins:**
+| Pattern | GElem/s | × naive |
+|---------|--------:|--------:|
+| Naive (1 global atom/thread) | 5.8 | 1.0 |
+| Ballot+popc dedup | 23.7 | **4.1×** |
+| **Smem-privatized** | **1 251** | **216×** |
+
+**64 bins:**
+| Pattern | GElem/s | × naive |
+|---------|--------:|--------:|
+| Naive | 3.7 | 1.0 |
+| Ballot+popc dedup | 5.8 | 1.6× |
+| **Smem-privatized** | **1 030** | **281×** |
+
+**256 bins:**
+| Pattern | GElem/s | × naive |
+|---------|--------:|--------:|
+| Naive | 4.1 | 1.0 |
+| Ballot+popc dedup | 4.5 | 1.1× |
+| **Smem-privatized** | **782** | **189×** |
+
+**Key findings:**
+1. **Smem-privatized is 189-281× faster** than naive global atomics — shared memory atomics (24 cy native u32) vs global atomics under massive contention.
+2. **Ballot dedup helps most with fewer bins** (4.1× at 16 bins; 1.1× at 256 bins). With 256 bins, random data gives ~1 collision per warp → dedup saves almost nothing.
+3. **Smem privatized is the dominant technique** — each CTA accumulates in local shared-memory histogram, then flushes to global once.
+
+**Pattern**:
+```cuda
+extern __shared__ unsigned s_hist[];
+// Init smem to 0
+for (int b = tid; b < nbins; b += blockDim.x) s_hist[b] = 0;
+__syncthreads();
+// Accumulate locally
+for (int i = tid; i < n; i += stride)
+    atomicAdd(&s_hist[data[i] & mask], 1u);
+__syncthreads();
+// Flush to global
+for (int b = tid; b < nbins; b += blockDim.x)
+    atomicAdd(&hist[b], s_hist[b]);
+```
+
+
+# Triple-stage pipeline (H2D + compute + D2H overlap)
+
+8 chunks × 16 MB each, 50 FMAs/element compute:
+
+| Pattern | Time | Speedup |
+|---------|-----:|--------:|
+| **Sequential** (H2D→compute→D2H, one chunk at a time) | 5.12 ms | 1.0× |
+| **Pipelined** (3 nonblocking streams with event dependencies) | **3.40 ms** | **1.51×** |
+
+Pipeline overlaps:
+- Next-chunk H2D with current-chunk compute
+- Previous-chunk D2H with current-chunk compute
+
+**Achievable speedup depends on compute-to-transfer ratio**:
+- Compute-heavy (high FMA count): converges to compute-only time (full overlap).
+- BW-heavy (low compute): converges to ~2× (full-duplex PCIe: H2D + D2H overlap).
+
+**Pattern**:
+```cuda
+for (chunk c) {
+    cudaMemcpyAsync(d_in[c&1], h_in[c], ..., s_h2d);
+    cudaEventRecord(e_h2d[c], s_h2d);
+    cudaStreamWaitEvent(s_comp, e_h2d[c]);
+    compute<<<..., s_comp>>>(d_out[c&1], d_in[c&1], ...);
+    cudaEventRecord(e_comp[c], s_comp);
+    cudaStreamWaitEvent(s_d2h, e_comp[c]);
+    cudaMemcpyAsync(h_out[c], d_out[c&1], ..., s_d2h);
+}
+```
+
+Use **double-buffered device arrays** (`c&1`) so each chunk's H2D doesn't stomp the previous chunk's in-progress compute.
+
+
 # Ballot+popc histogram — 31× faster than naive atomicAdd
 
 64 M elements, 256 bins, all threads map to same bin (best-case dedup):
