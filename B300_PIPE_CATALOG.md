@@ -5520,6 +5520,24 @@ M=1 achieves 5.8 TB/s effective weight bandwidth (better than raw DRAM streaming
 
 With ~15% attention+norm: batch=1 ≈ **36 tok/s real-world**.
 
+### Full 80-layer: FP8 E4M3 (measured, different weights per layer)
+
+| Batch | Total ms | ms/layer | Tok/s | Weight BW | FP8/BF16 |
+|------:|:--------:|:--------:|------:|:---------:|:--------:|
+| 1 | **14.1** | 0.176 | **71** | 4869 GB/s | **1.73×** |
+| 8 | **11.5** | 0.144 | **693** | **5927** | **1.89×** |
+| 64 | 14.6 | 0.183 | 4371 | 4675 | 1.75× |
+| 256 | 20.6 | 0.257 | 12444 | 3327 | 1.68× |
+| 512 | 25.8 | 0.323 | **19820** | 2650 | — |
+| 1024 | 40.4 | 0.505 | 25324 | 1693 | — |
+| **2048** | **72.8** | 0.910 | **28120** | 940 | — |
+
+**FP8 at 80-layer level: 1.73-1.89× over BF16** (better than per-layer ratio because FP8's smaller weights pipeline better between layers).
+
+**Throughput ceiling: 28K tok/s at batch=2048** (deeply compute-bound, 940 GB/s weight BW → compute dominates). FP8 68 GB total weights loaded at up to 5.9 TB/s = 80% of HBM spec.
+
+With ~15% attention+norm: batch=1 FP8 ≈ **62 tok/s real-world**.
+
 **Batch=8 is fastest per-layer** (0.273 ms = 21.9 ms for 80L). NOT batch=1! Better dispatch efficiency at M=8.
 
 **TN layout saves 10-14% at batch≥128** — use `CUBLAS_OP_T` for FFN weight matrices at larger batch. Crossover at batch≈128.
