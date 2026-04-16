@@ -5201,6 +5201,17 @@ Up to 192 registers per thread, throughput is unaffected at 1 CTA/SM. Only at th
 
 SHFL is fully pipelined with 6-stage pipeline (24/4 = 6). With ≥6 independent SHFL chains, throughput saturates at 4 cy/op.
 
+### Reduction pattern comparison (measured, 256 threads)
+
+| Pattern | cy/reduce | Speedup vs smem tree |
+|---------|----------:|--------------------:|
+| **redux.sync.add** (32→1, int) | **8.7** | **64×** |
+| SHFL xor reduce (32→1, float) | 150 | 3.7× |
+| Hybrid shfl+smem (256→1) | 407 | 1.4× |
+| Smem tree (256→1, 8 levels) | 554 | 1.0× |
+
+**Always use `redux.sync.add` for integer warp reductions** (8.7 cy vs 150 cy SHFL). For float: use SHFL (no hardware float redux). For cross-warp: hybrid SHFL + smem.
+
 Local memory (register spill) = **43 cy** per load — approximately L1 cache latency (39 cy) + addressing overhead. Register access = 0 cy (part of FMA pipeline). **Spilling costs 10× vs register access.**
 
 ### LSU pipeline depth
@@ -5314,6 +5325,19 @@ IMAD shares the FMA pipe with identical latency/throughput characteristics. IMAD
 | SETP alone | **free** | co-issues with FMA |
 
 Predication adds a fixed 0.19 cy per instruction, **independent of the predicate mask** (all-true, all-false, half-true = identical cost). The predicated instruction occupies the pipe regardless of the mask.
+
+### Memory bandwidth scaling with occupancy
+
+| Warps/SM | Relative BW | Per-warp efficiency |
+|---------:|:------------|-------------------:|
+| 1 | 1.0× | 100% |
+| 2 | 1.9× | 96% |
+| 4 | 3.6× | 91% |
+| **8** | **6.4×** | **80%** |
+| 16 | 8.9× | 55% |
+| 32 | 10.4× | 32% |
+
+**8 warps/SM reaches 80% per-warp efficiency** for memory bandwidth. Beyond 16 warps: severely diminishing returns as the memory controller saturates. This matches the FMA pipe saturation at 8 warps — **8 warps is the universal sweet spot for both compute and memory-bound kernels**.
 
 ### ALU (pipe_alu) throughput vs warp count
 
