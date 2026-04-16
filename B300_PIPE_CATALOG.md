@@ -13889,3 +13889,140 @@ All queries return in **~0.1 µs** — essentially free. Safe to poll at kHz rat
 | Total HBM3E memory | **288.4 GB** |
 | Memory used (driver) | 2.4 GB |
 
+
+# Warp Divergence Cost
+
+Single warp (32 threads), measuring branch-induced serialization.
+
+| Pattern | cy/iter | vs baseline | Notes |
+|---------|--------:|:-----------:|-------|
+| No divergence (1 FMA) | 23 | 1.0× | Baseline |
+| **Half diverge (16/16, same insn)** | **23** | **1.0×** | **FREE — compiler uses predication** |
+| **1-thread diverge (1/31)** | **23** | **1.0×** | **Also FREE with predication** |
+| 4-way diverge | 110 | 4.8× | 4 serial branches — cannot merge |
+| 4 FMA baseline (no diverge) | 24 | — | |
+| Asymmetric (1 vs 4 FMA) | 24 | 1.0× | Cost = max(both paths) — predication |
+| Uniform branches (4 per iter) | 47 | 2.0× | ~6 cy/branch overhead |
+
+**2-way divergence with same instruction type is FREE** — the compiler generates predicated FFMA instead of branching. Both paths execute, and the predication mask selects the correct result. This means `if (cond) a = fma(...); else a = fma(...);` costs the same as `a = fma(...)`.
+
+**4-way divergence is ~4.8× slower** because the compiler must generate separate branches with BSSY/BSYNC reconvergence.
+
+**Asymmetric work**: Cost equals the longest path. `if(cond) 1_FMA; else 4_FMA;` costs the same as `4_FMA` alone, because both paths execute under predication.
+
+**Uniform branch overhead**: ~6 cy per taken branch when all threads agree. This is the BRA instruction issue + pipeline bubble cost.
+
+
+## Branch Deep Dive: Predication vs BSSY, SETP→BRA Distance, Uniformity
+
+### ptxas branch compilation strategy (SASS-verified)
+
+ptxas uses **two distinct strategies** for divergent branches:
+
+1. **Predication** (N ≤ 6 instructions per side): Both paths execute with `@P0`/`@!P0` masks, interleaved. No BSSY/BSYNC. Cost ≈ max(both paths) + small overhead.
+
+2. **BSSY/BSYNC serialization** (N ≥ 7 instructions per side): `BSSY.RECONVERGENT` pushes reconvergence point, `@P0 BRA` splits the warp, paths execute serially, `BSYNC.RECONVERGENT` reconverges. Cost ≈ sum(both paths) + ~93 cy overhead.
+
+### The predication→BSSY crossover (SASS-verified)
+
+Divergent 16/16 split with N FMA per side, measured cost:
+
+| N FMA/side | cy/iter | Method | SASS pattern |
+|-----------:|--------:|--------|-------------|
+| 1 | 23 | Predication | `@P0 FFMA` + `@!P0 FFMA` interleaved |
+| 2 | 23 | Predication | Same |
+| 3 | 23 | Predication | Same |
+| 4 | 25 | Predication | +2 cy for 8 predicated insns |
+| 5 | 28 | Predication | +5 cy |
+| 6 | 32 | Predication | 12 interleaved @P0/@!P0 FFMAs |
+| **7** | **257** | **BSSY** | **BSSY→@P BRA→path A→BRA→path B→BSYNC** |
+| 8 | 265 | BSSY | Same structure, +8 cy |
+| 10 | 322 | BSSY | |
+| 12 | 339 | BSSY | |
+| 16 | 414 | BSSY | |
+
+**The crossover from predication to BSSY is at exactly 7 instructions per side.** The penalty is catastrophic: 32 cy → 257 cy = **8× jump**. This is the single most important number for kernel optimization on Blackwell.
+
+### BSSY overhead decomposition
+
+With BSSY (N≥7), the cost is: `cost ≈ path_A_cycles + path_B_cycles + 93 cy overhead`
+
+The 93 cy overhead comes from:
+- BSSY.RECONVERGENT instruction: ~15 cy
+- @P0 BRA (divergent branch): ~10 cy
+- BRA (end of taken path, skip to reconvergence): ~10 cy
+- BSYNC.RECONVERGENT: ~15 cy
+- Pipeline flush/refill from warp splitting: ~43 cy
+
+### SETP→BRA distance (predicate readiness)
+
+| Scenario | cy/iter | vs baseline | Notes |
+|----------|--------:|:-----------:|-------|
+| No branch (FMA only) | 23 | 1.0× | Baseline |
+| Pre-computed predicate, uniform | 23 | 1.0× | **Zero cost** |
+| SETP tight (0 insns before BRA) | 23 | 1.0× | Same — no stall |
+| SETP from 8 NOPs before BRA | 23 | 1.0× | Distance doesn't matter |
+| Predicate from FMA result | 29 | 1.26× | **+6 cy = FMA pipeline latency** |
+| Predicate from L1-cached load | 23 | 1.0× | Load latency hidden by loop |
+
+**SETP→BRA distance is irrelevant when the predicate is ready.** The only cost is when the predicate depends on a just-computed value — then the branch stalls until the producer completes (~6 cy for FMA, ~20 cy for smem load).
+
+### Uniform branch recognition (SASS-verified)
+
+ptxas emits `BRA.U` (uniform branch) when the predicate comes from a uniform register:
+- **Kernel arguments** → loaded into UR* (uniform registers) → `UISETP` → `BRA.U UP0`
+- **threadIdx.x** → loaded into R* (per-thread register) → `ISETP` → `@P0 BRA` (may diverge)
+- **Loop counters from uniform path** → UR* → `BRA.U`
+
+`BRA.U` costs **0 additional cycles** for taken or not-taken. `@P0 BRA` when actually uniform at runtime also costs 0 cy (hardware detects uniformity).
+
+### How ptxas converts explicit branches to predication
+
+Even with explicit `@p bra TARGET; ... bra DONE; TARGET: ... DONE:` in inline PTX assembly, ptxas **reverse-engineers the branch structure and converts it to predicated execution** when the body is ≤6 instructions per side. This means you cannot force BSSY by writing explicit branches in PTX — ptxas will undo your branches and emit predicated instructions.
+
+**Nested branches are also flattened.** A 4-level nested if/else tree with different conditions produces 4 pre-computed predicates (P0, P1, P2, P3) and flat predicated instruction sequences — no BSSY.
+
+### 8-way switch statement
+
+An 8-way switch with 1 FMA per case costs **575 cy/iter** — ptxas generates cascading BSSY/BSYNC for each case. Each additional case adds a full serialization step. For multi-way dispatch, use a lookup table + predicated execution instead.
+
+### Practical guidelines
+
+1. **Keep divergent branches under 6 instructions per side** → predication is essentially free.
+2. **At 7+ instructions, BSSY adds ~93 cy + 2× serial execution** — restructure the algorithm to avoid.
+3. **SETP distance from BRA doesn't matter** — only the producer latency matters.
+4. **To guarantee uniform branches**: ensure the condition derives from kernel arguments or uniform registers, not threadIdx/blockIdx.
+5. **Switch statements are worst-case** — each case serializes. Prefer branchless select or lookup tables.
+6. **For different instruction types**: predication still works (both paths execute under @P0/@!P0), cost = slowest path + 1-2 cy.
+
+
+# Memory Coalescing Effects
+
+148×8 blocks, 256 threads/block, 256 MB working set:
+
+## Read patterns
+
+| Pattern | GB/s | % of peak | Notes |
+|---------|-----:|:---------:|-------|
+| Coalesced (stride-1) | 5308 | 72% | Good but not peak |
+| Stride-2 | 6111 | 83% | *Faster* — better L2 utilization? |
+| Stride-4 | 6174 | 83% | |
+| Stride-8 | 6002 | 81% | |
+| Stride-32 | 6175 | 83% | No penalty! |
+| **Random** | **139** | **2%** | Catastrophic — every load misses |
+| Vectorized (float4) | 6272 | 85% | Best — widest loads |
+
+**Stride patterns don't degrade bandwidth on B300!** Even stride-32 (worst case for older GPUs) gives 83% of peak. This is because B300's L2 cache handles sector-level (32B) requests efficiently, and the 128B cache line is fetched on first access regardless of stride. The "wasted" bytes in each cache line are available for subsequent accesses.
+
+**Random access is catastrophic** (2% of peak) — each 4B load fetches a full 128B cache line but uses only 4B (3% utilization), and every access misses L1.
+
+## Write patterns
+
+| Pattern | GB/s | Notes |
+|---------|-----:|-------|
+| Coalesced write | 5834 | Good |
+| Stride-2 write | 2947 | **50% degraded!** |
+| Stride-32 write | 6355 | Recovers (!) |
+
+Writes show different behavior: stride-2 loses 50% because it triggers read-modify-write on L2 cache lines (each line is only partially written, requiring a read first). Stride-32 recovers because each warp writes exactly 1 word per cache line, and the hardware can optimize this with write combining.
+
