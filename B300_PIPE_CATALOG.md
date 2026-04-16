@@ -14323,3 +14323,61 @@ Single block on one SM, dependent FMA chain per warp:
 
 **Implication**: For compute-bound kernels with dependent chains, 8 warps/SM is the sweet spot for per-warp latency. More warps improve total throughput but at the cost of individual warp responsiveness. For latency-sensitive work (single-request inference), prefer fewer warps.
 
+
+# TLB Size and Page Walk Cost
+
+Pointer chase at page-aligned strides, single warp:
+
+## 64 KB page stride
+
+| Pages touched | Address range | cy/chase | Notes |
+|--------------:|---------:|--------:|-------|
+| 4 | 256 KB | 38 | L1 TLB hit |
+| 64 | 4 MB | 39 | L1 TLB hit |
+| 256 | 16 MB | 42 | L1 TLB starting to pressure |
+| 512 | 32 MB | 46 | |
+| 1024 | 64 MB | 53 | L1 TLB edge |
+| **2048** | **128 MB** | **518** | **TLB MISS (10× cliff)** |
+| 4096 | 256 MB | 678 | L2 TLB / page walk |
+| 8192 | 512 MB | 804 | |
+| 16384 | 1 GB | 971 | Full page table walk |
+
+## 2 MB page stride
+
+| Pages touched | Address range | cy/chase |
+|--------------:|---------:|--------:|
+| 4 | 8 MB | 38 |
+| 64 | 128 MB | 39 |
+| 256 | 512 MB | 42 |
+| 512 | 1 GB | 46 |
+
+**No TLB miss with 2 MB pages** up to 1 GB address range. The TLB handles 512 × 2MB = 1 GB effortlessly.
+
+## Key findings
+
+- **L1 TLB ≈ 1024 entries** covering ~64 MB with 64 KB pages
+- **TLB miss penalty: 10× (53 → 518 cy)** — roughly equal to L2 cache access latency
+- **2 MB huge pages extend TLB coverage to ≥1 GB** without misses
+- `cudaMalloc` appears to use 64 KB page granularity by default, but the TLB handles 2 MB strides identically — the GPU may transparently use large pages for large allocations
+
+**Practical**: For random-access workloads spanning >64 MB, TLB misses add ~400+ cy overhead per access. Use `cudaMemAdvise(cudaMemAdviseSetPreferredLocation)` or explicit large-page allocations to extend TLB coverage.
+
+
+# Power Consumption Under Load
+
+NVML measurements during sustained workloads (TDP = 1100W):
+
+| Workload | Avg power | Peak power | Temp | vs idle |
+|----------|----------:|-----------:|-----:|--------:|
+| **Idle** | 182 W | 183 W | 38°C | — |
+| FMA burn (all SMs) | 235 W | 249 W | 40°C | +53 W |
+| Memory stream | 199 W | 249 W | 38°C | +17 W |
+| **cuBLAS BF16 GEMM** | 252 W | **448 W** | 39°C | +70 W avg |
+| Cooling (post-load) | 182 W | 182 W | 39°C | — |
+
+**B300 idle power is 182W** — high base power reflecting the large die and HBM3E stack. Under FMA compute burn, only +53W incremental. cuBLAS GEMM peaks at 448W but averages only 252W (gaps between kernel launches).
+
+The 1100W TDP is achievable with full tensor core utilization + HBM streaming simultaneously (real training workloads). These short benchmarks don't sustain enough utilization to reach it.
+
+**Power efficiency**: cuBLAS BF16 at 448W peak delivering ~920 TFLOPS = **2.05 TFLOPS/W** peak. At average 252W: 3.66 TFLOPS/W (but avg includes idle gaps).
+
