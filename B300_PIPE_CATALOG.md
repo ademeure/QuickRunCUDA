@@ -14887,6 +14887,8 @@ The compute GEMM achieves **530× more FLOP per tensor instruction** because its
 
 **The decode GEMM is architecturally wasteful**: 69% ALU overhead for 18% useful tensor work, all to stream 470 MB of data that each thread touches once. This is the fundamental M=1 inefficiency — the tensor core is barely utilized while the memory controller works at full capacity.
 
+**Achieved occupancy: 10.17%** (vs 12.5% theoretical) — the SM is idle ~19% of the time between block waves. Despite this low occupancy, the kernel saturates HBM bandwidth.
+
 
 # Cross-Pipe Dependency Latency Table
 
