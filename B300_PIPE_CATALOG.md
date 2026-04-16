@@ -15386,6 +15386,37 @@ Split Llama-70B gate projection weight: 470 MB → 235 MB per GPU.
 
 **Mitigation**: Fuse KV append into the attention kernel (avoids 80 separate launches). Batch all layers' glue ops. Use cudaGraph for repetitive small kernels. The goal is to eliminate the ~6 µs per-launch tax.
 
+
+# Speculative Decoding Economics
+
+## Verification cost is constant for K≥3
+
+| Draft tokens (K) | Verify µs (1 GEMM) | K × single µs | Speedup |
+|------------------:|-------------------:|--------------:|--------:|
+| 1 | 74 | 74 | 1.0× |
+| 3 | 527 | 222 | — |
+| 7 | 524 | 518 | 1.0× |
+| 9 | 525 | 666 | **1.3×** |
+| 15 | 516 | 1110 | **2.2×** |
+
+**Verification cost is ~520 µs regardless of K** (for K≥3). Additional draft tokens are free in the verification GEMM because it's memory-bound (loading the same weight matrix).
+
+## Speculative decode throughput (Llama-8B draft → Llama-70B verify)
+
+Draft: 7 ms/token (Llama-8B). Verify: 58.3 ms per step (Llama-70B, 80 layers).
+
+| K | Accept rate | Accepted/step | Total time | **tok/s** | **vs baseline** |
+|--:|:----------:|:----------:|----------:|----------:|:---------:|
+| 3 | 80% | 3.4 | 79 ms | 43 | 2.5× |
+| 5 | 80% | 5.0 | 93 ms | 54 | **3.2×** |
+| **7** | **80%** | **6.6** | **107 ms** | **62** | **3.6×** |
+| 9 | 80% | 8.2 | 121 ms | 68 | **4.0×** |
+| 7 | 90% | 7.3 | 107 ms | **68** | **4.0×** |
+
+**Speculative decoding at K=7 with 80% acceptance gives 3.6× throughput** (62 vs 17 tok/s). This is the single biggest throughput multiplier for latency-sensitive single-user serving.
+
+**Optimal K** depends on draft model speed and acceptance rate. Diminishing returns beyond K~9 because draft overhead (7 ms/token) grows while verify is constant.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
