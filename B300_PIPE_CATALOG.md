@@ -13797,3 +13797,95 @@ CUB reduction achieves **92% of HBM bandwidth** at 256M elements — extremely w
 
 **Practical**: CUB reductions are near-optimal for 16M+ elements. For smaller inputs (<1M), the launch overhead dominates — consider fusing the reduction with the producing kernel.
 
+
+# CUB Prefix Sum (Scan) and Sort
+
+## ExclusiveSum FP32
+
+| Elements | GB/s (R+W) | ms/scan |
+|---------:|-----------:|--------:|
+| 64K | 63 | 0.008 |
+| 1M | 802 | 0.011 |
+| 16M | 3054 | 0.044 |
+| 64M | 3662 | 0.147 |
+| 256M | **3830** | 0.561 |
+
+Scan achieves **52% of HBM peak** (counting both read + write). Lower than reduction (92%) because scan has a multi-pass structure with global synchronization between passes.
+
+## RadixSort (32-bit keys)
+
+| Elements | Mkeys/s | ms/sort | Temp storage |
+|---------:|--------:|--------:|:------------:|
+| 64K | 1157 | 0.057 | 276 KB |
+| 1M | 14466 | 0.073 | 4.3 MB |
+| 16M | 49645 | 0.338 | 69 MB |
+| 64M | **57410** | 1.169 | 277 MB |
+
+Peak **57.4 Gkeys/s** at 64M elements. RadixSort uses ~8 passes over the data (32/4 bits per pass), so effective HBM traffic is ~8× input size. 57.4 Gkeys/s × 4 B × 8 passes ≈ 1.8 TB/s read + write, which is ~25% of HBM.
+
+**Temp storage warning**: RadixSort needs ~4× the input size for temporaries (277 MB for 64M × 4B keys). Plan GPU memory accordingly.
+
+## Histogram (256 bins, uint8)
+
+| Elements | GB/s | ms/histogram |
+|---------:|-----:|-------------:|
+| 1M | 246 | 0.004 |
+| 16M | 2646 | 0.006 |
+| 256M | **4392** | 0.061 |
+
+59% of HBM peak at 256M elements. Histogram is read-only with scatter-atomic bin updates — the 59% reflects the overhead of atomic contention on 256 bin counters.
+
+
+# L2 Cache Persistence (AccessPolicyWindow)
+
+B300: L2 = 126 MB, max persisting = **79 MB** (63% of L2 reservable).
+
+In simple benchmarks (sequential hot reads with cold interleaving), **persistence showed no measurable benefit** (0-3% at best). This is because:
+1. For data ≤ 16 MB: naturally stays in L2 even without persistence
+2. For data > L2: persistence can't help (exceeds capacity)
+3. The LRU replacement policy is already smart enough to keep recently-used data
+
+**When persistence would help**: Multi-tenant GPU sharing (MPS) or highly concurrent streams where one stream's working set would evict another's critical data. The streaming/persisting hints control eviction priority, not caching behavior.
+
+
+# cuBLAS Handle & Algorithm Selection Cost
+
+| Operation | Cost | Notes |
+|-----------|-----:|-------|
+| `cublasCreate` + `Destroy` | **1778 µs** (1.8 ms) | Full library init — expensive! |
+| `cublasLtCreate` + `Destroy` | **1.4 µs** | Thin handle — 1270× cheaper |
+| `cublasLtMatmulAlgoGetHeuristic` | 40-67 µs | Returns 8 algorithm candidates |
+
+**Critical**: `cublasCreate` costs 1.8 ms — never create/destroy per inference request. Create once at startup and reuse. If you only need `cublasLt`, create the Lt handle instead (1.4 µs).
+
+## Heuristic search is shape-independent
+
+| Shape (M×N×K) | Search time | Algos |
+|---------------|------------:|------:|
+| 128×128×128 | 57.5 µs | 8 |
+| 1024³ | 42.1 µs | 8 |
+| 4096³ | 39.7 µs | 8 |
+| 8192³ | 39.9 µs | 8 |
+| 4096×4096×128 | 39.4 µs | 8 |
+| 128×4096×4096 | 61.9 µs | 8 |
+
+All shapes return 8 candidates in ~40-60 µs — the heuristic is a table lookup, not trial-and-error. For per-request inference where shapes don't change, cache the selected algorithm to skip the 40 µs search.
+
+
+# NVML Query Performance
+
+All queries return in **~0.1 µs** — essentially free. Safe to poll at kHz rates for monitoring.
+
+## System Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| GPU temp (idle) | 40°C |
+| Idle power | 183 W |
+| Power limit (default/enforced) | 1100 W |
+| Power limit range | 200-1100 W |
+| SM clock (idle) | 1800 MHz |
+| Memory clock | 3996 MHz |
+| Total HBM3E memory | **288.4 GB** |
+| Memory used (driver) | 2.4 GB |
+
