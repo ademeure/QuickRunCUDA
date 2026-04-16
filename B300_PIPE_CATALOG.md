@@ -14750,6 +14750,43 @@ The NVML reports Gen6 x16 link, but measured bandwidth (~58 GB/s) is consistent 
 2. **Large batch sizes** (32-128+) where compute-to-memory ratio favors tensor cores
 3. **Tensor parallelism** across multiple GPUs (split weight matrices)
 
+
+# Transformer Kernel Micro-Latencies
+
+## RMSNorm (BF16, single row)
+
+| Dimension | Threads | µs/row |
+|----------:|--------:|-------:|
+| 4096 | 1024 | 9.8 |
+| **8192** | **1024** | **10.8** |
+| 8192 | 512 | 19.6 |
+| 8192 | 256 | 32.9 |
+| 16384 | 1024 | 19.6 |
+
+**RMSNorm at dim=8192 takes 10.8 µs — of which ~10 µs is launch overhead.** The actual norm computation (sum-of-squares + rsqrt + multiply) adds only ~0.8 µs. This is entirely **launch-overhead limited** for single-row decode.
+
+## Batched RMSNorm (dim=8192, 512 threads)
+
+| Batch | µs (total) | GB/s (R+W) |
+|------:|-----------:|-----------:|
+| 1 | 10.3 | 3 |
+| 8 | 10.3 | 26 |
+| 32 | 10.3 | 102 |
+| 128 | 10.3 | 409 |
+
+**Batched RMSNorm has constant ~10 µs cost** from batch=1 to batch=128 — all 128 rows fit in a single launch wave across 148 SMs. The data (4 MB at batch=128) is L2-resident.
+
+## RoPE (rotary position embedding)
+
+| Head dim | µs/head |
+|---------:|--------:|
+| 128 | **8.5** |
+| 256 | 8.5 |
+
+**RoPE at 8.5 µs is 100% launch overhead** — the sin/cos computation is trivial.
+
+**Implication for inference**: Elementwise ops (RMSNorm, RoPE, SiLU) contribute ~30-40 µs per layer, almost entirely from CUDA kernel launch overhead (~10 µs/kernel × 3-4 kernels). cudaGraph could save ~20 µs/layer here (4.15 µs graph launch vs ~10 µs direct), but this is small compared to the ~300+ µs GEMM cost.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
