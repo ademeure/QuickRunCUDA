@@ -14787,6 +14787,52 @@ The NVML reports Gen6 x16 link, but measured bandwidth (~58 GB/s) is consistent 
 
 **Implication for inference**: Elementwise ops (RMSNorm, RoPE, SiLU) contribute ~30-40 µs per layer, almost entirely from CUDA kernel launch overhead (~10 µs/kernel × 3-4 kernels). cudaGraph could save ~20 µs/layer here (4.15 µs graph launch vs ~10 µs direct), but this is small compared to the ~300+ µs GEMM cost.
 
+
+# Embedding & LM Head Latency
+
+Llama-3 config: vocab=128256, hidden=8192, embedding table = 2.1 GB.
+
+## Embedding lookup
+
+| Tokens | µs | Notes |
+|-------:|---:|-------|
+| 1 | 4.2 | Launch overhead (reads 16 KB) |
+| 8 | 4.2 | Same cost — all L2-cached |
+| 128 | 30.8 | 2 MB read at 68 GB/s |
+
+Embedding lookup is trivially fast for decode (4 µs for 1 token).
+
+## LM Head projection (hidden → vocab)
+
+| Tokens | µs | TFLOPS | Notes |
+|-------:|---:|-------:|-------|
+| 1 | **707** | 3.0 | **Weight = 2.1 GB at ~3 TB/s** |
+| 8 | 725 | 23.2 | Same (weight-dominated) |
+| 32 | 712 | 94.5 | Same even at batch=32! |
+
+**The LM head is the single most expensive GEMM** in a transformer — 2.1 GB weight matrix takes ~707 µs to load. This is **3.2× the cost of a single Gate projection** (74 µs, 448 MB). For Llama-70B with 80 layers, the LM head adds 2.8% to total time. For smaller models (Llama-8B, 32 layers), it can be 10-15%.
+
+## Argmax over logits
+
+| Vocab size | µs |
+|-----------:|---:|
+| 128256 | **55** |
+
+Reading 500 KB of FP32 logits and finding the max.
+
+## Full Llama-70B decode breakdown (BF16, single GPU, ctx=2048)
+
+| Component | µs | % |
+|-----------|---:|--:|
+| Embedding | 4 | 0.0% |
+| 80 layers × ~345 µs | 27600 | 96.1% |
+| LM Head | 707 | 2.5% |
+| Argmax | 55 | 0.2% |
+| **Total** | **~28400** | 100% |
+| **Tokens/sec** | **~35** | |
+
+The 80 transformer layers dominate at 96%. FP8 weights would bring this to ~17 ms → **~59 tok/s**.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
