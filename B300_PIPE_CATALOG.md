@@ -14659,6 +14659,43 @@ Prefill QK^T achieves **671 TFLOPS** at 2048² — compute-bound and well-optimi
 
 These estimates include attention compute but exclude embedding lookup and final LM head projection. Real frameworks with optimized FlashAttention may differ.
 
+
+# Startup & Operational Overhead
+
+## CUDA initialization
+
+| Operation | Cost |
+|-----------|-----:|
+| **First cudaMalloc (CUDA context init)** | **218 ms** |
+| `cublasCreate` | 1.8 ms |
+| `cublasLtCreate` | 1.4 µs |
+
+The 218 ms CUDA initialization is the one-time cost at application startup. Amortized over thousands of inference requests, it's negligible.
+
+## cuBLAS workspace size
+
+Workspace size from 0 to 256 MB has **NO effect** on BF16 4096³ GEMM throughput (~1730 TFLOPS throughout). cuBLAS 13.2 handles workspace internally for standard GEMM shapes. No tuning needed.
+
+## cuBLAS first-call overhead
+
+| Call | Time |
+|------|-----:|
+| First GEMM (cold) | 0.086 ms |
+| Second GEMM (cached) | 0.086 ms |
+
+**Zero first-call overhead** — cuBLAS selects algorithms without trial runs.
+
+## cudaGraph for inference
+
+| Method | µs/layer (10 layers × 8 kernels) | Speedup |
+|--------|----------------------------------:|--------:|
+| Direct launch | 546 | — |
+| cudaGraph | 538 | **1.02×** |
+
+**cudaGraph provides only 2% speedup for GEMM-dominated inference.** The GEMM execution (~500+ µs) dwarfs the launch overhead (~32 µs for 8 kernels). Graph launch itself costs 4.15 µs — same as direct kernel launch.
+
+**When cudaGraph helps**: many tiny kernels (elementwise ops, layer norm sequences) where launch overhead is a significant fraction of total time. For GEMM-heavy layers, it's not worth the complexity.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
