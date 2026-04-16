@@ -197,3 +197,23 @@ high-throughput FMA pipe (via IMAD × 0x10000). f16→f32 requires actual expone
 which runs on the low-throughput ALU pipe via HADD2.F32.
 
 For ALU-bound kernels: bf16 input ≈ 50% less ALU for extraction vs f16 input.
+
+## Final NC=2 Results (6.04 TB/s, 85% of peak)
+
+All optimizations combined:
+- CONTIGUOUS_SCALES: eliminates ~24 ALU swizzle ops, drops regs 63→44
+- Fused quant_dequant_fused: keeps .b8 in asm, eliminates 24 LOP3
+- Combined scale constants: folds 2 sequential FMULs into 1
+- s_round==0 check removed: eliminates 4 FSETP + 4 FSEL
+- Interleaved NC=2 candidates: FFMA2 cross-candidate error accumulation
+
+SASS: 358 instructions, 44 regs, 78 ALU at 69%, 162 FMA at 48%, DRAM at 78%
+
+Best config: `-H "#define CONTIGUOUS_SCALES #define MIN_BLOCKS_PER_SM 0"` -t 64
+
+Approaches that DON'T help further:
+- bf16x2 absmax: adds 9 ALU without removing any (extraction still needed)
+- f16x2 error path: HFMA2 runs on ALU, not separate pipe
+- f16 input: HADD2.F32 for f16→f32 is all-ALU (worse than bf16's IMAD+LOP3 split)
+- SASS deletion: adj_m0 (44 regs) doesn't tolerate position shifts
+- Pack-only-winner: compiler generates same total work either way
