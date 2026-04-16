@@ -52,6 +52,23 @@ static __device__ __forceinline__ float2 fmul_ftz_f32x2(float a0, float a1,
     return {r0, r1};
 }
 
+// Paired fma.rn.ftz.f32x2: {r0,r1} = {a0,a1}*{b0,b1} + {c0,c1}
+// Keeps accumulator in u64 to avoid pack/unpack overhead per iteration.
+static __device__ __forceinline__ void ffma_ftz_f32x2_acc(
+    unsigned long long& acc, float a0, float a1, float b0, float b1) {
+    asm("{ .reg .b64 a, b;           \n\t"
+        "  mov.b64 a, {%2, %3};      \n\t"
+        "  mov.b64 b, {%4, %5};      \n\t"
+        "  fma.rn.ftz.f32x2 %0, a, b, %1; }"
+        : "=l"(acc) : "l"(acc), "f"(a0), "f"(a1), "f"(b0), "f"(b1));
+}
+
+static __device__ __forceinline__ float2 unpack_f32x2(unsigned long long v) {
+    float2 r;
+    asm("mov.b64 {%0, %1}, %2;" : "=f"(r.x), "=f"(r.y) : "l"(v));
+    return r;
+}
+
 static __device__ __forceinline__ long long sf_out_offset(int mIdx, int kIdx, int numKTiles) {
     int mTileIdx = mIdx >> 7;
     int outerM   = mIdx & 31;
@@ -122,19 +139,91 @@ static __device__ __forceinline__ void process_group(
         absmax = fmaxf(absmax, fabsf(x_f32[k]));
     }
 
-    constexpr float cand_all[2] = { 6.f, 4.f };
+    float inv_scale = rcp_approx_ftz(scale);
+
+#if NUM_CANDIDATES == 2
+    // ===== NC=2 interleaved: both candidates computed in lockstep =====
+    // Candidate-axis f32x2: .x = candidate 0 (val=6), .y = candidate 1 (val=4)
+    // This lets us use FFMA2 for error accumulation (d*d) across candidates,
+    // shifting work from ALU→FMA pipe and reducing total instruction count.
+
+    // Compute both factors
+    float s_group_0 = absmax * ((1.f/6.f) * SCALE_OVERRIDE);
+    float s_group_1 = absmax * ((1.f/4.f) * SCALE_OVERRIDE);
+    unsigned char fp8_0, fp8_1;
+    float s_round_0 = roundtrip_e4m3(s_group_0 * inv_scale, fp8_0);
+    float s_round_1 = roundtrip_e4m3(s_group_1 * inv_scale, fp8_1);
+    if (s_round_0 == 0.f) s_round_0 = 1.f;
+    if (s_round_1 == 0.f) s_round_1 = 1.f;
+    float factor_0 = rcp_approx_ftz(s_round_0 * scale);
+    float factor_1 = rcp_approx_ftz(s_round_1 * scale);
+
+    // Quantize: scale by both factors, convert to e2m1x2
+    unsigned char bits_0[E2M1_PAIRS], bits_1[E2M1_PAIRS];
+    #pragma unroll
+    for (int k = 0; k < VSIZE; k += 2) {
+        // Pack candidates into .x/.y: x*factor_0 and x*factor_1
+        float2 sx0 = fmul_ftz_f32x2(x_f32[k],   x_f32[k],   factor_0, factor_1);
+        float2 sx1 = fmul_ftz_f32x2(x_f32[k+1], x_f32[k+1], factor_0, factor_1);
+        bits_0[k >> 1] = f32x2_to_e2m1x2(sx0.x, sx1.x);  // candidate 0
+        bits_1[k >> 1] = f32x2_to_e2m1x2(sx0.y, sx1.y);  // candidate 1
+    }
+
+    // Error: compute both candidates' reconstruction error with FFMA2 accumulation.
+    // err_pair.x = candidate 0 error, err_pair.y = candidate 1 error
+    float descale_0 = s_round_0 * scale;
+    float descale_1 = s_round_1 * scale;
+    half  neg_ds0 = static_cast<half>(-descale_0);
+    half  neg_ds1 = static_cast<half>(-descale_1);
+    short ns0 = *reinterpret_cast<short*>(&neg_ds0);
+    short ns1 = *reinterpret_cast<short*>(&neg_ds1);
+
+    unsigned long long err_pair = 0;
+    #pragma unroll
+    for (int k = 0; k < E2M1_PAIRS; ++k) {
+        half2 dq0 = e2m1x2_to_f16x2(bits_0[k]);
+        half2 dq1 = e2m1x2_to_f16x2(bits_1[k]);
+        short d0x = *reinterpret_cast<short*>(&dq0.x);
+        short d0y = *reinterpret_cast<short*>(&dq0.y);
+        short d1x = *reinterpret_cast<short*>(&dq1.x);
+        short d1y = *reinterpret_cast<short*>(&dq1.y);
+        float e0_c0, e0_c1, e1_c0, e1_c1;
+        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
+            : "=f"(e0_c0) : "h"(d0x), "h"(ns0), "f"(x_f32[2*k]));
+        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
+            : "=f"(e0_c1) : "h"(d1x), "h"(ns1), "f"(x_f32[2*k]));
+        ffma_ftz_f32x2_acc(err_pair, e0_c0, e0_c1, e0_c0, e0_c1);
+
+        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
+            : "=f"(e1_c0) : "h"(d0y), "h"(ns0), "f"(x_f32[2*k+1]));
+        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
+            : "=f"(e1_c1) : "h"(d1y), "h"(ns1), "f"(x_f32[2*k+1]));
+        ffma_ftz_f32x2_acc(err_pair, e1_c0, e1_c1, e1_c0, e1_c1);
+    }
+    float2 errs = unpack_f32x2(err_pair);
+
+    // Select best candidate
+    if (errs.y < errs.x) {
+        out_lo   = *reinterpret_cast<int*>(bits_1);
+        out_hi   = *reinterpret_cast<int*>(bits_1 + 4);
+        out_fp8s = fp8_1;
+    } else {
+        out_lo   = *reinterpret_cast<int*>(bits_0);
+        out_hi   = *reinterpret_cast<int*>(bits_0 + 4);
+        out_fp8s = fp8_0;
+    }
+
+#else
+    // ===== Generic NC path (NC=1 or NC>=3) =====
+    constexpr float cand_all[4] = { 6.f, 4.f, 3.f, 2.f };
     QuantResult q_vec[NUM_CANDIDATES];
     float err_vec[NUM_CANDIDATES];
-
-    // Hoist inv_scale out of the candidate loop — scale is constant but
-    // rcp_approx_ftz uses asm which prevents the compiler from CSE'ing.
-    float inv_scale = rcp_approx_ftz(scale);
 
     #pragma unroll
     for (int i = 0; i < NUM_CANDIDATES; ++i) {
         QuantResult& q = q_vec[i];
         const float inv_val = 1.f / cand_all[i];
-        float s_group   = absmax * (inv_val * SCALE_OVERRIDE);
+        float s_group = absmax * (inv_val * SCALE_OVERRIDE);
         unsigned char s_as_fp8;
         float s_round = roundtrip_e4m3(s_group * inv_scale, s_as_fp8);
         if (s_round == 0.f) s_round = 1.f;
@@ -183,6 +272,7 @@ static __device__ __forceinline__ void process_group(
             out_fp8s = q_vec[i].fp8s;
         }
     }
+#endif
     #undef GXF
 }
 
