@@ -9273,6 +9273,60 @@ Square GEMM (M=N=K), warm cuBLAS:
 
 **1500³ = only 6.4% MFU** — cuBLAS has a pathological tile mismatch at this size. Always pad to power-of-2 or multiples of 256 for best performance.
 
+### cuBLAS with REAL model shapes (measured, BF16, cuBLAS 13.4)
+
+**Llama-3-70B layers (d=8192, FFN=28672):**
+
+| Layer | b=1 | b=32 | b=128 | s=1024 | s=4096 |
+|-------|:---:|:----:|:-----:|:------:|:------:|
+| QKV proj (8192→8192) | 6 T (0.2%) | 178 T (7%) | 686 T (28%) | 1882 T (76%) | **2233 T (91%)** |
+| gate_up (8192→28672) | 6 T (0.2%) | 204 T (8%) | 768 T (31%) | 1953 T (79%) | **2215 T (90%)** |
+| down (28672→8192) | 6 T (0.3%) | 184 T (7%) | 709 T (29%) | 1969 T (80%) | 1985 T (81%) |
+
+**Mixtral-8x7B expert shapes (d=4096, FFN=14336):**
+
+| Tokens/expert | gate_up TFLOPS | MFU |
+|--------------:|---------------:|----:|
+| 8 | **42** | **1.7%** |
+| 32 | 171 | 6.9% |
+| 128 | 618 | 25.1% |
+
+**MoE expert GEMMs at 8 tokens = 1.7% MFU** — the fundamental inefficiency of MoE inference at small batch. Fix: larger batch or expert parallelism.
+
+**Llama-3-70B FP8 E4M3 (via cublasLt):**
+
+| Layer | b=1 | b=32 | b=128 | s=1024 | s=4096 |
+|-------|:---:|:----:|:-----:|:------:|:------:|
+| QKV proj | 14 T (0.3%) | 284 T (6%) | 1805 T (**37%**) | 3551 T (72%) | **4396 T (89%)** |
+| gate_up | 11 T (0.2%) | 349 T (7%) | 1356 T (28%) | 3799 T (77%) | **4420 T (90%)** |
+| down | 12 T (0.2%) | 322 T (7%) | 1312 T (27%) | 3826 T (78%) | 3916 T (80%) |
+
+**FP8 vs BF16 speedup (same shapes):**
+
+| Batch/seq | FP8 TFLOPS | BF16 TFLOPS | Ratio |
+|:---------:|:----------:|:-----------:|:-----:|
+| b=1 | 14 | 6 | 2.3× |
+| b=128 | 1805 | 686 | **2.6×** |
+| s=4096 | 4396 | 2233 | **2.0×** |
+
+FP8 approaches the theoretical 2× over BF16 at large M (prefill). At batch=1: both memory-bound, FP8 advantage = 2× from half the weight bytes.
+
+**Mixtral expert FP8 E4M3:**
+
+| Tokens/expert | TFLOPS | MFU |
+|--------------:|-------:|----:|
+| 8 | 20 | **0.4%** |
+| 32 | 361 | 7.3% |
+| 128 | 2003 | 40.6% |
+
+**GQA attention GEMMs (seq=4096, head_dim=128):**
+
+| Operation | Shape | TFLOPS | MFU |
+|-----------|:-----:|-------:|----:|
+| QK^T (1 head) | 4096×128×128 | 37 | 1.5% |
+| QK^T (batched) | 4096×4096×128 | 563 | 22.8% |
+| Attn×V | 128×4096×4096 | 716 | 29.0% |
+
 ### cuBLAS FP8 E4M3 GEMM (via cublasLt, CUDA 13.2)
 
 | M=N=K | TFLOPS | MFU (of 4929) |
