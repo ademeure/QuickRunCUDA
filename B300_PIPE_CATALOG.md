@@ -14241,3 +14241,25 @@ For small loops (≤~200 bytes), the instruction buffer caches the loop body and
 
 **Practical**: Keep hot loops under ~500 bytes (32 SASS instructions) to stay in the instruction buffer. For larger compute bodies, the 8.5 cy/FMA sustained rate means instruction fetch bandwidth of ~1.9 bytes/cycle per warp.
 
+
+# Global Atomic Scope Effects
+
+Single warp (32 threads), INT32 atomicAdd to global memory (L2-resident):
+
+## Scope has NO effect on relaxed atomics
+
+| Scope | No contention (cy) | 32-way contention (cy) |
+|-------|-------------------:|-----------------------:|
+| `relaxed.cta` | 1169 | 1629 |
+| `relaxed.gpu` | 1169 | 1629 |
+| `relaxed.sys` | 1169 | 1629 |
+| `acq_rel.gpu` | **3242** | 3292 |
+
+**All three relaxed scopes (.cta, .gpu, .sys) have IDENTICAL cost.** Global atomics always route to L2 regardless of scope — the scope only affects memory ordering visibility, not the physical path. This confirms that B300 has a unified L2-based atomic pipeline.
+
+**`acq_rel` is 2.8× more expensive** than `relaxed` — the acquire-release semantics inject a fence.
+
+**Contention overhead**: +39% for relaxed (1169→1629 cy), but only +2% for acq_rel (already serialized by fence).
+
+**1169 cy per global atomic** = ~575 ns. Compare to L2 load latency (~76 cy) — the atomic RMW pipeline adds ~1100 cy on top of the basic L2 access.
+
