@@ -16161,3 +16161,18 @@ Single warp streaming through 256 MB array with different access patterns:
 
 **Broadcast is 7.5× faster** — all threads reading the same address is optimal (L1 serves once, broadcasts). **Reverse thread order has zero penalty** — the hardware doesn't care about thread-to-address mapping within a coalesced range.
 
+
+# Block Turnover Latency
+
+When a thread block finishes and its SM becomes available:
+
+| Metric | Value |
+|--------|------:|
+| **Block turnover** | **350 cy (0.2 µs)** |
+| vs kernel launch | 23× faster (4.6 µs per launch) |
+
+**The SM accepts a new block within 350 cycles** of the previous block exiting — near-instant reuse. This means:
+- SM utilization is effectively 100% for workloads with enough blocks
+- Intra-kernel block scheduling (0.2 µs) is 23× faster than inter-kernel launch (4.6 µs)
+- Persistent kernels with block queues have negligible scheduling overhead
+
