@@ -15368,6 +15368,24 @@ Split Llama-70B gate projection weight: 470 MB → 235 MB per GPU.
 
 **TP=2 is better for capacity than speed**: doubles available KV cache memory (216 → 432 concurrent requests) with only 18% decode improvement. For decode speed, **FP8 (1.71× chain) is more effective than TP=2 (1.18×) and uses only 1 GPU.**
 
+
+# Inference Glue Operation Latency
+
+| Operation | Data size | µs | Notes |
+|-----------|----------:|---:|-------|
+| KV cache append (all 16 KV slots) | 4 KB | **6.3** | Launch overhead |
+| Token gather (MoE, 8 tokens) | 64 KB | 8.5 | Launch overhead |
+| Token gather (64 tokens) | 512 KB | **8.5** | Same! (size-independent) |
+| D2D copy (512 B - 128 KB) | any | **6.3** | Always launch overhead |
+
+**All glue operations cost ~6-9 µs regardless of data size** — entirely launch-overhead-dominated. The actual data movement is trivial.
+
+**Hidden overhead in naive implementations**:
+- KV append per token × 80 layers: 6.3 × 80 = **504 µs** (69% of layer pipeline cost!)
+- MoE token routing per layer (2 gather + 2 scatter): 4 × 8.5 = **34 µs**
+
+**Mitigation**: Fuse KV append into the attention kernel (avoids 80 separate launches). Batch all layers' glue ops. Use cudaGraph for repetitive small kernels. The goal is to eliminate the ~6 µs per-launch tax.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
