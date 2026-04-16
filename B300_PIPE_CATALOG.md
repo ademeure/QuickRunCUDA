@@ -14747,6 +14747,38 @@ All three engines run completely independently. H2D and D2H complete at full PCI
 The 4.3 µs per kernel launch is the irreducible host-side overhead. For inference pipelines with dozens of kernels per request, this adds ~50-100 µs total — negligible for most models but significant for latency-critical single-token decode.
 
 
+# L2 Cache Bandwidth Scaling
+
+## Small working set: L2 slice bottleneck (2 MB)
+
+| SMs | Total BW (GB/s) | Per-SM (GB/s) |
+|----:|----------------:|--------------:|
+| 1 | 204 | 204 |
+| 4 | 406 | 101 |
+| 8 | **509** | 64 |
+| 16+ | **509** | <32 |
+
+A 2 MB working set fits in a few L2 slices. Total BW caps at **~500 GB/s** regardless of SM count — the L2 slice serving the data is the bottleneck. This is the **L2 slice bandwidth limit**.
+
+## Large working set: full L2 crossbar (64 MB)
+
+| SMs | Total BW (GB/s) | Per-SM (GB/s) |
+|----:|----------------:|--------------:|
+| 1 | 98 | 98 |
+| 4 | 1090 | 272 |
+| 16 | 3661 | 229 |
+| 37 | 6486 | 175 |
+| 74 | 8074 | 109 |
+| **148** | **8508** | **57** |
+
+A 64 MB working set spreads across all L2 slices. Total L2 read bandwidth reaches **8.5 TB/s — 21% higher than HBM peak (7.0 TB/s)** because L2 is on-chip SRAM. Near-linear scaling up to full chip.
+
+**Practical implications**:
+1. **KV cache in L2**: If KV cache fits in L2 (~126 MB), attention achieves 8.5 TB/s read — 21% faster than DRAM-resident KV.
+2. **Small hot tensors**: Keep frequently-accessed small buffers (embeddings, scales) under 2 MB per L2 slice for 200+ GB/s per SM, or distribute across 64+ MB for full crossbar BW.
+3. **L2 slice saturation**: If many SMs access the same small data region, L2 slice contention caps bandwidth at ~500 GB/s — interleave access across address space.
+
+
 # HFMA2 (f16×2 FMA) Pipeline
 
 | Measurement | cy | Notes |
