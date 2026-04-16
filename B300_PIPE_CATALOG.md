@@ -86,6 +86,31 @@ Note: Smem read peak is ~36 TB/s chip at 128 B/clk/SM — true HW peak, confirme
 
 ---
 
+### Quick reference: latency / throughput / co-issue (single warp, measured)
+
+| Operation | Latency | ILP Throughput | Pipe | Co-issues with |
+|-----------|--------:|---------------:|------|---------------|
+| FFMA (f32) | **4 cy** | 2.0 cy (2 chains) | fma h+l | ALU, LSU, MUFU-free |
+| HFMA2 (f16x2) | 4 cy | **0.5 cy** (8 chains) | fma h+l | ALU, LSU, f32 |
+| DFMA (f64) | **64 cy** | 64 cy (**no ILP**) | fp64 | FFMA, ALU free |
+| IMAD.LO (i32) | 4 cy | 2.1 cy | fma | FFMA |
+| LOP3 / SHF | 4 cy | 2.0 cy | alu | FMA, LSU |
+| MUFU (ex2) | **14 cy** | 4 cy (4 chains) | xu | — |
+| SHFL | **24 cy** | 4 cy (6 chains) | alu? | — |
+| redux.sync | 8.5 cy | 8.8 cy (not pipelined) | adu | — |
+| ld.shared | **24 cy** | — | lsu | FMA, ALU |
+| ld.global L1 | **39 cy** | 0.56 cy (8 ld) | lsu | FMA, ALU |
+| ld.global L2 | **301 cy** | — | lsu | FMA, ALU |
+| ld.global DRAM | **789 cy** | — | lsu | FMA, ALU |
+| tcgen05.mma (N=256) | 128 cy | 128 cy | tensor | cp free |
+| fence.sc.cta | 8.6 cy | — | adu | — |
+| fence.sc.gpu | 274 cy | — | adu | — |
+| __syncthreads | 12+2W cy | — | adu | — |
+
+**Quad co-issue**: FMA_heavy + FMA_lite + ALU + LSU all in one cycle (4.17 cy for 4 ops).
+
+---
+
 ## 1. Pipe topology
 
 An SM has **4 SMSPs** (sub-partitions), each dispatching up to 1 warp-instruction/cycle → aggregate dispatch cap = **4.00 warp-inst/SM/cy** (i.e. 128 thread-ops/SM/cy for non-packed ops).
