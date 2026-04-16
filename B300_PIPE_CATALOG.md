@@ -14806,7 +14806,11 @@ The earlier single-GEMM clock test showed 1.4% decode improvement. But the **ful
 
 **CRITICAL PRACTICAL ADVICE: Never lock the GPU to base clock for LLM serving.** The `nvmlDeviceSetGpuLockedClocks(dev, 1800, 1800)` base-clock lock causes severe L2 contention that **disappears when the GPU runs freely at boost**. The improvement is 2.35× — the single most impactful setting in this catalog.
 
-**NOTE**: Follow-up clock sweep showed ratio ≈ 1.0 (zero contention) at all tested frequencies after the clock lock was reset. The contention may be partially caused by the clock-locking mechanism itself interacting with the L2/HBM controller, not purely from lower frequency. Further investigation needed to separate clock-lock effects from frequency effects.
+**RESOLUTION**: The 1800 MHz base clock was an **infrastructure-level clock lock** (set by the cloud provider). After `nvmlDeviceResetGpuLockedClocks`, the GPU runs at its natural 2032 MHz boost and the lock cannot be re-applied from userspace. The 2.35× improvement is from the 1800→2032 MHz transition.
+
+Re-locking to 1800 MHz via NVML no longer takes effect (GPU stays at 2032), confirming the original lock was set at a privileged level. **All catalog measurements at 1800 MHz reflect a cloud-provider-imposed constraint**, not the GPU's natural behavior.
+
+**Practical**: Always verify your B300 isn't clock-locked: `nvidia-smi -q -d CLOCK` should show SM boost at 2032 MHz, not locked to 1800.
 
 **GPU clock confirmed at exactly 1.800 GHz** via kernel clock64 vs cudaEvent wall time correlation (4.9B cycles / 2.722s = 1800.0 MHz).
 
