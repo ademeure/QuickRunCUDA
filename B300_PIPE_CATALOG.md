@@ -16070,3 +16070,19 @@ Each pattern includes 1 FMA in the loop body (23 cy baseline):
 
 **Warp early exit (`__all_sync`) at 14 cy is cheap** — use it freely for convergence checks, sampling loops, or conditional compute skipping.
 
+
+# Warp Scheduling Fairness
+
+How evenly does the SM distribute execution time across warps doing identical work? (1M FMA per warp, single SM):
+
+| Active warps | Spread (max-min)/avg | Per-warp cy/FMA |
+|-------------:|:-------------------:|:----------:|
+| 4 | **0.00%** (±6 cy / 4.6M) | 4.56 |
+| 8 | **0.00%** | 4.63 |
+| 16 | 0.02% | 5.11 |
+| **32** | **5.82%** (±545K cy / 9.4M) | 9.37 |
+
+**4-8 warps: perfectly fair** — all warps complete within ±6 cycles of each other. At **32 warps: 5.8% spread** between fastest and slowest warp, contributing to **P99 tail latency** in serving.
+
+Per-warp FMA cost doubles from 4 to 32 warps (4.56 → 9.37 cy) — the round-robin overhead of 8 warps per scheduler. Total SM throughput still increases (16× more warps doing 2× less each = 8× more total work).
+
