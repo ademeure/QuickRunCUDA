@@ -6034,6 +6034,23 @@ Predication adds a fixed 0.19 cy per instruction, **independent of the predicate
 
 **All identical** — predicated-off loads do NOT cause LSU contention on co-scheduled warps. They effectively free the LSU pipe: warp 0's load throughput is unaffected by warp 1's predicated loads.
 
+### SASS insight: ptxas converts predicated loads to branches (VERIFIED)
+
+The SASS for `@p ld.global.f32 %0, [%1]` is NOT a predicated LDG:
+```
+@P0 BRA .skip     ← conditional branch
+LDG.E R16, [...]  ← unpredicated load (only reached if P0=false)
+.skip:
+```
+
+**ptxas lowers predicated loads as conditional branches around unpredicated loads.** This explains the binary behavior:
+- All-false → branch taken → 0.42 cy (just the branch)
+- Any active → branch NOT taken → unpredicated LDG executes → 1.33 cy
+
+There is NO true hardware predicated LDG instruction on Blackwell. The LDG is warp-wide: either all lanes load or the instruction is skipped via branch.
+
+Shared memory: @false ld.shared = DCE'd (0 cy). @false st.shared = 4.07 cy (same as real). @half ld.shared (16/32) = 1.16 cy.
+
 ### Memory bandwidth scaling with occupancy
 
 | Warps/SM | Relative BW | Per-warp efficiency |
