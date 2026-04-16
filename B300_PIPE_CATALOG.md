@@ -14096,3 +14096,69 @@ FP32 contention scaling is **super-linear** — 32-way contention costs 67× mor
 3. If FP32 atomics are unavoidable: **minimize contention** by partitioning across multiple smem locations, then reducing.
 4. For histogram-like patterns: accumulate in per-warp INT32 bins, convert to FP32 only at the end.
 
+
+# setmaxnreg — Dynamic Register Reallocation
+
+B300 supports `setmaxnreg.{inc,dec}.sync.aligned.u32 N` to dynamically resize a warp's register allocation mid-kernel. SASS instruction: `USETMAXREG.{TRY_ALLOC,DEALLOC}.CTAPOOL`.
+
+| Operation | Cost |
+|-----------|-----:|
+| `setmaxnreg.inc` + `setmaxnreg.dec` pair | **109 cy** |
+| Two inc + two dec | 113 cy (4 cy more = pipelined) |
+| Single inc or dec | ~55 cy |
+
+**55 cy per reallocation** is negligible for warp-specialization patterns:
+
+1. **Phase 1** (setup/load): low register count → high occupancy → good memory latency hiding
+2. `setmaxnreg.inc 32` (~55 cy): grab 32 more registers
+3. **Phase 2** (compute): high register count → all data in registers → maximum ALU throughput
+4. `setmaxnreg.dec 32` (~55 cy): release registers back to CTA pool
+5. **Phase 3** (store): low registers again
+
+**Use case**: Prefetch/compute/store pipelines where the compute phase needs many accumulators but the load/store phases only need a few pointers. The 110 cy total overhead is <0.1% of any compute phase worth pipelining.
+
+
+# Barrier & Fence Cost Summary
+
+Single-block measurements, idle GPU:
+
+## __syncthreads scaling with thread count
+
+| Threads | Warps | cy/sync |
+|--------:|------:|--------:|
+| 32 | 1 | 24 |
+| 64 | 2 | 26 |
+| 128 | 4 | **30** |
+| 256 | 8 | **81** |
+
+**256 threads (8 warps) = 2.7× more expensive than 128 threads.** The jump at 256 threads suggests the barrier hardware has a fast path for ≤4 warps (single sub-core) and a slower cross-sub-core path for ≥8 warps.
+
+## Fence and barrier variants
+
+| Operation | cy | Notes |
+|-----------|---:|-------|
+| `__syncwarp` | 23 | NOP for converged warp |
+| `__syncthreads` (128 threads) | 30 | Standard CTA barrier |
+| `bar.sync N` (named barrier, 128) | 30 | Same as __syncthreads |
+| `__threadfence_block` | 27 | CTA-scope fence (no barrier) |
+| `__threadfence` (GPU scope) | **590** | 20× CTA scope |
+| `__threadfence_system` | **5794** | 200× CTA scope |
+
+**Practical**:
+- `__syncthreads` with ≤128 threads: 30 cy (free in most kernels).
+- `__threadfence`: 590 cy = ~290 ns. Only use at global sync points.
+- `__threadfence_system`: 5794 cy = ~2.85 µs. Avoid in hot paths; matches earlier `fence.sys` measurement (3500 cy).
+
+
+# cp.async Serial Throughput (Single Block)
+
+Comparison of global→smem copy paths, 128 threads, L1-cached source:
+
+| Method | cy/4KB | GB/s/SM | Notes |
+|--------|-------:|--------:|-------|
+| Regular LDG+STS (float4×2) | 138 | 60 | Standard load→store |
+| cp.async.cg 16B (wait_all) | 818 | 10 | **6× slower** (serial wait) |
+| smem→smem copy | 132 | 126 (R+W) | Within-SM bandwidth |
+
+**cp.async with serial `wait_all` is slower than regular loads** because each iteration pays the async engine dispatch + completion latency. The value of cp.async is in **pipelining with compute** (overlap), not raw copy speed. The earlier TMA section shows proper pipelined throughput reaching 29 TB/s chip-wide.
+
