@@ -7380,6 +7380,150 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 **Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
 
 
+# ═══════════════════════════════════════════════════════════════
+# B300 SXM6 AC — COMPREHENSIVE REFERENCE CARD
+# All numbers measured on this GPU across 325 commits
+# ═══════════════════════════════════════════════════════════════
+
+## Hardware
+
+| Property | Value |
+|----------|-------|
+| GPU | NVIDIA B300 SXM6 AC |
+| Compute capability | sm_103a (PTX 10.3) |
+| SMs | 148 (IDs 1-147; SM 0 never scheduled) |
+| Warps per SM | 64 (4 SMSPs × 16 warps each) |
+| Max CTAs per SM | 32 |
+| Max threads/CTA | 1024 |
+| Registers per SM | 65 536 (256 KB) |
+| Max regs per thread | 232 (via setmaxnreg; spill starts at ~192 live floats) |
+| Shared memory per SM | 228 KB pool (227 KB usable per CTA; 1 KB reserved) |
+| L1 cache | 256 KB (shared with smem pool) |
+| L1 instruction cache | ~16 KB effective |
+| L2 cache | 126.5 MiB (LRU replacement, 2 partitions with address hash) |
+| HBM | 268 GiB HBM3e |
+| HBM bus | 7 680 bits |
+| PCIe | Gen 6 x16 (card); realized Gen 5 on this host (57 GB/s per direction) |
+| NVLink | 18 lanes × 53.125 GB/s = 956 GB/s bidirectional per peer |
+| ECC | Always ON |
+| SM clock (sustained) | 2 032 MHz (after `nvidia-smi -rac`) |
+| Memory clock | 3 996 MHz |
+| GPCs | 10 (9 × 16 SMs + 1 × 4 SMs) |
+| Async engines | 4 (copy engines) |
+| Media | 7 NVDEC + 1 NVENC + 1 OFA + 7 JPEG |
+| MIG | Supported (up to 7 × 1g.34gb slices) |
+
+## Compute throughput (chip-wide at 2032 MHz)
+
+| Path | Peak TFLOPS | Measured | Source |
+|------|------------:|---------:|--------|
+| Scalar FFMA (FP32) | 72.3 | 71.8 | ncu pipe_fma 99 % |
+| FFMA2 / HFMA2 / BFMA2 (packed) | 72.3 | 72.3 | all packed = same FLOPS |
+| TF32 tensor (cuBLAS 8K GEMM) | ~1 200 | **1 016** | 85 % |
+| **FP16 tensor (cuBLAS 8K GEMM)** | 2 325 | **2 034** | **87 %** |
+| FP8 tensor (tcgen05.mma micro) | 4 651 | **4 651** | 93 % of raw spec |
+| FP8 sparse tensor | ~9 300 | 7 440 | 80 % (needs proper 2:4 metadata) |
+| FP64 (DFMA) | ~1 | 0.95 | 1/76 of FP32 |
+| INT32 (IMAD/IMUL) | — | 18.2 TOPS | pipe_alu, 4× slower than FP32 |
+| MUFU (sin/cos/rsqrt) | — | 4.8 TOPS | 0.5 w-inst/cy/SM; ex2 = 8.1 |
+
+## Memory throughput
+
+| Level | Read | Write | Latency |
+|-------|-----:|------:|--------:|
+| **HBM (coalesced uint4)** | **7.4 TB/s** | 7.5 TB/s (memset) | ~300 cy |
+| L2 cache (64 MB WS) | 8.4 TB/s | — | ~295 cy |
+| Shared memory | 37 TB/s | 34 TB/s | ~25 cy (ld.shared) |
+| PCIe H2D | 57 GB/s | — | 6.5 µs |
+| PCIe D2H | 57 GB/s | — | 9.0 µs |
+| PCIe full-duplex | 99 GB/s combined | | |
+| NVLink peer | 820 GB/s | 718 GB/s | ~2 700 cy |
+| Pinned (zero-copy) | 54 GB/s | 53 GB/s | ~1 µs/hop |
+
+## Synchronization costs (cycles at 2032 MHz)
+
+| Primitive | Cost |
+|-----------|-----:|
+| `__syncwarp` | 36 |
+| `bar.sync 0, 32` (1-warp partial) | **26** |
+| `__syncthreads` (1024 thr) | 86 |
+| `__syncthreads_count/_and/_or` | 150 |
+| `mbarrier` arrive+wait cycle | 318 (flat regardless of arriver count) |
+| Cluster barrier | 380 (flat 2-16 CTAs) |
+| Cooperative `grid.sync` (148 blocks) | 2 371 (1.24 µs) |
+| `fence.*.cta` | **27** |
+| `fence.*.gpu` | 292 |
+| `fence.*.sys` | 3 500 |
+| `fence.proxy.async` | 36 |
+
+## Atomic costs
+
+| Op | cy/atom (uncontended) |
+|----|-----------------------:|
+| `atom.global.add.u32` | 24 |
+| `atom.global.add.{f32,f16x2,bf16x2,f64}` | 24 (all native) |
+| `atom.global.add.u64` | 156 (flat, no contention scaling) |
+| `atom.global.cas.b64` | **731** (30× slower) |
+| `atom.shared.add.u32` | 24 |
+| `atom.shared.add.f32` | **97** (emulated via bsync+CAS) |
+
+## Warp primitives
+
+| Op | cy |
+|----|---:|
+| `__shfl_xor_sync` (raw) | 6 |
+| SHFL (saturated at 32 warps) | 1 w-inst/cy/SM |
+| `__ballot_sync` | 29 |
+| `__reduce_min/max_sync` | **31** |
+| `__reduce_add_sync` | 54 |
+| `__match_any_sync` | 56 |
+| Warp-wide scan (5-step Kogge-Stone) | 186 |
+
+## Host API costs
+
+| Operation | µs |
+|-----------|---:|
+| `cudaGetLastError` | **0.011** (always check!) |
+| `cudaEventElapsedTime` | 0.037 |
+| `cudaStreamWaitEvent` (host enqueue) | 0.13 |
+| NVTX push+pop (no profiler) | **0** |
+| `cudaMallocAsync` + `FreeAsync` cycle | 0.4-1.2 |
+| `cudaMalloc` | 18 |
+| `cudaFree` | 20 |
+| Kernel launch (`<<<>>>`) | **2.0** |
+| `cudaLaunchKernelEx` + PSS | **1.47** |
+| cudaGraph launch (1000 kernels) | **0.56 / kernel** |
+| `cudaGraphExecUpdate` | 0.15 |
+| `cudaStreamSynchronize` (after tiny kernel) | 6.3 |
+| `cudaDeviceSynchronize` (idle) | 1.3 |
+| CUDA cold start (cuInit → first kernel) | **326 ms** |
+| NVRTC compile | **6 ms** (warm) |
+| `cuLibraryLoadData` | 14 (6.5× faster than cuModule) |
+
+## Key design rules (measured)
+
+1. **Fuse elementwise ops**: N ops fused → N× speedup (perfectly linear; 8 ops = 7.7×).
+2. **Use wide loads**: uint4 (16 B) = 85 % HBM; 2×uint4 (32 B) = **94 %**.
+3. **≥ 16 warps/SM**: needed for 90 % of HBM peak. Every warp helps linearly.
+4. **Smem-privatize histograms**: 200× faster than naive global atomics.
+5. **Persistent 32 CTAs/SM** for memory-bound (not 1/SM — 2.6× better).
+6. **Prefer `__reduce_*_sync`** over manual shuffle trees (40 % faster).
+7. **Use `max(x,0)` not `x>0?x:0`**: fused min/max is 2× faster than setp+selp.
+8. **Avoid function pointers** in inner loops (5× overhead).
+9. **Avoid warp specialization** without async overlap (3.8× anti-pattern).
+10. **Always use NonBlocking streams** (12 % faster than default).
+
+## Roofline
+
+| Compute path | Ridge OI (FLOP/byte) |
+|--------------|---------------------:|
+| Scalar FFMA | **18** |
+| FP16 tensor (tcgen05) | **314** |
+| FP8 tensor | **628** |
+
+Most ML inference ops are below OI = 1 → **memory-bound → fusion is king**.
+
+
 # End-to-end LLM workload model on B300 (7B-parameter Llama-like)
 
 Using our measured B300 numbers to model a **single-GPU 7B LLM** (32 layers, d=4096, 32 heads, GQA 8 KV heads).
