@@ -15993,7 +15993,7 @@ SAXPY (read A, read+write B) achieves ~3.5 TB/s total HBM traffic at ≥74 SMs. 
 |--|--------:|----------------:|-------|
 | **HBM read** | 7.0 TB/s | 7.0 TB/s | Same — HBM independent of clock |
 | **L2 read** | 8.5 TB/s | — | 21% faster than HBM |
-| **BF16 tensor** | 1776 TFLOPS | 737 TFLOPS (60s sustained) | Zero degradation |
+| **BF16 tensor** | **1844 TFLOPS** (at 2032 boost) | **1844 TFLOPS** (60s sustained!) | Zero degradation, 788W, 58°C |
 | **FP8 tensor** | 3411 TFLOPS | — | 2× BF16 |
 
 ## The Single Most Important Finding
