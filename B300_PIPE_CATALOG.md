@@ -7524,6 +7524,43 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 Most ML inference ops are below OI = 1 → **memory-bound → fusion is king**.
 
 
+# Quick bottleneck identification with ncu
+
+**One-liner to identify if a kernel is memory-bound or compute-bound:**
+
+```bash
+ncu --section SpeedOfLight -c 1 ./myapp
+```
+
+Look at the two key numbers:
+- **Compute (SM) Throughput %** — how close to peak FMA/tensor dispatch
+- **Memory Throughput %** — how close to peak DRAM bandwidth
+
+| Kernel type | SM Throughput | Memory Throughput | Action |
+|-------------|:--------------|:------------------|--------|
+| **Memory-bound** | low (< 30 %) | **high (> 60 %)** | Wide loads, fusion, smem staging |
+| **Compute-bound** | **high (> 60 %)** | low (< 30 %) | More ILP, use tensor cores |
+| **Latency-bound** | low | low | **More warps / occupancy** |
+| **Balanced** | moderate | moderate | Optimize both paths |
+
+**For more detail, use stall reason breakdown:**
+```bash
+ncu --metrics smsp__warp_issue_stalled_long_scoreboard_per_warp_active.pct,\
+smsp__warp_issue_stalled_math_pipe_throttle_per_warp_active.pct,\
+smsp__warp_issue_stalled_not_selected_per_warp_active.pct -c 1 ./myapp
+```
+
+Our measured B300 stall signatures (from earlier):
+- **94 % `long_scoreboard`** → **memory-bound** (classic — warps waiting for DRAM)
+- **34 % `not_selected` + 3 % `math_pipe_throttle`** → **compute-bound** (scheduler healthy, pipe busy)
+
+**Decision tree:**
+1. If `Memory Throughput > 60 %` → you're near HBM peak. Optimize BW: fuse, wider loads, reduce traffic.
+2. If `SM Throughput > 60 %` → you're near compute peak. Optimize compute: tensor cores, ILP.
+3. If both < 30 % → **latency-bound**. Fix with more warps, larger blocks, deeper ILP.
+4. Use `smsp__warp_issue_stalled_*` to find the specific stall reason.
+
+
 # Power efficiency — TFLOPS per watt across precisions
 
 8K × 8K × 8K GEMM sustained, NVML power sampling:
