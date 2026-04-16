@@ -9311,7 +9311,31 @@ Real model sizes are fine (designed as clean multiples): Llama-7B FFN (11008) = 
 | 128×8192² | 8 | 653 T | 653 T (algo 0) | +26% | Default is best |
 | 4096×28672×8192 | 8 | 2202 T | 2202 T (algo 0) | **+46%** | Default is best |
 
-**Default algorithm is usually optimal or within 5%.** The worst algorithm can be up to 46% slower than the best — cuBLAS's heuristic saves you from the bad ones. Auto-tuning (e.g., `cublasLtMatmulAlgoGetHeuristic` with N>1) helps ~5% for mid-size GEMMs.
+**Default algorithm is usually optimal or within 5%.**
+
+### Transpose layout (NN vs NT vs TN vs TT, measured BF16)
+
+**8192³**: ALL layouts **identical** (2118-2122 TFLOPS). **Zero transpose penalty** for large GEMMs.
+
+**FFN shape (28672×1024×8192) — TN matters:**
+
+| Layout | TFLOPS | MFU |
+|:------:|-------:|----:|
+| NN | 1686 | 68.4% |
+| **TN** | **1974** | **80.1%** |
+| NT | 1714 | 69.5% |
+
+**TN is 17% faster for rectangular FFN shapes.** Better weight-read coalescing. No need to pre-transpose — just use the right `CUBLAS_OP_T` flag.
+
+### Leading dimension (lda) padding effect (measured, M=N=K=4096)
+
+| Padding | TFLOPS | Effect |
+|:-------:|-------:|:------:|
+| 0 (lda=4096) | 1727 | baseline |
+| 8 (lda=4104) | **1632** | **-5.5% WORSE** |
+| 16-128 | ~1725 | no effect |
+
+**LDA padding does NOT help** — power-of-2 dimensions are already optimal. Padding to non-aligned lda (pad=8) actually hurts. The worst algorithm can be up to 46% slower than the best — cuBLAS's heuristic saves you from the bad ones. Auto-tuning (e.g., `cublasLtMatmulAlgoGetHeuristic` with N>1) helps ~5% for mid-size GEMMs.
 
 ### cuBLAS with REAL model shapes (measured, BF16, cuBLAS 13.4)
 
