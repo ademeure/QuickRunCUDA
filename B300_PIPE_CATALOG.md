@@ -7856,7 +7856,20 @@ SASS: `UTCOMMA.BLOCK16` — processes K=64 FP4 elements with per-block-16 UE4M3 
 
 **This is the REAL B300 FP4 tensor core throughput: 9.9 PFLOPS dense FP4.**
 
-Note: A matrix data was uninitialized TMEM (not loaded via tcgen05.cp) — throughput is correct, output data meaningless. For a correct GEMM, A must be loaded to TMEM via `tcgen05.cp` and scale factors written to their TMEM slots.
+### Correctness verification
+
+A data written to TMEM via `tcgen05.st`, scale factors set to UE4M3 1.0 (0x70), B varied in smem:
+
+| B fill | B value (FP4 E2M1) | D[0] | Ratio |
+|--------|:------------------:|-----:|------:|
+| 0x00 | 0.0 | 0.0 | 0× |
+| 0x33 | 1.5 | 589,824 | 1× |
+| 0x55 | 3.0 | 1,179,648 | **2×** |
+| 0x77 | 6.0 | 2,359,296 | **4×** |
+
+**Output scales linearly with B value** — confirms the MMA is computing `D = scale_A × A × scale_B × B^T` correctly. The block-scaled FP4 tensor core (UTCOMMA.BLOCK16) is doing real computation, not just cycling.
+
+Completion mechanism: `tcgen05.wait::ld.sync.aligned` after the MMA (mbarrier path also works but requires careful `expect_tx` setup).
 
 ## K=96 on mxf4nvf4.block16 — 14.8 PFLOPS (sm_103a exclusive!)
 
