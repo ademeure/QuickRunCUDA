@@ -7936,6 +7936,54 @@ The benefit of FP4 on this path is **2× less memory** for the same K:
 
 **When `kind::mxf4` ships** (expected CUDA 13.3+ or 14.0): real FP4 peak = ~9.3 PFLOPS = 2× FP8. This will make FP4 inference on B300 strictly dominant for memory-bound LLM decode.
 
+## tcgen05 Power vs Data Pattern (148 SMs, smem-only, zero DRAM, 50M iter ≈ 6s each)
+
+| Format | Data | Power (W) | PFLOPS | TFLOPS/W |
+|--------|------|----------:|-------:|---------:|
+| *Idle* | — | 179 | — | — |
+| | | | | |
+| **FP16 (kind::f16)** | zeros | **462** | 2.5 | 5.4 |
+| FP16 | fp16-1.0 | 475 | 2.5 | 5.3 |
+| FP16 | all-ones (0xFF) | 509 | 2.5 | 4.9 |
+| FP16 | **random** | **1 040** | 2.5 | 2.4 |
+| | | | | |
+| **FP8 E4M3 K=32** | zeros | 481 | 4.9 | 10.2 |
+| FP8 K=32 | all-ones | 511 | 4.9 | 9.6 |
+| FP8 K=32 | **random** | **1 038** | 4.9 | 4.7 |
+| | | | | |
+| FP4 E2M1 K=32 | zeros | 458 | 4.9 | 10.7 |
+| FP4 K=32 | **random** | **1 036** | 4.9 | 4.7 |
+| | | | | |
+| **FP4 E2M1 K=96** | alternating (0x55) | **440** | 14.7 | **33.4** |
+| FP4 K=96 | fp16-1.0 (0x3F80) | 443 | 14.7 | 33.2 |
+| FP4 K=96 | all-ones (0xFF) | 448 | 14.7 | 32.8 |
+| FP4 K=96 | zeros | 472 | 14.8 | 31.4 |
+| FP4 K=96 | **random** | **1 035** | **14.7** | **14.2** |
+| | | | | |
+| FP8 E4M3 K=96 | zeros | 427 | 14.7 | 34.4 |
+| FP8 K=96 | **random** | **1 008** | 14.8 | 14.7 |
+
+### Key findings
+
+1. **Random data = ~1 040 W regardless of format.** FP16 random, FP8 random, FP4 K=96 random ALL draw ~1 035 W. The multiplier switching activity dominates power, not the data format width.
+
+2. **Structured data = 440-510 W** (2-2.4× less than random). The tensor core reduces switching activity when inputs are uniform (zeros, constants, etc.).
+
+3. **FP4 K=96 with structured data: 14.7 PFLOPS at 440-472 W = 31-33 TFLOPS/W.** That's the BEST perf/watt number in this entire catalog.
+
+4. **FP4 K=96 random: 14.7 PFLOPS at 1 035 W = 14.2 TFLOPS/W.** Same power as FP8 K=32 random (1 038 W, 4.9 PFLOPS) but 3× the throughput → **FP4 K=96 is 3× more perf/watt than FP8 K=32 for random data.**
+
+5. **Slight clock throttling under random data**: cy/mma rises from 128.0 to 129.0 (0.8 % slowdown) at ~1 040 W. The GPU is near its power limit with random data.
+
+6. **Zeros are NOT the lowest power!** For FP4 K=96: alternating (0x55) draws 440 W vs zeros 472 W. The zero-multiply path may have its own switching overhead in the control logic, while uniform non-zero values that repeat perfectly have minimal wire toggles.
+
+### Practical implications
+
+- **Real inference workloads** (trained model weights) have structured distributions → expect 450-550 W, NOT 1 040 W. The "random data" power is a worst case.
+- **Power budgeting**: at 500 W sustained for FP4 K=96, that's 14.8 PFLOPS / 500 W = **29.6 TFLOPS/W** — extremely efficient.
+- **Data-dependent power** means benchmarks with zero-filled inputs understate production power by 2×. Always use realistic data patterns for thermal validation.
+
+
 ### FP4 quantization accuracy (E2M1 with per-tensor scaling)
 
 100K elements, various distributions, host-side quantization:
