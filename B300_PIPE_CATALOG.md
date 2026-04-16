@@ -7380,6 +7380,28 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 **Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
 
 
+# Shared memory STORE bank conflicts (less costly than loads)
+
+Single warp × 1000 iter, varying store patterns:
+
+| Pattern | cy/iter | Notes |
+|---------|--------:|-------|
+| **Broadcast** (all 32 lanes → same addr) | **28** | **Fastest — HW coalesces to 1 store** |
+| Stride-1 (no conflict) | 39 | baseline |
+| Stride-2 (2-way conflict) | 39 | **same as stride-1 for stores** |
+| **Stride-32 (32-way conflict)** | **63 (1.6×)** | |
+| u64 stride-1 (8-byte store) | 34 | slightly faster than u32 (fewer transactions) |
+
+**Findings vs load bank conflicts** (from earlier):
+- **Loads at 32-way conflict = 102 cy (2.5×)**
+- **Stores at 32-way conflict = 63 cy (1.6×)**
+- Stores are ~35 % cheaper under bank conflicts because only the final value matters per address — the HW can merge / pipeline conflicting writes without delivering unique values to each lane.
+
+**Broadcast store is CHEAPEST** (28 cy): all lanes writing the same address coalesces to a single smem write (last-writer-wins, which is fine for stores).
+
+**Design rule**: smem store patterns are more forgiving than load patterns. 2-way store conflicts are FREE. 32-way costs 1.6× (vs 2.5× for reads). Still worth padding stride-32 layouts, but the urgency is less than for loads.
+
+
 # Memory coalescing penalty — 8× for non-coalesced access
 
 256 MB working set, 4736 × 512 threads, u32 loads:
