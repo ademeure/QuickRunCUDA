@@ -14761,6 +14761,27 @@ The NVML reports Gen6 x16 link, but measured bandwidth (~58 GB/s) is consistent 
 
 **For serving reliability**: B300 SXM6 sustains full tensor core throughput indefinitely. No burst-then-throttle behavior.
 
+
+# Cross-Pipe Dependency Latency Table
+
+Measured as dependent instruction chains (single warp, ~17 cy loop overhead):
+
+| Chain | Total cy | Extra vs baseline | Producer latency |
+|-------|--------:|------------------:|-----------------:|
+| FMA → FMA | 23 | 0 | **6 cy** |
+| IADD → IADD | 23 | 0 | **6 cy** (same as FMA!) |
+| FMA → MUFU | 24 | +1 | FMA result read fast |
+| **MUFU → FMA** | **36** | **+13** | **MUFU result: 13 cy** |
+| LDS → FMA → STS | 25 | +2 | Smem: ~2 cy pipeline |
+| FMA → CVT → CVT | 83 | +60 | CVT: ~20 cy each |
+| **SHFL_sync → FMA** | **85** | **+62** | **SHFL+sync: 62 cy** |
+
+**Key findings**:
+- **IADD and FMA have identical 6 cy latency** — the ALU and FMA pipes produce results at the same speed
+- **MUFU result takes 13 cy** — `rcp`, `rsqrt`, etc. results aren't ready for 13 cycles after issue
+- **Shared memory LDS→FMA is only +2 cy** — the load-to-use latency for smem is extremely tight
+- **SHFL with sync is expensive** (62 cy) — the `__shfl_xor_sync` wrapper adds significant synchronization overhead vs raw SASS SHFL
+
 ## HBM3E Access Latency Distribution
 
 100 random 64KB-strided pointer chases (single warp):
