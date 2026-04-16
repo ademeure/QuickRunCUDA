@@ -108,3 +108,49 @@ def patch_and_delete(cubin_in, cubin_out, delete_failures=None):
     deleted = len(remove)
     nopped = len(renames) - deleted
     print(f"Patched: {deleted} deleted + {nopped} NOPed = {len(renames)} total (base 0x{kbase:x})")
+
+
+def patch_passthrough_and_delete(cubin_in, cubin_out, delete_failures=None):
+    """Alternative pipeline: change LOP3 & 0xff to passthrough (LUT 0xf0),
+    then delete the ones that survive individual deletion testing."""
+    import subprocess
+    kbase = find_kernel_base(cubin_in)
+
+    # Get kernel size
+    r = subprocess.run(['cuobjdump', '--dump-elf', cubin_in], capture_output=True, text=True)
+    ksize = None
+    for line in r.stdout.split('\n'):
+        if '.text.kernel' in line and 'PROGBITS' in line:
+            ksize = int(line.split()[2], 16); break
+
+    # Find all LOP3 & 0xff
+    r = subprocess.run(['cuobjdump', '--dump-sass', cubin_in], capture_output=True, text=True)
+    lop3_offsets = []
+    in_kernel = False
+    for line in r.stdout.split('\n'):
+        if 'Function : kernel' in line: in_kernel = True; continue
+        if in_kernel and 'Function :' in line and 'kernel' not in line: break
+        if not in_kernel: continue
+        m = re.search(r'/\*([0-9a-f]+)\*/', line)
+        if m and 'LOP3' in line and '0xff,' in line:
+            lop3_offsets.append(int(m.group(1), 16))
+
+    NOP_FULL = bytes.fromhex('18790000000000000000000000c00f00')
+    with open(cubin_in, 'rb') as f: data = bytearray(f.read())
+
+    # Apply LUT passthrough (0xf0) to all
+    for off in lop3_offsets:
+        data[kbase + off + 9] = 0xf0
+
+    # Delete safe ones
+    skip = set(delete_failures or [])
+    remove = set(o for o in lop3_offsets if o not in skip)
+    kernel = data[kbase:kbase+ksize]
+    new_kernel = bytearray()
+    for off in range(0, ksize, 16):
+        if off not in remove: new_kernel.extend(kernel[off:off+16])
+    while len(new_kernel) < ksize: new_kernel.extend(NOP_FULL)
+    data[kbase:kbase+ksize] = new_kernel
+
+    with open(cubin_out, 'wb') as f: f.write(data)
+    print(f"Passthrough+delete: {len(remove)} deleted, {len(skip)} kept (base 0x{kbase:x})")
