@@ -4865,6 +4865,24 @@ The L1 data cache fills in 32-byte sectors from L2, not full 128-byte lines. Con
 
 **FMA dual-issue**: two independent FMA chains execute at 2.03 cy/fma, confirming the heavy+lite FMA sub-units. Adding IADD (pipe_alu) adds zero overhead — it runs on a separate pipe concurrently.
 
+### Instruction co-issue rules (measured, 1 warp, serial chains)
+
+| Pattern | cy/iter | vs FMA baseline (4.03) | Co-issues? |
+|---------|--------:|-----------------------:|:----------:|
+| FMA×1 (baseline) | 4.03 | — | — |
+| FMA×2 (heavy+lite) | **4.09** | +0.06 | **✓ dual-issue** |
+| FMA + LOP3 (ALU) | **4.09** | +0.06 | **✓ free** |
+| FMA + SHF (ALU shift) | **4.09** | +0.06 | **✓ free** |
+| FMA×2 + LOP3 | **4.15** | +0.12 | **✓ triple co-issue!** |
+| FMA + MUFU (ex2.approx) | **15.44** | +11.41 | **✗ serialized** |
+| LOP3×2 (2 ALU chains) | **8.05** | — | **✗ single ALU pipe** |
+
+**Co-issue rules on Blackwell (per SMSP partition):**
+- **FMA_heavy + FMA_lite + ALU**: all three co-issue freely (4.15 cy for 3 ops)
+- **FMA + ALU (LOP3/SHF/PRMT)**: ALU adds zero overhead — runs on separate pipe
+- **FMA + MUFU**: strictly serial (FMA_lat + MUFU_lat)
+- **ALU + ALU**: serial — single pipe_alu per partition, no dual-ALU
+
 ### FMA throughput vs warp count (single-chain serial FMA per warp)
 
 | Warps | Per-warp cy/fma | Total FMA/cy | % of 2/cy peak | Notes |
