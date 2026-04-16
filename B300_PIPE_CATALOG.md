@@ -13320,3 +13320,480 @@ Pointer-chase latency through pinned memory (single warp, random-shuffled indire
 
 `cudaHostAlloc` and `cudaHostRegister` also give identical GPU-side BW — both establish the same PCIe-mapped page table entries.
 
+
+# cuBLAS Math Mode Deep Dive
+
+**Resolves the FP32 SGEMM ≈ TF32 mystery**: `cublasSgemm` obeys `cublasSetMathMode`. With `CUBLAS_DEFAULT_MATH` it uses **scalar CUDA core FP32** (60.8 TFLOPS). With `CUBLAS_TENSOR_OP_MATH` it silently promotes to **TF32 tensor cores** (1046 TFLOPS) — a 17.2× jump.
+
+## cublasSgemm math mode comparison (8192³)
+
+| Math mode | TFLOPS | ms/GEMM | Notes |
+|-----------|-------:|--------:|-------|
+| `CUBLAS_DEFAULT_MATH` | **60.8** | 18.09 | True FP32 CUDA cores |
+| `CUBLAS_TENSOR_OP_MATH` | **1046** | 1.05 | TF32 tensor cores (silently) |
+| `DEFAULT + DISALLOW_REDUCED_PREC` | 60.8 | 18.09 | Same as DEFAULT |
+| `TENSOR_OP + DISALLOW_REDUCED_PREC` | 1046 | 1.05 | Same as TENSOR_OP (flag doesn't prevent TF32) |
+
+**60.8 TFLOPS** represents 79% of the theoretical FP32 CUDA core peak (148 SMs × 4 subcores × 32-wide FFMA × 2.032 GHz = 76.8 TFLOPS theoretical).
+
+## cublasGemmEx FP32 input with different compute types (8192³)
+
+| Compute type | TFLOPS | Notes |
+|-------------|-------:|-------|
+| `COMPUTE_32F` | 60.8 | True FP32, no tensor |
+| `COMPUTE_32F_PEDANTIC` | 60.8 | True FP32, guaranteed no shortcuts |
+| `COMPUTE_32F_FAST_16F` | **1046** | FP16 tensor cores |
+| `COMPUTE_32F_FAST_16BF` | **1046** | BF16 tensor cores |
+| `COMPUTE_32F_FAST_TF32` | **1046** | TF32 tensor cores |
+
+All three `FAST_*` variants produce **identical throughput**. On B300, the tensor core path runs at the same speed regardless of which intermediate precision is chosen — the hardware bottleneck is the MMA instruction throughput (128 cy/MMA), not the mantissa width.
+
+## BF16 input compute type comparison (8192³)
+
+| Compute type | TFLOPS | Notes |
+|-------------|-------:|-------|
+| `COMPUTE_32F` | **2122** | Tensor cores (default for BF16) |
+| `COMPUTE_32F_PEDANTIC` | **34.2** | **62× slower!** Forces scalar FP32 accumulation |
+
+**Critical warning**: `COMPUTE_32F_PEDANTIC` with BF16 input drops throughput by 62×. It widens to FP32 and uses scalar FMA. Never use PEDANTIC for BF16/FP16 unless you need bit-exact accumulation and have days to wait.
+
+
+# Batched GEMM Scaling
+
+Strided batched BF16 GEMM via `cublasGemmStridedBatchedEx`, FP32 accumulate:
+
+## Small GEMMs (128×128×8192 per batch = 0.27 GFLOP each)
+
+| Batch | TFLOPS | µs/call | Notes |
+|------:|-------:|--------:|-------|
+| 1 | 43.5 | 6.2 | Launch-overhead limited |
+| 2 | 52.2 | 10.3 | Barely uses the chip |
+| 4 | 107.5 | 10.0 | 2× batch=2 |
+| 8 | 208.8 | 10.3 | Linear scaling |
+| 16 | **392.3** | 10.9 | **Peak for this shape** |
+| 32 | 370.7 | 23.2 | Slightly lower (SM contention) |
+| 64 | 398.0 | 43.2 | Steady state |
+| 128 | 411.4 | 83.5 | ~19% of chip peak |
+
+## Medium GEMMs (1024×1024×1024 per batch = 2.1 GFLOP each)
+
+| Batch | TFLOPS | µs/call | Notes |
+|------:|-------:|--------:|-------|
+| 1 | 472.3 | 4.5 | Single GEMM, ~22% MFU |
+| 2 | 727.3 | 5.9 | Good overlap |
+| 4 | 900.9 | 9.5 | |
+| 8 | 1194.4 | 14.4 | |
+| 32 | 1367.0 | 50.3 | |
+| 64 | 1446.8 | 95.0 | |
+| 128 | **1495** | 183.8 | **70% MFU** — approaching single-GEMM peak |
+
+Batched GEMM scales well when each batch element is small — batch=128 with 1024³ GEMMs reaches 70% of the chip's BF16 tensor peak. For tiny GEMMs (128×128), batching helps but peaks at ~400 TFLOPS (19%) because each element barely saturates one SM.
+
+
+# Multi-Stream Concurrency
+
+## Kernel concurrency (single-block compute kernels)
+
+| Streams | 16 launches (1 block/kernel) | Speedup |
+|--------:|-----------------------------:|--------:|
+| 1 | 39.60 ms | 1.0× |
+| 2 | 19.78 ms | 2.0× |
+| 4 | 9.90 ms | 4.0× |
+| 8 | 4.96 ms | 8.0× |
+| 16 | 2.51 ms | **15.8×** |
+
+**Perfect linear scaling** — B300 hardware scheduler overlaps independent single-block kernels from different streams with zero overhead. Same scaling holds with 32 blocks per kernel.
+
+## Multi-stream cuBLAS BF16 GEMM concurrency (16× 1024³ GEMMs)
+
+| Streams | TFLOPS | µs/GEMM | Notes |
+|--------:|-------:|--------:|-------|
+| 1 | 419 | 5.1 | Sequential |
+| 2 | **502** | 4.3 | **20% improvement** |
+| 4 | 502 | 4.3 | No further gain |
+| 8 | 499 | 4.3 | Saturated |
+| 16 | 496 | 4.3 | Saturated |
+
+For medium GEMMs that already use many SMs, 2 streams is optimal — beyond that, SM contention negates the overlap benefit. The 20% improvement from 2 streams comes from filling in the gaps at the tail of each GEMM.
+
+## CUDA runtime operation costs
+
+| Operation | Cost |
+|-----------|-----:|
+| `cudaStreamCreate + Destroy` | 4.0 µs/pair |
+| `cudaEventRecord` | 2.3 µs |
+| `cudaEventRecord + Synchronize` | 7.2 µs |
+| `cudaDeviceSynchronize` (idle GPU) | 1.3 µs |
+
+**Practical**: stream create/destroy at 4 µs is cheap enough to do per-request in serving. Event record at 2.3 µs adds negligible overhead to any kernel taking >100 µs. DeviceSync on idle GPU at 1.3 µs is essentially a PCIe round-trip.
+
+
+# Warp-Level Primitive Latency & Throughput
+
+Single warp (32 threads), measured via `clock64`. "Latency" = serial dependent chain. "Throughput" = 8-way ILP, amortized per op.
+
+## Shuffle (SHFL)
+
+| Measurement | cy |
+|------------|---:|
+| `shfl_xor` **latency** | **24** |
+| `shfl_xor` **throughput** (8-way ILP) | **6** |
+
+Shuffle latency is 24 cy — higher than Hopper's ~16 cy. But throughput is 6 cy/shfl, meaning the pipe can sustain 4 in-flight shuffles. For warp-level reductions, pipelining multiple independent shuffles is critical (4× faster than serial).
+
+## Vote, Match, Redux
+
+| Instruction | Latency (cy) | Notes |
+|------------|-------------:|-------|
+| `ballot_sync` | **25** | Similar to shuffle |
+| `match.any.sync.b32` | **79** | 3× ballot — expensive for work distribution |
+| `redux.sync.add.s32` latency | **56** | Single-instruction warp-wide sum |
+| `redux.sync.add.s32` throughput (8-way) | **14.75** | ~4× faster with ILP |
+| `redux.sync.min.s32` | 29 | Cheaper than add (simpler reduction tree?) |
+| `redux.sync.max.s32` | 56 | Same as add |
+| `redux.sync.or.b32` | 81 | Bitwise OR is surprisingly expensive |
+| `redux.sync.and.b32` | 83 | Similar to OR |
+
+**`redux.sync` vs manual shuffle-reduction**: A warp-level sum via 5 `shfl_down` + 5 `FADD` takes 5 × (24+6) = 150 cy latency. `redux.sync.add` does it in 56 cy — **2.7× faster**. Always prefer `redux.sync` when available (sm_80+).
+
+**`match.any` at 79 cy** is expensive. For work-distribution patterns (histogram, dedup), `ballot_sync` at 25 cy is 3× cheaper — prefer ballot + popc over match when possible.
+
+
+# Texture Cache vs Global Load Path
+
+Measured random-access and pointer-chase patterns at different working set sizes, single warp, single block:
+
+## Random access latency (LCG-generated indices, 32 independent chains)
+
+| Working set | `__ldg` (cy) | regular `ld` (cy) | Ratio | Dominant cache level |
+|------------|-------------:|------------------:|------:|---------------------|
+| 16 KB | 111 | 101 | 1.10× | L1 data cache |
+| 128 KB | 302 | 224 | 1.35× | L1 boundary |
+| 1 MB | 960 | 397 | 2.42× | L2 |
+| 16 MB | 1258 | 399 | 3.15× | L2 |
+| 64 MB | 1191 | 400 | 2.98× | L2/DRAM boundary |
+| 256 MB | 1209 | 399 | 3.03× | DRAM |
+
+**`__ldg` is SLOWER than regular loads in every scenario.** On B300, the texture/constant cache path (`LDG.E.CONSTANT`) adds latency vs the standard data cache path. The gap grows to 3× for L2/DRAM-resident data.
+
+**Practical**: Do NOT use `__ldg` on Blackwell for performance. The `const __restrict__` hint achieves the same non-aliasing benefit through the compiler without forcing the slower texture cache path. This reverses Kepler-era advice where `__ldg` was faster.
+
+## Pointer chase (sequential, all L1-resident)
+
+| Working set | `__ldg` (cy) | regular `ld` (cy) |
+|------------|-------------:|------------------:|
+| 16 KB | 80.8 | 69.0 |
+| 128 KB | 80.2 | 69.0 |
+| 1 MB | 80.3 | 69.0 |
+| 16 MB | 80.3 | 69.0 |
+
+Both are L1-resident for sequential access. Regular loads = 69 cy L1 hit latency. `__ldg` = 81 cy — consistent 12 cy overhead for the texture cache path.
+
+## 2D Texture sampling (4096×4096 float32 array)
+
+| Filter mode | cy/sample |
+|------------|----------:|
+| Point (nearest) | 323 |
+| Bilinear | 266 |
+
+Bilinear filtering is 18% FASTER than point sampling — the bilinear path likely has deeper pipelining in the texture unit (4 taps amortized vs 1 tap with full address computation). For rendering workloads, bilinear is essentially free compared to point.
+
+
+# cuFFT Performance
+
+cuFFT 12.2 on B300. GFLOPS computed as `5 N log2(N)` flops per C2C transform, `2.5 N log2(N)` for R2C.
+
+## Complex-to-Complex FP32 (in-place)
+
+| N | Batch | GFLOPS | ms/transform | Notes |
+|--:|------:|-------:|-------------:|-------|
+| 256 | 100000 | 14732 | 0.0000 | Small-N: limited by launch overhead |
+| 1024 | 100000 | **20641** | 0.0000 | **Peak GFLOPS** — sweet spot for batch |
+| 4096 | 10000 | 19600 | 0.0000 | Still excellent |
+| 16384 | 1000 | 12997 | 0.0001 | Starting to hit memory |
+| 65536 | 100 | 7748 | 0.0007 | L2 boundary |
+| 262144 | 10 | 7823 | 0.0030 | |
+| 1048576 | 1 | 5625 | 0.019 | Single large transform |
+| 4194304 | 1 | 8319 | 0.056 | DRAM BW helps at scale |
+| 16777216 | 1 | **9452** | 0.213 | **Peak single-transform** |
+
+**Peak: 20.6 TFLOPS** at N=1024 batched. Relative to FP32 CUDA core peak (76.8 TFLOPS), FFT achieves ~27% of raw FMA throughput. For single large transforms (16M), 9.5 TFLOPS is impressive.
+
+## Real-to-Complex FP32
+
+| N | Batch | GFLOPS | ms/transform |
+|--:|------:|-------:|-------------:|
+| 1024 | 100000 | 15472 | 0.0000 |
+| 4096 | 10000 | 16997 | 0.0000 |
+| 65536 | 100 | 5389 | 0.0005 |
+| 1048576 | 1 | 2425 | 0.022 |
+| 16777216 | 1 | 7109 | 0.142 |
+
+R2C is ~75-82% of C2C throughput. The Hermitian symmetry doesn't save as much as the 2× data reduction suggests because the butterfly computation is similar.
+
+## Complex-to-Complex FP64 (Z2Z)
+
+| N | Batch | GFLOPS | ms/transform |
+|--:|------:|-------:|-------------:|
+| 1024 | 100000 | 618 | 0.0001 |
+| 4096 | 10000 | 537 | 0.0005 |
+| 65536 | 100 | 551 | 0.0095 |
+| 1048576 | 1 | 469 | 0.223 |
+
+FP64 FFT peaks at ~618 GFLOPS — about **33× slower than FP32**. B300's FP64 FMA is not pipelined (DFMA = 64 cy latency, ~4 TFLOPS peak), so this is 15% of FP64 FMA peak. FFT's irregular memory access pattern limits FP64 utilization.
+
+
+# CUDA Memory Allocation Performance
+
+Measured from host side with `std::chrono::high_resolution_clock`.
+
+## cudaMalloc + cudaFree
+
+| Size | Malloc (µs) | Free (µs) | Notes |
+|-----:|------------:|----------:|-------|
+| 256 B | 1.3 | 2.5 | Sub-page |
+| 4 KB | 0.8 | 2.1 | Single page |
+| 64 KB | 1.8 | 3.1 | |
+| 1 MB | 17.6 | 19.4 | **20× slower than 4 KB** |
+| 16 MB | 34.6 | 42.1 | |
+| 256 MB | 45.1 | 235.2 | Free is 5× alloc! |
+
+`cudaMalloc` scales roughly with log(size) for allocation, but `cudaFree` at 256 MB costs 235 µs — the driver must unmap and return physical pages.
+
+## cudaMallocAsync (stream-ordered, warmed pool)
+
+| Size | Alloc+Free (µs/pair) | vs cudaMalloc |
+|-----:|---------------------:|--------------:|
+| 256 B | **0.42** | 9× faster |
+| 4 KB | 0.42 | 7× faster |
+| 64 KB | 0.42 | 12× faster |
+| 1 MB | 0.41 | **90× faster** |
+| 16 MB | 0.42 | **183× faster** |
+| 256 MB | 0.96 | **292× faster** |
+
+**Constant-time** regardless of allocation size (up to 16 MB). At 0.42 µs per alloc+free pair, this is essentially just a pool lookup + pointer return.
+
+## cudaMemPool with release threshold = UINT64_MAX
+
+| Size | Pool alloc+free (µs/pair) |
+|-----:|--------------------------:|
+| 256 B | **0.32** |
+| 4 KB | 0.32 |
+| 64 KB | 0.32 |
+| 1 MB | 0.32 |
+| 16 MB | 0.32 |
+
+Even faster at 0.32 µs — setting release threshold to UINT64_MAX prevents the pool from ever returning memory to the OS, eliminating the check. **24% faster than default cudaMallocAsync.**
+
+## Pinned host memory (cudaHostAlloc)
+
+| Size | Alloc (µs) | Free (µs) | Notes |
+|-----:|-----------:|----------:|-------|
+| 4 KB | 8.3 | 5.6 | |
+| 64 KB | 14.1 | 7.4 | |
+| 1 MB | 175.4 | 73.1 | 10× device alloc |
+| 16 MB | **2558** | 946 | **2.6 ms!** |
+
+Pinned memory allocation is **extremely expensive** — 2.6 ms for 16 MB. This is because it requires kernel-level page pinning (mlock) and IOMMU remapping. **Always pre-allocate pinned buffers at startup and reuse them.**
+
+## Fragmentation (1000× 4 KB allocations)
+
+| Pattern | Cost (µs/op) |
+|---------|-------------:|
+| Sequential malloc | 0.9 |
+| Sequential free (reverse order) | 1.9 |
+| Sequential free (random order) | 2.4 |
+
+Random-order free is 26% slower than reverse-order — the allocator has slightly more work to coalesce non-adjacent free blocks. But even 1000 small allocations don't significantly slow down individual operations.
+
+**Practical guidance for serving**:
+1. **Use `cudaMallocAsync` with `cudaMemPoolAttrReleaseThreshold = UINT64_MAX`** — 0.32 µs constant-time allocation regardless of size.
+2. **Never call `cudaMalloc`/`cudaFree` per request** — even 4 KB costs ~3 µs round-trip.
+3. **Pre-allocate all pinned memory at startup** — 16 MB pinned alloc costs 2.6 ms, which is longer than an entire inference step for many models.
+4. **cudaFree of large allocations is the most expensive operation** (235 µs for 256 MB) — batch deallocations or defer them.
+
+
+# cuRAND Performance
+
+cuRAND 10.4 on B300, generating to device memory.
+
+## Uniform FP32 distribution (64M samples = 256 MB)
+
+| Generator | GB/s | Gsamp/s | Notes |
+|-----------|-----:|--------:|-------|
+| **PHILOX4_32_10** | **3042** | **760** | **Fastest by far** — counter-based, embarrassingly parallel |
+| XORWOW (DEFAULT) | 1008 | 252 | Standard default, 3× slower than PHILOX |
+| MTGP32 | 640 | 160 | Mersenne Twister GPU variant |
+| MT19937 | 510 | 128 | Classic Mersenne Twister |
+| MRG32K3A | 451 | 113 | Combined MRG — worst performance |
+
+## Normal distribution (Gaussian, 64M samples)
+
+| Generator | GB/s | vs Uniform |
+|-----------|-----:|-----------:|
+| PHILOX Normal | 1700 | 56% of uniform (Box-Muller transform) |
+| XORWOW Normal | 271 | 27% of uniform |
+
+## PHILOX size scaling
+
+| Samples | GB/s | Gsamp/s | ms/call |
+|--------:|-----:|--------:|--------:|
+| 1K | 1.0 | 0.2 | 0.004 |
+| 64K | 62 | 15.5 | 0.004 |
+| 1M | 662 | 165 | 0.006 |
+| 16M | 2711 | 678 | 0.025 |
+| 64M | 3043 | 761 | 0.088 |
+| 256M | **3174** | **794** | 0.338 |
+
+PHILOX saturates at ~16M samples (2.7 TB/s). At 256M, it reaches 3.2 TB/s = **43% of HBM peak** (7.4 TB/s), meaning PHILOX is compute-bound even at HBM-saturating output rates. This is because each PHILOX round requires multiple integer multiplies + adds per output.
+
+**Practical**: Always use `CURAND_RNG_PSEUDO_PHILOX4_32_10` unless you need specific statistical properties (e.g. MRG32K3A for quasi-random sequences). PHILOX is 3-7× faster than alternatives and has excellent parallel scalability.
+
+
+# NVRTC (Runtime Compilation) Performance
+
+NVRTC version bundled with CUDA 13.2, targeting sm_103a. Measured compile time + CUBIN load time.
+
+| Kernel complexity | Source size | Compile time | CUBIN size | CUBIN load |
+|------------------|----------:|-----------:|----------:|---------:|
+| Trivial (vector add) | 143 B | **5.3 ms** | 5.5 KB | 0.05 ms |
+| Medium (smem + reduction) | 523 B | **5.6 ms** | 9.9 KB | 0.06 ms |
+| Complex (400 FMA chain) | 12 KB | **12.4 ms** | 18.4 KB | 0.06 ms |
+
+**5 ms floor** for NVRTC compilation regardless of kernel complexity — this is the framework initialization cost. Complex kernels add ~7 ms for the actual optimization passes. CUBIN loading is negligible at 50-60 µs.
+
+**Total JIT latency**: ~5-12 ms compile + ~0.06 ms load = **5-13 ms end-to-end**. This is fast enough for interactive development (QuickRunCUDA achieves <15 ms per compile-run cycle for simple kernels) but too slow for per-request JIT in serving (where 5 ms exceeds many inference times).
+
+**PTX vs CUBIN**: NVRTC produces both. PTX is 2-3× larger than CUBIN but portable across GPU architectures. CUBIN loads 10× faster than PTX→module (which requires driver-side ptxas). Always cache and reuse CUBINs for production.
+
+
+# CUDA Dynamic Parallelism (CDP)
+
+**CDP is NOT supported on sm_103a (B300).** Device-side `<<<...>>>` kernel launches and device-side `cudaDeviceSynchronize()` are unavailable. This was deprecated starting with sm_90 (Hopper).
+
+**Alternative**: Use `cudaGraphLaunch` from device code (requires `cudaDeviceGraphLaunchSupported` = 1, which B300 does support via CUDA Graph device-side launch). Or restructure algorithms to avoid nested parallelism — persistent kernels with global work queues are generally faster than CDP anyway.
+
+
+# Register Pressure & Occupancy — Compute vs Memory Sensitivity
+
+B300: 65536 registers/SM, 64 max warps/SM, 32 max blocks/SM.
+
+## Compute-bound (FMA chain) — occupancy barely matters
+
+128 threads/block, persistent grid, 100K FMA iterations per thread:
+
+| Requested regs | Actual regs | Warps/SM | Occupancy | TFLOPS | vs peak |
+|---------------:|------------:|---------:|----------:|-------:|--------:|
+| 4 | 11 | 64 | 100% | 40.4 | 89% |
+| 8 | 16 | 64 | 100% | 45.0 | 99% |
+| 16 | 29 | 64 | 100% | 43.6 | 96% |
+| 24 | 28 | 64 | 100% | 45.5 | **100%** |
+| 32 | 48 | 40 | 62% | 43.6 | 96% |
+| 48 | 54 | 36 | 56% | 43.5 | 96% |
+| 64 | 80 | 24 | 38% | 42.4 | 93% |
+| 96 | 101 | 16 | 25% | 44.5 | 98% |
+| 128 | 134 | 12 | 19% | 44.2 | 97% |
+| 192 | 200 | 8 | **12%** | **45.1** | **99%** |
+| 255 | 255 | 8 | 12% | 36.8 | 81% |
+
+**For FMA-bound kernels, throughput is nearly constant from 100% down to 12% occupancy.** Even 8 warps/SM (= 2 per scheduler) keeps the FMA pipeline fully fed. The only drop is at 255 regs where register file bank conflicts likely cause stalls.
+
+**Practical**: Don't sacrifice algorithm quality for occupancy on compute-bound kernels. Using 200 registers and 12% occupancy gives **99% of peak** FMA throughput.
+
+## Memory-bound (DRAM streaming) — occupancy is critical
+
+128 threads/block, persistent grid, 1 GB read sweep:
+
+| Requested regs | Actual regs | Warps/SM | Occupancy | BW (GB/s) | % of HBM peak |
+|---------------:|------------:|---------:|----------:|----------:|---------------:|
+| 4 | 22 | 64 | 100% | **6002** | **81%** |
+| 8 | 31 | 64 | 100% | 5840 | 79% |
+| 16 | 28 | 64 | 100% | 4848 | 65% |
+| 32 | 45 | 40 | 62% | 2859 | **39%** |
+| 64 | 76 | 24 | 38% | 1204 | 16% |
+| 96 | 104 | 16 | 25% | 539 | 7% |
+| 128 | 136 | 12 | 19% | 391 | 5% |
+| 192 | 201 | 8 | **12%** | **248** | **3%** |
+
+**Catastrophic** — dropping from 100% to 12% occupancy loses **96% of memory bandwidth**. This is because DRAM latency is ~800 cy and you need hundreds of outstanding loads to saturate HBM. At 8 warps, only ~256 loads can be in-flight simultaneously, far too few to keep the memory controllers busy.
+
+## Key insight: compute vs memory occupancy
+
+| Occupancy | FMA throughput retained | Memory BW retained |
+|----------:|------------------------:|--------------------:|
+| 100% | 100% | 100% |
+| 62% | 96% | 48% |
+| 38% | 93% | 20% |
+| 25% | 98% | 9% |
+| 12% | 99% | **4%** |
+
+**Rule of thumb**: For compute-bound kernels, occupancy doesn't matter until you hit register file bank conflicts (~255 regs). For memory-bound kernels, every drop in occupancy directly reduces achievable bandwidth. The crossover is around 40-50% occupancy — below that, memory-bound kernels fall off a cliff.
+
+**Compiler register overhead**: The compiler uses ~18-22 registers for framework (loop counters, addresses, spill management). Your declared variables add on top. Plan for 20+ register overhead when estimating occupancy.
+
+
+# Shared Memory Bank Conflicts — Quantified
+
+Single warp (32 threads), 32-bit loads, dependency chain (`sum += smem[addr]`).
+
+## Stride pattern conflict scaling
+
+| Stride | Banks hit | Conflict degree | Measured (cy) | Predicted (cy) |
+|-------:|---------:|----------------:|--------------:|---------------:|
+| 1 | 32 | 1-way (none) | 46 | 46 |
+| 2 | 16 | 2-way | 48 | 48 |
+| 3 | 32 | 1-way (none) | 46 | 46 |
+| 4 | 8 | 4-way | 52 | 52 |
+| 8 | 4 | 8-way | 60 | 60 |
+| 16 | 2 | 16-way | 76 | 76 |
+| 32 | 1 | **32-way** | **108** | 108 |
+| 33 | 32 | 1-way (coprime) | 46 | 46 |
+| 64 | 1 | 32-way | 108 | 108 |
+
+**Model**: `cost = 46 + 2 × (degree - 1)` cycles, where 46 = smem_latency (~20 cy) + FADD chain overhead (~26 cy).
+
+**Bank conflict penalty = exactly 2 cy per additional conflicting thread.** A 32-way worst case adds 62 cy (+135%). This is dramatically better than the theoretical 32× serialization — B300's shared memory handles conflicts with pipelined replays at 2 cy each, not full serializations.
+
+## Other patterns
+
+| Pattern | cy/op | Notes |
+|---------|------:|-------|
+| Broadcast (all threads, same address) | 51 | +5 cy over stride-1 (broadcast mechanism has overhead) |
+| 32-bit stride-1 (read) | 46-48 | Baseline conflict-free |
+| 64-bit stride-1 (read) | 58 | 26% more than 32-bit (occupies 2 banks per access) |
+| 4-way ILP stride-1 (read) | **16** | Independent loads pipeline: 2.9× throughput |
+| Write stride-1 | **25** | **Writes are 1.8× faster than reads** (no return data) |
+
+**Key takeaways**:
+1. **Avoid stride=32 (and multiples)** — 2.35× penalty.
+2. **Use stride=33 instead** — coprime with 32, zero conflicts.
+3. **Pipeline multiple independent smem loads** — 4-way ILP gives 2.9× speedup (16 vs 46 cy).
+4. **Writes are cheaper than reads** — 25 cy vs 46 cy, because writes fire-and-forget (no return path).
+5. **64-bit access costs only 26% more** than 32-bit — use `float2`/`double` freely for bandwidth.
+
+
+# CUB Device Reduction Performance
+
+`cub::DeviceReduce::Sum` (CUDA 13.2 bundled CUB), FP32, single-pass reduction:
+
+| Elements | GB/s | ms/reduce | % HBM peak | Notes |
+|---------:|-----:|----------:|:-----------:|-------|
+| 1K | 1.0 | 0.004 | 0% | Launch-overhead dominated |
+| 64K | 36 | 0.007 | 0.5% | |
+| 1M | 504 | 0.008 | 7% | |
+| 16M | 5416 | 0.012 | **73%** | Starting to saturate |
+| 64M | 5836 | 0.046 | 79% | |
+| 256M | **6814** | 0.158 | **92%** | Near HBM peak |
+
+CUB reduction achieves **92% of HBM bandwidth** at 256M elements — extremely well optimized. Temp storage is only 12 KB regardless of input size.
+
+## Reduction variant comparison (256M floats)
+
+| Operation | GB/s | % HBM | Notes |
+|-----------|-----:|:-----:|-------|
+| **Sum** | 6814 | 92% | Best — simple addition, high ILP |
+| **Max** | 6701 | 91% | Nearly identical to Sum |
+| **ArgMax** | 6104 | 82% | 10% overhead from index tracking |
+
+**Practical**: CUB reductions are near-optimal for 16M+ elements. For smaller inputs (<1M), the launch overhead dominates — consider fusing the reduction with the producing kernel.
+
