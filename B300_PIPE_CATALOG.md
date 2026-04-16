@@ -14865,6 +14865,18 @@ B300 data: **measured** in this catalog. H100 data: published specs + industry b
 
 **Pool management**: Async pools retain freed memory (1 GB reserved after 10 × 1 GB cycles). Call `cudaMemPoolTrimTo(pool, 0)` periodically (1.7 ms) to reclaim unused pool memory during quiet periods.
 
+## Verified Concurrent Request Capacity (actual free = 283.9 GB)
+
+| Configuration | ctx=2K | ctx=8K | ctx=32K |
+|:-------------|-------:|-------:|--------:|
+| 70B BF16 + BF16 KV | **218** | 54 | 13 |
+| 70B FP8 + BF16 KV | 324 | 81 | 20 |
+| **70B FP8 + FP8 KV** | **648** | **162** | **40** |
+| 70B INT4 + FP8 KV | **755** | 188 | 47 |
+| 8B BF16 + BF16 KV | **1019** | 254 | 63 |
+
+Verified with actual `cudaMemGetInfo` free memory (283.9 GB after 3.5 GB driver overhead).
+
 
 # Multi-Request Serving: Overlap vs Batching
 
@@ -15888,10 +15900,11 @@ SAXPY (read A, read+write B) achieves ~3.5 TB/s total HBM traffic at ≥74 SMs. 
 
 | Model | Decode tok/s | Prefill tok/s | Concurrent (ctx=2K) |
 |-------|------------:|:-------------:|:-------------------:|
-| **Llama-70B BF16** | **17** (738 µs/layer, verified) | 11853 (seq=512) | 216 |
-| Llama-70B FP8 | ~30 | — | 642 |
-| **Llama-8B BF16** | **142** | — | 1003 |
-| 70B + spec decode K=7 | **62** | — | — |
+| **Llama-70B BF16** | **17** (738 µs/layer, verified) | 11853 (seq=512) | **218** (verified) |
+| Llama-70B FP8 + FP8 KV | ~30 | — | **648** |
+| **Llama-8B BF16** | **142** | — | **1019** |
+| 70B + spec decode K=7 | **62** | — | 218 |
+| 70B INT4 + FP8 KV | — | — | **755** |
 
 ## Top Optimization Priority (decode)
 1. **Speculative decode** (3.6× with K=7, 80% acceptance)
