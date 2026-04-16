@@ -14804,7 +14804,9 @@ The earlier single-GEMM clock test showed 1.4% decode improvement. But the **ful
 - FP8 + spec decode: **~140+ tok/s** (was ~100)
 - Cost: **$0.021/1K tokens** (was $0.049)
 
-**CRITICAL PRACTICAL ADVICE: Always enable GPU boost for LLM serving.** The 1800→2032 MHz boost doesn't just give a proportional 13% improvement — it **eliminates L2 contention** for a **2.35× decode throughput improvement**. This is the single most impactful optimization in this entire catalog.
+**CRITICAL PRACTICAL ADVICE: Never lock the GPU to base clock for LLM serving.** The `nvmlDeviceSetGpuLockedClocks(dev, 1800, 1800)` base-clock lock causes severe L2 contention that **disappears when the GPU runs freely at boost**. The improvement is 2.35× — the single most impactful setting in this catalog.
+
+**NOTE**: Follow-up clock sweep showed ratio ≈ 1.0 (zero contention) at all tested frequencies after the clock lock was reset. The contention may be partially caused by the clock-locking mechanism itself interacting with the L2/HBM controller, not purely from lower frequency. Further investigation needed to separate clock-lock effects from frequency effects.
 
 **GPU clock confirmed at exactly 1.800 GHz** via kernel clock64 vs cudaEvent wall time correlation (4.9B cycles / 2.722s = 1800.0 MHz).
 
