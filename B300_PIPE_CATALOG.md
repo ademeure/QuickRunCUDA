@@ -5175,6 +5175,26 @@ Serial `mov.u64 %0, %%clock64` reads show **2 cy between consecutive reads.** Th
 
 `tcgen05.mma.kind::i8` fails with "Feature not supported." INT8 operations go through `kind::f8f6f4` with appropriate format encoding in idesc.
 
+### Smem capacity vs throughput (FMA, 128 threads/CTA)
+
+| smem/CTA | CTAs/SM | Warps/SM | FMA/cy/SM | % of peak |
+|:---------|--------:|---------:|----------:|----------:|
+| 1 KB | 16 | 64 | **989** | **100%** |
+| 16 KB | 13 | 52 | 814 | 82% |
+| 64 KB | 3 | 12 | 188 | 19% |
+| 128+ KB | 1 | 4 | 63 | 6% |
+
+**Smem directly controls occupancy → throughput.** Going from 1 KB to 64 KB/CTA = 5.3× throughput loss. Keep smem ≤ ~14 KB to allow ≥13 CTAs. For GEMM kernels needing 64+ KB tiles, the reduced occupancy is OK because the bottleneck shifts to tensor core, not scalar FMA.
+
+### Register pressure vs throughput (1 CTA/SM, 128 threads)
+
+| Regs/thread | FMA/cy/SM | Notes |
+|:-----------|----------:|-------|
+| 8-192 | 116-124 | **Flat — no impact** |
+| **255** | **6.3** | **19× collapse** (register spilling) |
+
+Up to 192 registers per thread, throughput is unaffected at 1 CTA/SM. Only at the hardware limit (255) does spilling to local memory destroy performance. B300 has 65536 registers per SM = 512 per thread at 128 threads, but ptxas limits to 255.
+
 ### Warp scheduling fairness
 
 8 warps of identical FMA work complete within **0.38%** of each other (41980–42139 cy). The scheduler is perfectly fair across warps in a CTA.
