@@ -5002,6 +5002,21 @@ The measured "latency" for rcp/lg2 without `.ftz` includes compiler-generated de
 
 **Divergence with equal work costs only 0.19 cy** (predication overhead). The compiler factors common operations out of branches — for the 2-vs-1 FMA test, the shared first FMA runs unconditionally and only the extra FMA is predicated (cost = 2 FMAs = 8.28 cy, not 3 FMAs).
 
+### Complex divergence: branch control flow overhead
+
+| Pattern | cy/iter | vs no-branch |
+|---------|--------:|:------------:|
+| No branch | 4.03 | — |
+| 2-way (predicated) | 4.22 | +0.19 cy |
+| **4-way if-else-if** | **66.8** | **16.5×** |
+| **switch (5 cases)** | **374.8** | **93×** |
+| Nested 3-deep if-else | 127.8 | 32× |
+| Asymmetric 4/1 FMA | 16.28 | longest path |
+
+**The overhead is NOT from divergent execution — it's from branch/reconvergence instructions (BRA, SYNC, WARPC).** Each branch/reconvergence pair costs ~20 cy of control flow overhead. The 4-way case has ~3 branch points = 60+ cy overhead.
+
+**Practical rule: prefer predication (`@P FMA`) over branches for small divergent code.** The compiler generates predication automatically for 2-way branches with equal work (0.19 cy), but uses full branches for complex patterns (66+ cy). For manual optimization, use `selp` / `@P` instead of if-else chains.
+
 SHFL is fully pipelined with 6-stage pipeline (24/4 = 6). With ≥6 independent SHFL chains, throughput saturates at 4 cy/op.
 
 Local memory (register spill) = **43 cy** per load — approximately L1 cache latency (39 cy) + addressing overhead. Register access = 0 cy (part of FMA pipeline). **Spilling costs 10× vs register access.**
@@ -5031,6 +5046,19 @@ All FP32 value ranges run at identical 4.03 cy: normal, subnormal, overflow, NaN
 | `__ldg` (read-only/texture) | 834 | **-22%** |
 
 **On Blackwell, default `ld.global` is fastest.** The unified L1 cache outperforms the texture cache path (__ldg). This differs from Hopper where __ldg was sometimes faster. Always prefer default loads unless you specifically need non-coherent access.
+
+### Coalescing efficiency (single warp, DRAM-resident data)
+
+| Inter-thread stride | cy/ld | Sectors/request | Slowdown vs coalesced |
+|--------------------:|------:|----------------:|----------------------:|
+| 1 (coalesced) | 64.8 | 4 | 1.00× |
+| 2 | 66.7 | 8 | **1.03×** |
+| 4 | 80.5 | 16 | 1.24× |
+| 8 | 84.6 | 32 | 1.31× |
+| 32 (scattered) | 116.3 | 32 | **1.79×** |
+| 128 (4KB page scatter) | 116.5 | 32 | **1.80×** |
+
+**Blackwell is very tolerant of non-coalesced access** — fully scattered loads (stride=32+) are only 1.8× slower than perfectly coalesced. The 32B L1 sector granularity, deep memory pipeline, and L2 caching make strided patterns efficient. Stride=2 is virtually free (+3%).
 
 ### Memory warps don't slow compute warps
 
