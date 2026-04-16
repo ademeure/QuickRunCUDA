@@ -5632,6 +5632,29 @@ Peak FP8 advantage: **1.87-1.90×** at batch=8 (8B) and batch=128 (70B). At batc
 
 **FP8 and BF16 achieve the same MFU at matched batch** — FP8's advantage is purely from the higher peak (4929 vs 2465 TFLOPS), not better utilization.
 
+### MFU at very large batch (70B BF16, measured)
+
+| Batch | TFLOPS | MFU | Tok/s |
+|------:|-------:|----:|------:|
+| 2048 | 1917 | 77.8% | 14002 |
+| 4096 | 2033 | **82.5%** | 14849 |
+| **8192** | **2135** | **86.6%** | **15596** |
+
+**MFU keeps climbing past batch=2048.** At batch=8192: 86.6% MFU = 2135 TFLOPS achieved (87% of cuBLAS peak). Throughput ceiling for 70B BF16 ≈ **15.6K tok/s** (still rising slowly).
+
+### Estimated serving cost (hardware amortization only)
+
+Based on ~$50K/GPU, 3-year amortization = $0.53/hour:
+
+| Config | Batch | Tok/s | **$/M tokens** |
+|:-------|------:|------:|--------------:|
+| 70B FP8 | 1 | 71 | $2.10 |
+| 70B FP8 | 512 | 19820 | **$0.0074** |
+| 8B FP8 | 512 | 87801 | **$0.0017** |
+| 70B BF16 | 8192 | 15596 | $0.0094 |
+
+Hardware cost per token drops **280× from batch=1 to batch=512.** Continuous batching is THE key to GPU economics.
+
 ### Llama-3.1-405B TP=2 per-GPU layer (BF16, measured)
 
 d=16384, qkv/gpu=9216, ffn/gpu=26624, **126 layers**
