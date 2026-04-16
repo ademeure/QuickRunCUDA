@@ -7380,6 +7380,39 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 **Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
 
 
+# Null stream vs explicit stream behavior
+
+| Stream type | µs/launch (solo) | µs/pair (interleaved with null) |
+|-------------|----------------:|---------------------------------:|
+| Null (default) stream | **2.055** | — |
+| Explicit default (blocking, regular create) | 2.309 | **5.107** (serialized with null) |
+| Explicit **NonBlocking** | 2.057 | **3.770** (overlaps with null) |
+
+**Findings:**
+- **Null stream ≈ NonBlocking** in solo use (~2.06 µs/launch).
+- **Blocking explicit stream is 12 % slower** (2.31 vs 2.06) — extra sync checks against null.
+- When **interleaved with null-stream launches**, blocking streams pay a serialization penalty (+35 % vs NonBlocking).
+- **Always create streams with `cudaStreamNonBlocking`** in new code — faster in every scenario, plus doesn't sync with null.
+
+
+# cudaDeviceFlushGPUDirectRDMAWrites
+
+| Scope | µs/call |
+|-------|--------:|
+| `ToOwner` (visible to this device) | **0.025** |
+| `ToAllDevices` (cross-device) | **0.886** |
+| `cudaDeviceSynchronize` (baseline) | 1.326 |
+
+**GPUDirect RDMA** on B300 (`gpuDirectRDMASupported = 1`) lets NICs write directly to GPU memory via PCIe. After a peer writes, use `cudaDeviceFlushGPUDirectRDMAWrites` to make those writes visible:
+
+- **ToOwner scope = 25 ns** — for making RDMA writes visible to the local CUDA context (cheapest; internal ordering op).
+- **ToAllDevices scope = 886 ns** — needed when multiple CUDA contexts on the same or peer GPUs read the RDMA'd data.
+
+**Both are faster than `cudaDeviceSynchronize`** — it's a lightweight visibility barrier, not a full sync.
+
+**Use case**: NCCL / UCX patterns where the network RDMAs into GPU memory. Call the flush API before the kernel that consumes the RDMA'd data.
+
+
 # __threadfence* C++ intrinsics map directly to PTX membar
 
 Single warp × 1000 iter, pure fence cost (no memory traffic):
