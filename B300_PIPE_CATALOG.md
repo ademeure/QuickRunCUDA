@@ -5310,9 +5310,42 @@ v4 writeback is 1.2× faster. For full M128×N256 epilogue (128 KB): ~4096 cy, w
 
 SAXPY achieves 42% of DRAM spec due to write-allocate overhead (each store reads the cache line first → effective 16 B/elem not 12). With write-allocate correction: ~56% effective utilization.
 
+### Clock frequency behavior
+
+| Condition | SM clock |
+|-----------|----------|
+| Idle (unlocked) | 1800 MHz |
+| Under load (unlocked) | 1800 MHz (no boost) |
+| Locked to max (2032 requested) | **1920 MHz** |
+
+**No instruction-mix-dependent throttling**: FMA-only, dual-FMA, and mixed FMA+ALU all run at the same clock. Unlike Intel CPUs (AVX-512 throttling), B300 maintains constant frequency regardless of workload type.
+
+Cycle counts (cy/op) are clock-independent. Throughput numbers (TFLOPS, TB/s) in this catalog use 1.920 GHz (clock-locked). At default 1.800 MHz, multiply by 0.9375.
+
 ### SASS instruction encoding
 
 **Every Blackwell instruction = 16 bytes** (fixed-width). Verified across 4168 instructions — no variable-length encoding. L1I capacity of ~16 KB = ~1024 instructions.
+
+### NVLink bandwidth (2×B300 via NV18, measured)
+
+| Direction | Bandwidth |
+|-----------|----------:|
+| GPU0 → GPU1 | **756 GB/s** |
+| GPU1 → GPU0 | 755 GB/s |
+| Bidirectional (simultaneous) | **1500 GB/s** (750 each) |
+
+**84% of NV18 theoretical** (18 × 50 GB/s = 900 GB/s uni). Protocol overhead accounts for 16%.
+
+### Transfer latency (PCIe vs NVLink, cudaMemcpy)
+
+| Size | PCIe H→D | PCIe D→H | NVLink P2P |
+|:----:|:--------:|:--------:|:----------:|
+| 4 B | 7.3 µs | 8.8 µs | **6.1 µs** |
+| 1 KB | 7.2 µs | 8.8 µs | 6.4 µs |
+| 64 KB | 10.0 µs | 9.8 µs | 7.6 µs |
+| 1 MB | 27 µs (39 GB/s) | 27 µs | **8.6 µs (122 GB/s)** |
+
+**NVLink P2P latency = 6.1 µs** (faster than PCIe 7.2 µs). At 1 MB: NVLink is 3× faster (122 vs 39 GB/s). PCIe peaks at ~39 GB/s (61% of Gen5 x16 spec).
 
 ### FMA precision advantage
 
