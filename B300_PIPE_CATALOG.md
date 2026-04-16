@@ -9367,7 +9367,20 @@ Real model sizes are fine (designed as clean multiples): Llama-7B FFN (11008) = 
 | 4096³ | 4.8 µs | 0.080 ms | 6% |
 | 8192³ | 4.8 µs | 0.519 ms | 0.9% |
 
-**Constant 5 µs dispatch overhead** regardless of GEMM size. For small GEMMs (≤1024), the dispatch IS the entire cost — tensor cores finish before the host returns. For 70B model (4 GEMMs × 80 layers): 1.6 ms pure dispatch overhead → **use cudaGraph to eliminate**. The worst algorithm can be up to 46% slower than the best — cuBLAS's heuristic saves you from the bad ones. Auto-tuning (e.g., `cublasLtMatmulAlgoGetHeuristic` with N>1) helps ~5% for mid-size GEMMs.
+**Constant 5 µs dispatch overhead** regardless of GEMM size.
+
+### Cold vs warm GEMM (DRAM vs L2-cached weights, measured)
+
+| Size | Weights | Cold | Warm | Cold/Warm |
+|-----:|:-------:|-----:|-----:|:---------:|
+| 4096³ | 32 MB | 67 T | 1706 T | **26×** |
+| 8192³ | 128 MB | 480 T | 2118 T | **4.4×** |
+
+**Cold GEMM is 4.4× slower at 8K³.** First-touch weight loading from DRAM adds ~1.8 ms. For LLM inference: weights (70 GB) don't stay in L2 between layers (126 MB) → each layer sees cold weights. This confirms decode is fundamentally DRAM-limited.
+
+### Workspace size: ZERO effect (measured, FP16)
+
+cuBLAS selects workspace-free algorithms for standard square/rectangular GEMMs. Workspace from 0 to 256 MB produces identical throughput (2122 T at 8192³, 1730 T at 4096³). No need to pre-allocate workspace for common shapes. For small GEMMs (≤1024), the dispatch IS the entire cost — tensor cores finish before the host returns. For 70B model (4 GEMMs × 80 layers): 1.6 ms pure dispatch overhead → **use cudaGraph to eliminate**. The worst algorithm can be up to 46% slower than the best — cuBLAS's heuristic saves you from the bad ones. Auto-tuning (e.g., `cublasLtMatmulAlgoGetHeuristic` with N>1) helps ~5% for mid-size GEMMs.
 
 ### cuBLAS with REAL model shapes (measured, BF16, cuBLAS 13.4)
 
