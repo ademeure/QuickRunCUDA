@@ -14831,6 +14831,21 @@ Re-locking to 1800 MHz via NVML no longer takes effect (GPU stays at 2032), conf
 **For serving reliability**: B300 SXM6 sustains full tensor core throughput indefinitely. No burst-then-throttle behavior.
 
 
+# cuBLAS Kernel Internals (ncu-verified)
+
+For the decode gate projection (1×28672×8192 BF16):
+
+| Parameter | Value |
+|-----------|------:|
+| Block size | 256 threads (8 warps) |
+| Grid size | 1568 blocks (~10.6 per SM) |
+| **Registers per thread** | **255** (maximum!) |
+| SASS instructions | 3.17M total |
+| Occupancy | 1 block/SM (255 regs × 256 threads = 65280 ≈ full 65536 RF) |
+
+cuBLAS uses the **maximum register allocation** — 255 registers per thread leaves only 1 block per SM. This maximizes data reuse in the register file (each thread holds its tile of the output matrix). The 1568-block grid runs in ~10.6 waves of 148 blocks.
+
+
 # Cross-Pipe Dependency Latency Table
 
 Measured as dependent instruction chains (single warp, ~17 cy loop overhead):
