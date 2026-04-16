@@ -218,11 +218,20 @@ static __device__ __forceinline__ void process_group(
     float2 errs = unpack_f32x2(err_pair);
 
     // Select best candidate
-    // Pack u16 bytes into u32 for output
-    unsigned int lo0 = (bits_0[0]&0xFF) | ((bits_0[1]&0xFF)<<8) | ((bits_0[2]&0xFF)<<16) | ((bits_0[3]&0xFF)<<24);
-    unsigned int hi0 = (bits_0[4]&0xFF) | ((bits_0[5]&0xFF)<<8) | ((bits_0[6]&0xFF)<<16) | ((bits_0[7]&0xFF)<<24);
-    unsigned int lo1 = (bits_1[0]&0xFF) | ((bits_1[1]&0xFF)<<8) | ((bits_1[2]&0xFF)<<16) | ((bits_1[3]&0xFF)<<24);
-    unsigned int hi1 = (bits_1[4]&0xFF) | ((bits_1[5]&0xFF)<<8) | ((bits_1[6]&0xFF)<<16) | ((bits_1[7]&0xFF)<<24);
+    // Pack u16 bytes into u32 for output.
+    // quant_dequant_fused guarantees bits[15:8]=0, so 0xFF mask is logically
+    // redundant. Omitting masks generates better code at low reg counts (44 regs),
+    // but the swizzled path (64 regs) schedules better WITH masks.
+#ifdef CONTIGUOUS_SCALES
+    #define BPAK(x) (x)
+#else
+    #define BPAK(x) ((x) & 0xFF)
+#endif
+    unsigned int lo0 = BPAK(bits_0[0]) | (BPAK(bits_0[1])<<8) | (BPAK(bits_0[2])<<16) | (BPAK(bits_0[3])<<24);
+    unsigned int hi0 = BPAK(bits_0[4]) | (BPAK(bits_0[5])<<8) | (BPAK(bits_0[6])<<16) | (BPAK(bits_0[7])<<24);
+    unsigned int lo1 = BPAK(bits_1[0]) | (BPAK(bits_1[1])<<8) | (BPAK(bits_1[2])<<16) | (BPAK(bits_1[3])<<24);
+    unsigned int hi1 = BPAK(bits_1[4]) | (BPAK(bits_1[5])<<8) | (BPAK(bits_1[6])<<16) | (BPAK(bits_1[7])<<24);
+    #undef BPAK
     if (errs.y < errs.x) {
         out_lo   = lo1;
         out_hi   = hi1;
@@ -407,6 +416,7 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
 #if GROUPS_PER_THREAD == 2 && defined(STRIDE_1024)
     int grp_arr[2] = { group_a, group_b };
 #endif
+
     #pragma unroll
     for (int g = 0; g < GROUPS_PER_THREAD; ++g) {
 #if GROUPS_PER_THREAD == 2 && defined(STRIDE_1024)
@@ -417,17 +427,11 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
 #ifdef CONTIGUOUS_SCALES
         long long tgt = grp;
 #elif defined(COLS_PARAM_CONST) && COLS_PARAM_CONST == 2048
-        // Direct bit permutation — the cuBLAS e8 swizzle for CPC=2048 is:
-        //   grp bits [1:0]   → offset [1:0]    (innerK, identity)
-        //   grp bits [17:16] → offset [3:2]     (innerM)
-        //   grp bits [15:11] → offset [8:4]     (outerM)
-        //   grp bits [10:2]  → offset [17:9]    (kTileIdx)
-        //   grp bits [31:18] → offset [31:18]   (mTileIdx, identity)
         long long tgt = (grp & 0x3)
                       | (((grp >> 16) & 0x3) << 2)
                       | (((grp >> 11) & 0x1F) << 4)
                       | ((long long)((grp >> 2) & 0x1FF) << 9)
-                      | (grp & ~0x3FFFFLL & ~0x3LL);  // bits [31:18] preserved
+                      | (grp & ~0x3FFFFLL & ~0x3LL);
 #elif defined(COLS_PARAM_CONST)
         int col = grp & (COLS_PARAM_CONST - 1);
         int row = grp / COLS_PARAM_CONST;
