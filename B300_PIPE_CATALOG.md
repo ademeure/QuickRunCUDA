@@ -15262,7 +15262,17 @@ FP8 gives **1.71× speedup in sustained chains** (vs ~1.9× for isolated GEMMs).
 
 The `.cs` (streaming) cache hint provides **only 5% improvement** in chains. The contention is in the HBM read/write path, not the L2 replacement policy. Streaming data still flows through L2, and the eviction write-backs still compete with new reads.
 
-**The L2 contention is a fundamental HBM controller bottleneck**, not an L2 policy issue. The only effective mitigations are reducing weight data size (FP8/INT4) or distributing weights across GPUs (tensor parallelism).
+## Same vs different weights: identical contention
+
+| Chain type | Per GEMM µs | Ratio |
+|-----------|----------:|------:|
+| Single (baseline) | 74 | 1.0× |
+| Same weight ×7 | **170** | **2.29×** |
+| Different weights ×7 | **170** | **2.29×** |
+
+**Same and different weights show identical contention!** The degradation is NOT from L2 eviction of different data — it's a **kernel scheduling pipeline effect**. Between back-to-back GEMMs, there's an inherent underutilization gap where the HBM controllers aren't fully loaded. Each 470 MB weight exceeds L2 anyway, so re-reading the same weight requires a full HBM re-read.
+
+**The ~96 µs overhead per GEMM** (170-74) is from the inter-kernel scheduling gap: thread block dispatch, SM warmup, and memory pipeline fill time. This is fundamental to CUDA's kernel-per-GEMM execution model — only kernel fusion (custom GEMM pipelines) could eliminate it.
 
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
