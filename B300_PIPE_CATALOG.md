@@ -5669,6 +5669,37 @@ Hardware cost per token drops **280× from batch=1 to batch=512.** Continuous ba
 
 Peak = 886 W (below ~1000 W TDP — BF16 GEMMs don't hit the power limit).
 
+### FP8 vs BF16 power and energy efficiency (measured, 70B)
+
+| Workload | BF16 W | FP8 W | BF16 tok/s | FP8 tok/s | BF16 J/tok | **FP8 J/tok** |
+|----------|:------:|:-----:|:----------:|:---------:|:----------:|:-------------:|
+| b=1 | 560 | 533 | 41 | 71 | 13.7 | **7.5** |
+| b=64 | 709 | 675 | 2497 | 4371 | 0.28 | **0.15** |
+| b=512 | 859 | 777 | 11584 | 19820 | 0.074 | **0.039** |
+| prefill | 886 | 816 | 14778 | — | 0.060 | — |
+
+**FP8 draws 5-10% LESS power than BF16** despite 1.7-2× more throughput → **FP8 is 1.8-1.9× more energy-efficient** across all batch sizes. Less memory traffic = less memory subsystem power.
+
+Energy per token drops **350× from b=1 to b=512** (13.7 → 0.039 J/tok for FP8).
+
+### KV cache memory limits (FP16 KV, FP8 weights)
+
+| Model | Free HBM | Ctx=2K max batch | Ctx=4K | Ctx=8K | Ctx=32K |
+|:------|:--------:|-----------------:|-------:|-------:|--------:|
+| **8B** | 267 GB | **994** | 497 | 248 | 62 |
+| **70B** | 206 GB | **306** | **153** | 76 | **19** |
+| **405B TP=2** | 56 GB | 52 | 26 | 13 | 3 |
+
+KV cache per request: 70B at 4K = 1.3 GB, at 32K = 10.7 GB.
+
+**Real serving throughput (limited by KV cache, not compute):**
+- 70B FP8, ctx=4K, max b=153: ~8K tok/s (from measured b=128 data)
+- 70B FP8, ctx=8K, max b=76: ~4K tok/s
+- 70B FP8, ctx=32K, max b=19: ~700 tok/s
+- 8B FP8, ctx=4K, max b=497: ~88K tok/s
+
+**Context length is the real bottleneck** — doubling context halves max batch and throughput.
+
 ### Prefill (time-to-first-token) at 80-layer level (measured, 70B BF16)
 
 | Prompt length | TTFT | MFU | Tok/s |
