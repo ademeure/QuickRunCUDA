@@ -15095,6 +15095,39 @@ Batch=32, Llama-70B GQA (Q=8192, KV=1024 each):
 
 **Practical**: Always fuse QKV into a single GEMM (concatenate Wq, Wk, Wv along the N dimension). Similarly, fuse Gate+Up projections into a single N=57344 GEMM.
 
+
+# MoE (Mixture of Experts) GEMM Patterns
+
+Mixtral-like: expert_dim=14336, hidden=4096, 8 experts, top-2 routing.
+
+## Single expert GEMM (14336×4096 weight = 112 MB)
+
+| Tokens/expert (M) | µs | TFLOPS | Notes |
+|-------------------:|---:|-------:|-------|
+| 1 | 21 | 5.5 | Weight-loading dominated |
+| 8 | 23 | 40 | Memory-bound floor |
+| 32 | 23 | 166 | Still flat |
+| 64 | 24 | 315 | |
+| 128 | 25 | 608 | Starting to scale |
+
+Each expert GEMM takes ~23 µs (loading 112 MB at ~5 TB/s). The M dimension has nearly zero effect until M≈128 — pure weight-loading behavior.
+
+## MoE overhead: 8 sequential experts vs 1 dense
+
+| Method | µs | Notes |
+|--------|---:|-------|
+| **8 sequential experts** (M=8 each) | **319** | 8 × 40 µs per expert |
+| 1 combined dense GEMM (M=64) | 24 | Same total FLOPs |
+| **MoE overhead** | **13.4×** | 8× weight loading |
+
+**MoE is 13.4× slower than equivalent dense computation** because it loads 8× the weight data (8 experts × 112 MB = 896 MB vs 112 MB for one dense layer). The computation (FLOPs) is identical.
+
+**Practical MoE optimizations**:
+1. **Expert parallelism**: distribute experts across GPUs (each GPU holds 1-2 experts)
+2. **Larger batch**: M=128 per expert achieves 608 TFLOPS (starts becoming compute-bound)
+3. **FP8 expert weights**: 2× less weight data per expert
+4. **Expert weight caching**: if the same experts are repeatedly activated, their weights may stay in L2
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
