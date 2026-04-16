@@ -5540,15 +5540,23 @@ The speedup is less than theoretical 2× because: output is still BF16 (same wri
 
 **Batch=8 is the sweet spot**: 2.7 ms for 32 layers → 3K tok/s. At batch=512: 78K tok/s — B300 can serve many concurrent users with an 8B model.
 
-### Summary: measured decode throughput on B300 (GEMM-only, BF16)
+### DEFINITIVE: measured decode throughput on B300 (GEMM-only, cuBLAS)
 
 | Model | batch=1 | batch=8 | batch=128 | batch=512 |
 |:------|--------:|--------:|----------:|----------:|
-| **Llama-70B** | 40 tok/s | 365 | 4038 | 11278 |
+| **Llama-70B BF16** | 40 tok/s | 365 | 4038 | 11278 |
 | **Llama-70B FP8** | **55** | **565** | **7551** | **18887** |
-| **Llama-8B** | 96 | **2993** | 30512 | **77937** |
+| **Llama-8B BF16** | 96 | 2993 | 30512 | 77937 |
+| **Llama-8B FP8** | **108** | **5680** | **53446** | **122177** |
 
-Add ~15% for attention + RMSNorm overhead at batch=1.
+**FP8 speedup over BF16 (measured):**
+
+| Model | batch=1 | batch=8 | batch=128 | batch=512 |
+|:------|:-------:|:-------:|:---------:|:---------:|
+| Llama-70B | 1.38× | 1.55× | **1.87×** | 1.67× |
+| Llama-8B | 1.13× | **1.90×** | 1.75× | 1.57× |
+
+Peak FP8 advantage: **1.87-1.90×** at batch=8 (8B) and batch=128 (70B). At batch=1: only 1.1-1.4× (dispatch overhead dominates). Add ~15% for attention + RMSNorm.
 
 ### Pipeline overhead: GEMM + elementwise interleaved (measured)
 
