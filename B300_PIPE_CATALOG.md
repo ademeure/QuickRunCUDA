@@ -7380,6 +7380,32 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 **Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
 
 
+# Work-stealing vs grid-stride — grid-stride wins 2.8× for uniform work
+
+10 000 uniform work items (each = 100 FMAs):
+
+| Pattern | Time | Items/s |
+|---------|-----:|--------:|
+| **Work-stealing persistent** (148 CTAs × 128 thr, global atomic counter) | 0.017 ms | **587 M/s** |
+| **Grid-stride** (ceil(10000/128) blocks × 128 thr) | 0.006 ms | **1 628 M/s** |
+| Grid-stride (148×4 blocks × 128 thr) | 0.006 ms | 1 645 M/s |
+
+**Grid-stride is 2.8× faster** than work-stealing for uniform work. The atomic counter per work item (even though only 1 thread per warp atomically pulls) adds significant overhead that serializes warps.
+
+**When to use work-stealing**:
+- Work items have **highly variable compute** (some 10× longer than others — adaptive balancing helps).
+- Work is **dynamically generated** (not known at kernel launch).
+- You need **early-exit** behavior when some condition is met.
+
+**When NOT to use work-stealing** (most cases):
+- Uniform work → use grid-stride. No atomic counter overhead.
+- Tree/graph traversal with amortized uniform bucket sizes → grid-stride across buckets.
+
+The atomic counter is the bottleneck — at 148 CTAs × 4 warps = 592 warps contending, each warp pulls ~17 work items but has to serialize on the counter. 10000 atomics / 592 warps = 17 atoms per warp × ~30 cy (atomic serialize) = 510 cy extra per warp = ~35 % of total time spent on counter contention.
+
+**Hybrid pattern** (not shown): pre-batch work items in groups of 16-32 per atomic pull. Reduces counter contention 16-32× while still allowing dynamic balance.
+
+
 # Null stream vs explicit stream behavior
 
 | Stream type | µs/launch (solo) | µs/pair (interleaved with null) |
