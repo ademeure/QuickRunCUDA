@@ -7524,6 +7524,118 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 Most ML inference ops are below OI = 1 → **memory-bound → fusion is king**.
 
 
+# B300 vs H100 vs A100 — generational scaling
+
+Using published specs + our B300 measurements. A100/H100 numbers from NVIDIA datasheets.
+
+## Raw specs
+
+| Spec | A100 SXM (2020) | H100 SXM (2022) | **B300 SXM6 (2025)** | B300/A100 | B300/H100 |
+|------|:-----:|:-----:|:-----:|:--------:|:--------:|
+| SMs | 108 | 132 | **148** | 1.37× | 1.12× |
+| FP32 TFLOPS (scalar) | 19.5 | 67 | **72** | 3.7× | 1.07× |
+| FP16 tensor TFLOPS | 312 | 990 | **2 325** (spec) / **2 034** (measured 8K) | 6.5× | 2.1× |
+| FP8 tensor TFLOPS | — | 1 979 | **4 651** (measured micro) | — | 2.3× |
+| HBM capacity | 80 GB | 80 GB | **268 GB** | 3.4× | 3.4× |
+| HBM bandwidth | 2.0 TB/s | 3.35 TB/s | **7.4 TB/s** (measured) | 3.7× | 2.2× |
+| L2 cache | 40 MB | 50 MB | **126.5 MB** | 3.2× | 2.5× |
+| NVLink BW (bidi) | 600 GB/s | 900 GB/s | **956 GB/s** (measured) | 1.6× | 1.06× |
+| SM clock (boost) | 1 410 MHz | 1 830 MHz | **2 032 MHz** | 1.44× | 1.11× |
+| TDP | 400 W | 700 W | **~490 W** (measured under tensor load) | 1.23× | 0.70× |
+| Compute capability | sm_80 | sm_90 | **sm_103a** | — | — |
+
+## Per-watt efficiency (TFLOPS / TDP)
+
+| Metric | A100 | H100 | **B300** | B300/A100 | B300/H100 |
+|--------|-----:|-----:|--------:|---------:|---------:|
+| FP16 tensor / W | 0.78 | 1.41 | **4.17** | **5.3×** | **3.0×** |
+| HBM BW / W (GB/s/W) | 5.0 | 4.8 | **15.1** | **3.0×** | **3.2×** |
+
+## LLM decode throughput estimate (7B, batch=1, FP16)
+
+| GPU | HBM BW | Weight load time (14 GB) | Est. tokens/s |
+|-----|-------:|-------------------------:|---------------:|
+| A100 | 2.0 TB/s | 7.0 ms | ~143 |
+| H100 | 3.35 TB/s | 4.2 ms | ~238 |
+| **B300** | **7.4 TB/s** | **1.89 ms** | **~529** |
+| **B300/A100** | | | **3.7×** |
+
+## Where B300's gains come from
+
+1. **Memory bandwidth (+3.7× vs A100)** — the biggest single improvement for inference. HBM3e at 7.4 TB/s vs HBM2e at 2.0.
+2. **Tensor core throughput (+6.5× FP16 vs A100)** — new tcgen05 unified tensor path.
+3. **Memory capacity (+3.4×)** — fits 70B FP16 on one GPU (impossible on A100/H100 80 GB).
+4. **L2 cache (+3.2×)** — 126 MB vs 40 MB; larger models' KV caches stay in L2.
+5. **Power efficiency (+5.3× FP16/W vs A100)** — more compute per watt = higher rack density.
+
+NVLink gains are modest (+1.06× vs H100) — same NV18 fabric, similar topology.
+
+
+# Kernel optimization checklist (ordered by impact)
+
+Based on all measurements in this catalog, here's the priority order for optimizing any CUDA kernel on B300:
+
+## Step 1: Identify the bottleneck (30 seconds)
+```bash
+ncu --section SpeedOfLight -c 1 ./myapp
+```
+- Memory > 60 % → memory-bound (most common)
+- SM > 60 % → compute-bound
+- Both < 30 % → latency-bound (occupancy problem)
+
+## Step 2: Memory-bound kernel fixes (most kernels)
+
+| Fix | Expected gain | Effort |
+|-----|:--------------|:-------|
+| **Fuse with adjacent kernels** | **N× for N ops** | Medium |
+| Use uint4 loads (16 B/thread) | 2.6× vs u32 | Low |
+| Use 2×uint4 loads (32 B/thread) | +10 % vs 1×uint4 | Low |
+| Coalesce memory access (stride-1) | **8× vs scattered** | Medium |
+| Smem-privatize histograms/reductions | **200×** | Medium |
+| Use `__reduce_add_sync` over shuffle tree | 40 % faster | Low |
+| Use `max(x,0)` not `x>0?x:0` for relu | 2× | Trivial |
+
+## Step 3: Compute-bound kernel fixes
+
+| Fix | Expected gain | Effort |
+|-----|:--------------|:-------|
+| Use tensor cores (tcgen05.mma / cuBLAS) | **30-90×** vs scalar | High |
+| Use FP8 instead of FP16 (if accuracy OK) | 2× tensor throughput | Medium |
+| Use FFMA2 (packed FP32) / HFMA2 (packed FP16) | same peak but better encoding | Low |
+| Avoid div.rn.f32 (use div.approx) | **40×** for division | Trivial |
+| Avoid POPC/CLZ/BFIND in inner loops | 4× slower than ALU | Low |
+| Avoid function pointers | 5× dispatch overhead | Medium |
+
+## Step 4: Latency-bound kernel fixes
+
+| Fix | Expected gain | Effort |
+|-----|:--------------|:-------|
+| **Increase warps/SM** (more CTAs or threads/CTA) | Linear to 64 warps | Low |
+| Add ILP (unroll inner loop, multiple loads in flight) | Up to 33× for loads | Low |
+| Use `__launch_bounds__(max_thr, min_CTAs)` to control occupancy | 10-50 % | Low |
+| Reduce register pressure (fewer live variables) | Prevents spill; 10× if spilling | Medium |
+
+## Step 5: Launch overhead fixes
+
+| Fix | Expected gain | Effort |
+|-----|:--------------|:-------|
+| Use CUDA Graphs (≥ 10 kernels) | 3.7× per-kernel overhead | Medium |
+| Enable `ProgrammaticStreamSerialization` | 28 % faster launch | Trivial |
+| Use persistent kernels for tiny work | Eliminate per-launch 2 µs | Medium |
+| Use `cudaMallocAsync` not `cudaMalloc` | 50× faster alloc | Trivial |
+| Use NonBlocking streams | 12 % faster interleaved | Trivial |
+
+## Step 6: Advanced (diminishing returns)
+
+| Fix | When |
+|-----|------|
+| Warp specialization with TMA async | Only for GEMM-class with pipelined stages |
+| Green contexts for SM partitioning | Multi-tenant serving |
+| 16-CTA cluster opt-in | When DSMEM > 8 CTAs needed |
+| setmaxnreg register redistribution | Warp-specialized pipelines |
+| L2 persist policy | Hot working set < 32 MB with streaming eviction |
+
+
 # Quick bottleneck identification with ncu
 
 **One-liner to identify if a kernel is memory-bound or compute-bound:**
