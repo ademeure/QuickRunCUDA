@@ -1168,6 +1168,16 @@ Relative tier: smem (17 TB/s) ≈ L2 (10 TB/s) × 1.7; 3× DRAM (7.3 TB/s). The 
 
 **B300 smem load latency = 24 cycles.** Consistent with Blackwell's 228 KB distributed shared memory. Latency is stride-independent (no cache hierarchy in smem).
 
+**Smem load width comparison** (pointer chase, includes address computation):
+
+| Width | Latency | Bytes/op |
+|------:|--------:|---------:|
+| 32b | 34.1 cy | 4 |
+| 64b | 38.9 cy | 8 |
+| 128b (v4) | 38.9 cy | 16 |
+
+**128b and 64b loads have identical latency** — no penalty for wider access. The ~5 cy extra vs 32b is address computation overhead, not smem hardware. Use 128b loads for maximum per-instruction bandwidth.
+
 ### tcgen05 tensor-memory R/W throughput (measured — single warp, serial chain)
 
 Full alloc + st/ld + dealloc round-trip verified working on sm_103a (write pattern read back correctly):
