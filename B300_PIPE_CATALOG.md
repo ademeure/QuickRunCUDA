@@ -7880,7 +7880,55 @@ Setting idesc bit 31 = 1 on the block-scaled path DOES give K=96:
 
 K=96 draws only 7 % more power than K=64 for 50 % more throughput. At 457 W for 14.8 PFLOPS, the block-scaled FP4 path is **32.4 TFLOPS/W** — the most power-efficient tensor-core mode on B300.
 
-Note: these measurements used constant smem data (0x33) and uninitialized TMEM for A. With truly random data, power would be higher (closer to 600-800 W based on f8f6f4 scaling). Production weights are structured (not random), so expect 450-600 W in practice.
+### Full data-pattern power sweep (mxf4nvf4.block16, smem_B varied, 30 NVML samples, ~6s each)
+
+| K | Data pattern | Power (W) | PFLOPS | TFLOPS/W |
+|--:|-------------|----------:|-------:|---------:|
+| 64 | zeros | 399 | 9.9 | **24.8** |
+| 64 | constant 0x55 (FP4 3.0) | 400 | 9.9 | 24.8 |
+| 64 | all-ones 0xFF | 401 | 9.9 | 24.7 |
+| 64 | half-random half-zero | 540 | 9.9 | 18.3 |
+| 64 | **pseudo-gaussian (hash)** | **602** | 9.8 | **16.3** |
+| 64 | **random (xorshift)** | **661** | 9.9 | **15.0** |
+| | | | | |
+| 96 | constant 0x55 | 424 | 14.8 | **34.9** |
+| 96 | zeros | 428 | 14.8 | 34.6 |
+| 96 | all-ones 0xFF | 428 | 14.8 | 34.6 |
+| 96 | half-random half-zero | 644 | 14.8 | 23.0 |
+| 96 | **pseudo-gaussian** | **785** | 14.8 | **18.9** |
+| 96 | **random (xorshift)** | **825** | 14.8 | **17.9** |
+
+**Key findings:**
+1. **Random data draws 65 % more power** than constant data (661 vs 399 W at K=64; 825 vs 424 W at K=96).
+2. **Pseudo-gaussian slightly less than pure random** (602 vs 661 at K=64; 785 vs 825 at K=96) — gaussian has more near-zero values = less switching.
+3. **Half-random half-zero is intermediate** (540/644 W) — exactly what you'd expect from 50 % zero data.
+4. **Constant patterns (zeros, 0x55, 0xFF) are all identical** (~400/425 W) — the tensor core doesn't distinguish constant values, only switching activity matters.
+5. **K=96 draws ~25 % more power than K=64 for the same data pattern** — 50 % more compute, 25 % more power = positive efficiency scaling.
+
+### Cross-format power comparison (all at 128 cy/mma, varied data)
+
+| Format | PFLOPS | Zeros/const (W) | Random (W) | Δ power | TFLOPS/W (random) |
+|--------|-------:|----------------:|-----------:|--------:|------------------:|
+| FP16 (kind::f16) | 2.5 | 470-484 | **1 099** | 2.3× | 2.3 |
+| FP8 E4M3 (f8f6f4) | 4.9 | 487-497 | **1 092** | 2.2× | 4.5 |
+| **FP4 mxf4nvf4 K=64** | **9.9** | 399-401 | **661** | **1.65×** | **15.0** |
+| **FP4 mxf4nvf4 K=96** | **14.8** | 424-428 | **825** | **1.94×** | **17.9** |
+
+**The block-scaled FP4 path (UTCOMMA) draws MUCH less power than f8f6f4/f16 (UTCQMMA) with random data.** 661 W vs 1092 W for random → block-scaled consumes 40 % less power per tensor-core cycle.
+
+### Bit-masking: zeroing lower bits of random data
+
+| Format | Mask | Power (W) | vs full random |
+|--------|------|----------:|---------------:|
+| FP16 | 0xFFFFFFFF (full) | 1 095 | baseline |
+| FP16 | 0xFFFFFF00 (low 8b=0) | 1 043 | -5 % |
+| FP16 | 0xFFFF0000 (low 16b=0) | 968 | -12 % |
+| FP8 | 0xFFFFFFFF (full) | 1 095 | baseline |
+| FP8 | 0xF0F0F0F0 (low nibble=0) | 1 072 | -2 % |
+
+**Zeroing low bits reduces power marginally** (5-12 %) — the upper bits still toggle randomly, driving most of the switching activity. FP8 low-nibble masking has almost no effect (-2 %) because the 4 masked bits per byte are a small fraction of total wire toggles.
+
+**Production inference estimate**: trained model weights approximate gaussian with structured mantissa → expect **~600-800 W** for FP4 K=96, **~900-1000 W** for FP8/FP16 with real data. Block-scaled FP4 is the most power-efficient tensor path.
 
 **Comparison to published specs:**
 - NVIDIA B300 FP4 dense spec: ~10 PFLOPS → **9.9 PFLOPS = 99 % of spec**
