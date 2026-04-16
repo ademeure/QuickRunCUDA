@@ -5655,6 +5655,33 @@ Based on ~$50K/GPU, 3-year amortization = $0.53/hour:
 
 Hardware cost per token drops **280× from batch=1 to batch=512.** Continuous batching is THE key to GPU economics.
 
+### Power consumption during inference (measured via NVML, 70B BF16)
+
+| Workload | Power | MFU | Tok/s | **Tok/s/W** |
+|----------|------:|----:|------:|:----------:|
+| Idle | 183 W | — | — | — |
+| Decode b=1 | **560 W** | 0.2% | 41 | 0.07 |
+| Decode b=64 | 709 W | 14% | 2497 | 3.5 |
+| Decode b=512 | 859 W | 64% | 11584 | **13.5** |
+| Prefill s=4K | **886 W** | 82% | 14778 | **16.7** |
+
+**Power efficiency improves 229× from batch=1 to prefill** (0.07 → 16.7 tok/s/W). Batch=1 draws 560 W despite 0.2% MFU — the memory subsystem consumes significant power for weight loading.
+
+Peak = 886 W (below ~1000 W TDP — BF16 GEMMs don't hit the power limit).
+
+### Prefill (time-to-first-token) at 80-layer level (measured, 70B BF16)
+
+| Prompt length | TTFT | MFU | Tok/s |
+|--------------:|-----:|----:|------:|
+| 128 tokens | **57 ms** | 12.5% | 2244 |
+| 256 tokens | **37 ms** | 38.0% | 6839 |
+| 512 tokens | **45 ms** | 63.0% | 11345 |
+| 1024 tokens | 83 ms | 68.5% | 12332 |
+| 2048 tokens | **145 ms** | 78.4% | 14111 |
+| 4096 tokens | 277 ms | 82.1% | 14778 |
+
+**TTFT for 2K prompt: 145 ms.** s=256 is faster than s=128 (37 vs 57 ms) because 128 tokens doesn't fill tensor core tiles efficiently.
+
 ### Llama-3.1-405B TP=2 per-GPU layer (BF16, measured)
 
 d=16384, qkv/gpu=9216, ffn/gpu=26624, **126 layers**
