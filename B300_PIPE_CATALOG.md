@@ -5496,7 +5496,22 @@ M=1 achieves 5.8 TB/s effective weight bandwidth (better than raw DRAM streaming
 | 512 | 0.354 | 28.3 | 18079 |
 | 1024 | 0.636 | 50.9 | 20126 |
 
-**Batch=1 to batch=64: essentially FREE** — 64× more tokens for only 5% more latency (15.7→16.5 ms). GEMMs are memory-bandwidth-limited; each token adds negligible time until compute-bound at batch≈128+.
+### DEFINITIVE: full Llama-3-70B layer (4 GEMMs, exact shapes, measured)
+
+| Batch | NN layout | TN layout | TN effect | 80-layer | Tokens/s |
+|------:|:---------:|:---------:|:---------:|:--------:|:--------:|
+| 1 | 0.326 ms | 0.314 ms | -3.6% | 25.1 ms | **40** |
+| 8 | 0.273 ms | 0.287 ms | +4.9% | **21.9 ms** | **365** |
+| 64 | 0.314 ms | 0.321 ms | +2.4% | 25.1 ms | 2550 |
+| 128 | 0.396 ms | 0.379 ms | **-4.3%** | 30.3 ms | 4038 |
+| 256 | 0.470 ms | **0.402 ms** | **-14.4%** | 32.2 ms | **6809** |
+| 512 | 0.567 ms | 0.513 ms | -9.6% | 41.0 ms | 11278 |
+
+**Measured decode throughput: 40 tok/s at batch=1, 365 at batch=8, 11.3K at batch=512** (GEMM-only, add ~15% for attention+norm).
+
+**Batch=8 is fastest per-layer** (0.273 ms = 21.9 ms for 80L). NOT batch=1! Better dispatch efficiency at M=8.
+
+**TN layout saves 10-14% at batch≥128** — use `CUBLAS_OP_T` for FFN weight matrices at larger batch. Crossover at batch≈128.
 
 ### Pipeline overhead: GEMM + elementwise interleaved (measured)
 
