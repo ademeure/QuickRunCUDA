@@ -7345,6 +7345,70 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# CUDA virtual memory API (cuMemCreate / cuMemMap / cuMemSetAccess)
+
+Low-level virtual memory management for growable / aliased device arrays. Steps:
+
+| Call | µs | Purpose |
+|------|---:|---------|
+| `cuMemGetAllocationGranularity(MIN/REC)` | - | Returns **2 MB** (HBM page size) |
+| `cuMemCreate(128 MB)` | **19** | Allocate physical memory |
+| `cuMemAddressReserve(128 MB)` | 7.75 | Reserve VA range (no backing yet) |
+| `cuMemMap` | 2.25 | Bind backing to VA |
+| **`cuMemSetAccess`** | **50** | Set page-table permissions (most expensive) |
+| `cuMemUnmap` | 45.5 | Unbind |
+| `cuMemAddressFree` | 4.75 | Release VA range |
+| `cuMemRelease` | 55 | Release physical |
+
+**Full alloc+map+access cycle = 79 µs** (vs plain `cudaMalloc` ~18 µs for same size). Use low-level VMM only when you need:
+- Growable arrays (reserve huge VA, back partial ranges on demand)
+- Multi-device aliasing (same physical backing mapped into multiple GPU VAs)
+- Fine-grained permission control
+- Peer access without symmetric VA sharing
+
+
+# Wide-load patterns — 32 B/thread is the sweet spot
+
+1 GB streaming read, 4736 × 512 threads:
+
+| Load width | GB/s | × vs 4 B | % of HBM peak (7.4 TB/s) |
+|-----------:|-----:|---------:|-------------------------:|
+| 4 B (u32) | 2 453 | 1.0× | 33 % |
+| 16 B (uint4) | 6 327 | **2.6×** | 85 % |
+| **32 B (2×uint4)** | **6 979** | **2.8×** | **94 %** |
+| 64 B (4×uint4) | 6 869 | 2.8× | 93 % (no gain) |
+
+**Findings:**
+- **u32 loads waste 66 % of HBM BW** — the LSU issue rate caps out before saturating DRAM.
+- **16 B (u128) loads recover 85 %** of HBM.
+- **32 B/thread (2 consecutive u128) peaks at 94 %** — 2 loads in flight per thread keeps the memory pipeline full.
+- **64 B/thread doesn't help further** — at 32B the LSU queue is already saturated.
+
+**Design rule for memory-bound streaming**: use **uint4 loads minimum, 2×uint4 for peak HBM**. Each thread should issue ≥ 2 loads per iteration of an inner loop to hide load latency.
+
+
+# Graph while-loop — device-side iteration
+
+Graph with `cudaGraphCondTypeWhile` where the body kernel atomically increments a counter and sets the condition to 0 once counter ≥ 100:
+
+```
+Counter after 1 launch: 101 (loop terminated correctly)
+Total time for 101 iterations: 622 µs = 6.16 µs per iter
+```
+
+**Findings:**
+- **Device-side while loop works** — the graph runs entirely on GPU with no CPU involvement.
+- **Per-iter cost = 6.16 µs** = kernel-launch + execution + condition check.
+- Compare to host-driven loop: each iter would be 2 µs launch + ~1 µs exec + host sync ≈ similar magnitude, BUT host-driven adds host overhead on every iter.
+
+**Use cases:**
+- Persistent iteration on dynamic data where iteration count is runtime-determined.
+- Convergence-based loops (run until loss < threshold).
+- Streaming where the host shouldn't be in the loop.
+
+**Tip**: `cudaGraphSetConditional(handle, value)` is called from device code (via `<cuda/graph_helpers>` or direct device-API header) to update the loop condition.
+
+
 # CUDA graph conditional nodes (if / while / switch on device)
 
 CUDA 12.3+ adds **device-side control flow** in graphs via `cudaGraphNodeTypeConditional`.
