@@ -16101,3 +16101,19 @@ Per-warp FMA cost doubles from 4 to 32 warps (4.56 → 9.37 cy) — the round-ro
 
 **Practical**: No reason to use FTZ mode for performance — `fma.rn.f32` and `fma.rn.ftz.f32` are identical speed. Use full IEEE 754 semantics without cost.
 
+
+# Integer ALU: All Operations at Uniform 6 cy Latency
+
+| Operation | Latency (in loop) | Type |
+|-----------|-------------------:|:----:|
+| IADD (s32) | 23.0 cy | ALU |
+| IMAD (s32) | 23.0 cy | ALU |
+| IMUL (s32) | 23.0 cy | ALU |
+| **IADD (u64)** | **23.0 cy** | ALU |
+| SHL (b32) | 23.0 cy | ALU |
+| IMIN (s32) | 23.0 cy | ALU |
+| **POPC (b32)** | **23.0 cy** | ALU |
+| **BREV (b32)** | **23.0 cy** | ALU |
+
+**ALL integer ALU operations have identical 6 cy latency** (23 - 17 loop overhead). No operation is slower than any other — the ALU pipe is completely uniform. Even 64-bit IADD matches 32-bit, and bit-manipulation operations (POPC, BREV) run at full speed.
+
