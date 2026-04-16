@@ -16117,3 +16117,20 @@ Per-warp FMA cost doubles from 4 to 32 warps (4.56 → 9.37 cy) — the round-ro
 
 **ALL integer ALU operations have identical 6 cy latency** (23 - 17 loop overhead). No operation is slower than any other — the ALU pipe is completely uniform. Even 64-bit IADD matches 32-bit, and bit-manipulation operations (POPC, BREV) run at full speed.
 
+
+# Global Atomic Contention Scaling
+
+All threads atomicAdd to SAME global address:
+
+| Active SMs | Threads | Gops/s | Notes |
+|-----------:|--------:|-------:|:-----:|
+| 1 | 32 | 3.7 | Single SM |
+| 4 | 128 | 15.2 | Linear |
+| 16 | 512 | 37.9 | Near linear |
+| 37 | 1184 | 46.2 | Saturating |
+| 148 | 4736 | **47.4** | **L2 atomic unit peak** |
+
+**Global atomics saturate at ~47 Gops/s** — the L2 atomic processing unit's hardware limit for single-address contention. Linear scaling from 1-16 SMs, then flat. At 1800 MHz: ~26 atomic ops per cycle chip-wide.
+
+**Practical**: A single global atomic counter can sustain 47 billion increments/second without optimization — sufficient for most counting/synchronization patterns.
+
