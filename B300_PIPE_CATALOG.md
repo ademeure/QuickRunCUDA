@@ -6024,6 +6024,16 @@ Predication adds a fixed 0.19 cy per instruction, **independent of the predicate
 
 **Summary**: loads get 3× speedup at all-false. Stores get 31% speedup. **FMA gets ZERO benefit from predication** — the FMA pipe always takes the same cycles whether it computes or not. The FMA pipe doesn't check the active mask for early termination.
 
+### Do predicated-off loads free the LSU for other warps? (measured)
+
+| Warp 1 activity | Warp 0 real load cy/ld |
+|:----------------|:----------------------:|
+| Real loads (LSU competing) | 4.06 |
+| @false predicated loads | 4.06 |
+| FMA only (no LSU) | 4.06 |
+
+**All identical** — predicated-off loads do NOT cause LSU contention on co-scheduled warps. They effectively free the LSU pipe: warp 0's load throughput is unaffected by warp 1's predicated loads.
+
 ### Memory bandwidth scaling with occupancy
 
 | Warps/SM | Relative BW | Per-warp efficiency |
