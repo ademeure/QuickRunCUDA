@@ -7345,6 +7345,29 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# cudaStreamBeginCaptureToGraph — incremental graph capture
+
+CUDA 12.3+ API for appending captured work to an existing `cudaGraph_t`:
+
+```cpp
+cudaGraph_t g;
+cudaGraphCreate(&g, 0);
+// Capture onto existing g
+cudaStreamBeginCaptureToGraph(s, g, nullptr, nullptr, 0, cudaStreamCaptureModeGlobal);
+  kernel<<<...,s>>>(...);  // adds a node to g
+cudaStreamEndCapture(s, &unused_g);
+```
+
+Measured: capture + end of 10 kernels = **111 µs** (similar to classic `cudaStreamBeginCapture → New graph`).
+
+**Use cases:**
+- **Dynamic graph composition**: build graph incrementally as you discover work.
+- **Conditional extensions**: start with a base graph, branch and add nodes conditionally before instantiating.
+- **Graph reuse with dynamic suffixes**: reuse a common pre-graph across different downstream sub-graphs.
+
+Key difference vs `cudaStreamBeginCapture(newGraph)`: the target graph is user-provided and can already contain nodes. The captured work is appended, respecting dependencies.
+
+
 # cuLibrary / cuKernel modern APIs (CUDA 12+)
 
 | API | µs/call | vs legacy |
