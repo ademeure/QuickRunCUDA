@@ -14745,6 +14745,25 @@ HBM3E ECC is active with zero errors — excellent reliability.
 
 The NVML reports Gen6 x16 link, but measured bandwidth (~58 GB/s) is consistent with Gen5 x16 effective throughput. The host system may negotiate Gen5 compatibility.
 
+## Exhaustive NVML Hardware Details
+
+| Parameter | Value |
+|-----------|-------|
+| VBIOS | 97.10.41.00.02 |
+| Architecture enum | 10 (Blackwell) |
+| **Max SM clock** | **2032 MHz** (boost available!) |
+| Current SM clock | 1800 MHz (base) |
+| BAR1 total | **550 GB** (massive PCIe mapping space) |
+| Performance state | P0 (highest) |
+| Retired pages | 0 (SBE and DBE) |
+| Remapped rows | 0 (pristine memory) |
+| Compute mode | Default (shared) |
+| **NVLink** | **v7, 18 active links** (NV18 config) |
+
+**18 NVLink v7 links** to the second GPU — the highest NVLink connectivity configuration. At ~50 GB/s per link bidirectional: ~900 GB/s total NVLink bandwidth (theoretical). The second GPU is visible to nvidia-smi but not to the CUDA runtime in this container.
+
+**2032 MHz boost is available** but the GPU runs at 1800 MHz base. The 1800→2032 MHz boost would increase all cycle-based measurements by 13% (e.g., FMA from 6 cy to ~5.3 cy effective). All measurements in this catalog are at 1800 MHz.
+
 **GPU clock confirmed at exactly 1.800 GHz** via kernel clock64 vs cudaEvent wall time correlation (4.9B cycles / 2.722s = 1800.0 MHz).
 
 ## 60-Second Sustained GEMM (4096³ BF16)
