@@ -155,3 +155,14 @@ instruction's position is critical for the dependency chain.
 **Implication**: For SASS deletion to work, prefer builds with higher
 register counts (e.g., `MIN_BLOCKS_PER_SM=8` with 128 threads) that
 generate looser, position-tolerant scheduling.
+
+## SM103 Pipe Architecture: f16x2 SIMD is ALU, NOT a Separate Pipe
+
+Tested using ncu `sm__inst_executed_pipe_fp16` → returns n/a.
+
+HFMA2, HMUL2, HADD2 all run on the **ALU pipe** alongside LOP3, SHF, PRMT, IMAD.
+This means moving computation from f32 FMA (FMUL2/FFMA2, on FMA pipe at 47%)
+to f16x2 (HFMA2, on ALU pipe at 70%) HURTS performance.
+
+**Correct strategy**: keep computation in f32 (FMA pipe has headroom), minimize
+ALU work (LOP3/SHF byte manipulations are the real bottleneck).
