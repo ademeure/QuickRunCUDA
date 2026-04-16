@@ -9441,6 +9441,25 @@ cuBLAS selects workspace-free algorithms for standard square/rectangular GEMMs. 
 
 **MoE expert GEMMs at 8 tokens = 1.7% MFU** — the fundamental inefficiency of MoE inference at small batch. Fix: larger batch or expert parallelism.
 
+### Llama-3-70B GQA exact projection shapes (measured, BF16)
+
+**Batch=1 (decode):**
+
+| Layer | N | K | ms | wt BW |
+|-------|---:|---:|----:|------:|
+| Q proj | 8192 | 8192 | 0.023 | 5861 GB/s |
+| K proj (GQA, 8 heads) | 1024 | 8192 | 0.010 | **1729 GB/s** |
+| V proj (GQA, 8 heads) | 1024 | 8192 | 0.009 | 1800 GB/s |
+| **QKV merged** | 10240 | 8192 | **0.029** | 5727 GB/s |
+| gate_up merged | 57344 | 8192 | 0.140 | **6698 GB/s** |
+| down proj | 8192 | 28672 | 0.073 | 6468 GB/s |
+
+**GQA K/V separate (N=1024) achieves only 1.7 TB/s weight BW — 3.3× worse than Q proj.** The small N doesn't fill tensor core tiles efficiently.
+
+**Always merge QKV**: merged (0.029 ms) is **31% faster** than separate Q+K+V (0.042 ms). Gate+up merging saves 5%.
+
+**Batch=256 (continuous batching):** all projections reach 45-50% MFU except GQA K/V (17% — N=1024 still too small).
+
 **Llama-3-70B FP8 E4M3 (via cublasLt):**
 
 | Layer | b=1 | b=32 | b=128 | s=1024 | s=4096 |
