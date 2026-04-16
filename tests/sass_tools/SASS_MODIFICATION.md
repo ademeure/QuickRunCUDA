@@ -166,3 +166,23 @@ to f16x2 (HFMA2, on ALU pipe at 70%) HURTS performance.
 
 **Correct strategy**: keep computation in f32 (FMA pipe has headroom), minimize
 ALU work (LOP3/SHF byte manipulations are the real bottleneck).
+
+## SM103 Pipe Map (Confirmed via ncu Microbenchmarks)
+
+| Instruction | Pipe | Throughput | ncu Evidence |
+|---|---|---|---|
+| FMUL, FFMA, FMUL2, FFMA2, FHFMA, IMAD | **FMA** | ~2× ALU | 30-31% in isolation |
+| LOP3, SHF, PRMT, FSETP, FSEL, IADD3, HADD | **ALU** | ~1× | 65% in isolation |
+| HFMA2, HMUL2, HADD2, HMNMX2 | **ALU** | ~1× | 65% ALU (NOT a separate f16 pipe) |
+| F2FP (all CVT variants) | **F2FP** (own pipe) | ? | ~0% on ALU/FMA |
+| FMNMX, FMNMX3 | **F2FP** (own pipe) | ? | ~0% on ALU/FMA |
+| MUFU (rcp, rsqrt) | **XU** | 1/4× | Standard |
+
+Key architecture insight: **FMA pipe has ~2× the throughput of ALU on SM103.**
+With 99 ALU ops (70% utilized) and 179 FMA ops (47% utilized), the kernel is
+ALU-throughput limited despite having fewer ALU instructions.
+
+This means:
+- f32 FMA path is optimal (FHFMA, FMUL2, FFMA2 on high-throughput FMA pipe)
+- f16x2 SIMD (HFMA2/HMUL2) HURTS because it runs on the low-throughput ALU pipe
+- Moving work from ALU→FMA is valuable; moving from FMA→ALU is harmful
