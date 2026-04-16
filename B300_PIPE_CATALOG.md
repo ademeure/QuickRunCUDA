@@ -5513,6 +5513,21 @@ M=1 achieves 5.8 TB/s effective weight bandwidth (better than raw DRAM streaming
 
 **TN layout saves 10-14% at batch≥128** — use `CUBLAS_OP_T` for FFN weight matrices at larger batch. Crossover at batch≈128.
 
+### FP8 E4M3 full layer (measured, cublasLt, same shapes)
+
+| Batch | FP8 ms/layer | FP8 80L | FP8 tok/s | BF16 tok/s | **FP8/BF16** |
+|------:|:------------:|:-------:|:---------:|:----------:|:------------:|
+| 1 | 0.228 | 18.2 ms | **55** | 40 | **1.38×** |
+| 8 | 0.177 | 14.2 ms | **565** | 365 | **1.55×** |
+| 64 | 0.181 | 14.4 ms | **4431** | 2550 | **1.74×** |
+| **128** | **0.212** | **17.0 ms** | **7551** | 4038 | **1.87×** |
+| 256 | 0.275 | 22.0 ms | 11638 | 6809 | 1.71× |
+| 512 | 0.339 | 27.1 ms | **18887** | 11278 | **1.67×** |
+
+**FP8 is 1.4-1.9× faster than BF16.** Peak advantage at batch=128 (1.87×). At batch=1: 55 tok/s (1.38× over BF16's 40). At batch=512: 18.9K tok/s.
+
+The speedup is less than theoretical 2× because: output is still BF16 (same write BW), cuBLAS FP8 kernel suboptimal at small M, and dispatch overhead is constant.
+
 ### Pipeline overhead: GEMM + elementwise interleaved (measured)
 
 | Batch | GEMM-only (2×d²) | GEMM + norm + silu | Overhead |
