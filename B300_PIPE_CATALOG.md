@@ -109,6 +109,18 @@ Note: Smem read peak is ~36 TB/s chip at 128 B/clk/SM — true HW peak, confirme
 
 **Quad co-issue**: FMA_heavy + FMA_lite + ALU + LSU all in one cycle (4.17 cy for 4 ops).
 
+### Tensor core: unified 128 cy/MMA across all formats
+
+| Format | Kind | K | cy/MMA | Chip TFLOPS/TOPS | Matches spec |
+|--------|------|---:|-------:|-----------------:|:------------:|
+| TF32 | `tf32` | 8 | **128** | **1232** | ✓ (~1200) |
+| FP16 | `f16` | 16 | **128** | **2465** | ✓ (~2400) |
+| BF16 | `f16` | 16 | 128 | 2465 | ✓ |
+| FP8 E4M3 | `f8f6f4` | 32 | **128** | **4929** | ✓ (~5000) |
+| FP4 block16 | `mxf4nvf4` | 64 | **128** | **9856** | ✓ (~10000) |
+
+**All formats share exactly 128 cy/MMA.** The tensor core has a single fixed pipeline latency. Throughput differences are purely from K dimension. FP4 block-scaled achieves 2× FP8 because K=64 vs K=32.
+
 ---
 
 ## 1. Pipe topology
@@ -5072,6 +5084,25 @@ All tested patterns (1-reg self-FMA, 3-reg distinct sources, cross-chain, interl
 | `__brev` (bit reverse) | ~2 cy | alu |
 
 The bit-manipulation ops (popc, ffs, clz, brev) run on pipe_alu at standard 2 cy throughput. `__ballot_sync` is more expensive at 8.2 cy because it requires warp-wide predicate gathering.
+
+### Store forwarding and write patterns
+
+| Pattern | Measurement |
+|---------|------------:|
+| Store forwarding (st + ld same addr) | **0 cy** (free, buffer forwards) |
+| Store + load different addr | 18 cy (L1, with early issue) |
+| st.global.32b throughput | 8414 GB/s (buffered, fire-and-forget) |
+| st.global.128b throughput | 25517 GB/s (3× instruction efficiency) |
+
+**Store forwarding is free on Blackwell** — writing then reading the same address incurs zero load latency. The store buffer forwards the value directly.
+
+### clock64 read latency
+
+Serial `mov.u64 %0, %%clock64` reads show **2 cy between consecutive reads.** This is the minimum timing granularity for microbenchmarks.
+
+### `kind::i8` NOT supported on sm_103a
+
+`tcgen05.mma.kind::i8` fails with "Feature not supported." INT8 operations go through `kind::f8f6f4` with appropriate format encoding in idesc.
 
 ### Warp scheduling fairness
 
