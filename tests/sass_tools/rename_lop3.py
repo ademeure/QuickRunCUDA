@@ -67,3 +67,44 @@ def patch(cubin_in, cubin_out):
 
 if __name__ == '__main__':
     patch(sys.argv[1], sys.argv[2])
+
+
+def patch_and_delete(cubin_in, cubin_out, delete_failures=None):
+    """Full pipeline: rename + delete safe NOPs."""
+    import subprocess
+    kbase = find_kernel_base(cubin_in)
+    instrs = parse_sass(cubin_in)
+    renames = build_renames(instrs)
+
+    # Get kernel size from ELF
+    r = subprocess.run(['cuobjdump', '--dump-elf', cubin_in], capture_output=True, text=True)
+    ksize = None
+    for line in r.stdout.split('\n'):
+        if '.text.kernel' in line and 'PROGBITS' in line:
+            ksize = int(line.split()[2], 16); break
+
+    NOP_HI = bytes.fromhex('1879000000000000')
+    NOP_FULL = bytes.fromhex('18790000000000000000000000c00f00')
+
+    with open(cubin_in, 'rb') as f: data = bytearray(f.read())
+
+    # Apply all renames as NOPs
+    for lop3_off, dst, src, unpack_off in renames:
+        cl = kbase + lop3_off; cu = kbase + unpack_off
+        data[cl:cl+8] = NOP_HI; data[cl+8] = 0; data[cl+9] = 0
+        if dst != src: data[cu+4] = src
+
+    # Delete NOPs (skip known failures)
+    skip = set(delete_failures or [])
+    remove = set(r[0] for r in renames if r[0] not in skip)
+    kernel_old = data[kbase:kbase+ksize]
+    kernel_new = bytearray()
+    for off in range(0, ksize, 16):
+        if off not in remove: kernel_new.extend(kernel_old[off:off+16])
+    while len(kernel_new) < ksize: kernel_new.extend(NOP_FULL)
+    data[kbase:kbase+ksize] = kernel_new
+
+    with open(cubin_out, 'wb') as f: f.write(data)
+    deleted = len(remove)
+    nopped = len(renames) - deleted
+    print(f"Patched: {deleted} deleted + {nopped} NOPed = {len(renames)} total (base 0x{kbase:x})")
