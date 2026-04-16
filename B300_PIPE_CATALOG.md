@@ -7345,6 +7345,74 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# B300 PCIe Gen 6 + ECC + P-state (NVML)
+
+```
+ECC mode:                    ENABLED (current + pending)
+Volatile ECC errors:         0 corrected / 0 uncorrected
+Aggregate ECC errors:        0 corrected / 0 uncorrected
+Retired pages (DBE / MSBE):  0
+PCIe replays:                0
+PCIe generation (current):   6       ← Gen 6 confirmed
+PCIe generation (max):       6       ← Gen 6 max
+PCIe width (current):        x16
+PCIe width (max):            x16
+P-state:                     P0 (highest performance)
+```
+
+**Key findings:**
+
+1. **B300 supports PCIe Gen 6 x16** — confirmed by NVML. Gen 6 x16 theoretical peak is ~128 GB/s per direction (256 GB/s bidirectional). This is unusual; earlier NVIDIA server-grade chips (H100, H200, early Blackwell) were Gen 5.
+2. **ECC is always on** (cannot be disabled via `nvidia-smi -e 0` on this SKU — tested earlier).
+3. **Zero ECC errors** after extensive use — clean memory subsystem.
+4. **Zero PCIe replays** — stable link.
+5. **P-state P0** always when active — no power throttling.
+
+**Note**: earlier I measured PCIe H2D BW at 57 GB/s which is Gen5-level. Possible explanations: (a) the host PCIe slot / switch is Gen 5 even if B300 supports Gen 6, (b) SBIOS / BMC negotiated down, (c) system with PLX/retimer in Gen5 mode. The card itself advertises Gen 6.
+
+To verify Gen 6 operation: need a PCIe Gen 6 host with Gen 6 slots. On Gen 6 x16, expected H2D ≈ 100+ GB/s.
+
+
+# Custom cudaMemPool with high release threshold
+
+`cudaMemPoolCreate` with `cudaMemPoolAttrReleaseThreshold = 256 MB`:
+
+| Pool config | µs/cycle (alloc+free 1 MB) |
+|-------------|--------------------------:|
+| Custom pool (threshold = 256 MB) | **0.322** |
+| Default pool (threshold = 0) | 0.436 |
+
+**35 % faster** with non-zero release threshold. After 1000 cycles, the custom pool keeps 32 MB reserved in pool cache (below threshold, not released to OS). Default pool returns memory on every free.
+
+**Practical**: for iterative workloads, create a custom pool:
+```cpp
+cudaMemPoolProps props = { cudaMemAllocationTypePinned,
+                           cudaMemHandleTypeNone,
+                           { cudaMemLocationTypeDevice, 0 }, ... };
+cudaMemPoolCreate(&pool, &props);
+uint64_t t = 256ULL * 1048576;
+cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold, &t);
+
+// Then:
+cudaMallocFromPoolAsync(&ptr, size, pool, stream);  // keeps memory warm
+```
+
+
+# PTX @P predicated branch — compiler often folds
+
+Testing `@P BRA` with various predicate patterns:
+- **Uniform-false predicate** (skipped branch) + `add` → 0.1 cy/iter (compiler folds to zero)
+- **Uniform-true predicate** (taken branch, add on other side) → 0.1 cy/iter (same)
+- **Unpredicated add** → 23 cy/iter (1000 adds actually executed)
+- **`@P add`** (predicated execution, no branch) → 23 cy/iter (same as unpredicated)
+
+**Compiler aggressively folds uniform-predicate branches**. When the branch decision is known at compile time or constant across warp, the entire branch is removed from SASS.
+
+For divergent `@P BRA` (half warp taken): test was malformed (`%%tid.x` inside inline asm). Earlier `bench_diverge` testing covered this case separately (~5-60× slowdown depending on divergence width).
+
+**Practical**: don't waste effort manually predicating branches the compiler can fold. Write clean `if`/`cond ? a : b` — the compiler reaches the same SASS.
+
+
 # cudaStreamBeginCaptureToGraph — incremental graph capture
 
 CUDA 12.3+ API for appending captured work to an existing `cudaGraph_t`:
