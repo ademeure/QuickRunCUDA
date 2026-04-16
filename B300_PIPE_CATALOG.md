@@ -5853,6 +5853,18 @@ d=16384, qkv/gpu=9216, ffn/gpu=26624, **126 layers**
 
 **Attention adds 1-8%** depending on sequence length. At seq=4096: 2.9% of layer time. **GEMMs dominate at 90%+ for all practical configurations.**
 
+### WARNING: INT8 GEMM is 22-34× SLOWER than BF16! (measured)
+
+| Size | INT8 TOPS | BF16 TFLOPS | **INT8/BF16** |
+|-----:|---------:|:-----------:|:-------------:|
+| 8192³ | 66 | 2259 | **34× slower** |
+| M=128 N=K=8192 | 28 | 630 | **22× slower** |
+| M=1 N=K=8192 | 3 | 6 | 2× slower |
+
+**cuBLAS INT8 on B300 does NOT use tensor cores.** The `CUBLAS_COMPUTE_32I` path falls back to scalar IMAD, giving only 66 TOPS peak (vs 4929 TOPS theoretical for INT8 tensor). Weight BW at M=1: only 1.5 TB/s (vs 5.8 TB/s for BF16).
+
+**For GPTQ/AWQ quantized models: dequantize to FP8 or BF16 before GEMM.** The 5% dequantization overhead is negligible compared to 22× INT8 GEMM slowdown.
+
 ### Prefill throughput (compute-bound, FP16 tensor, W=4096²)
 
 | Prompt length | ms/GEMM | TFLOPS | % peak | 70B prefill time | Prefill tok/s |
