@@ -15336,6 +15336,38 @@ hidden=4096, ffn=14336, 32 layers, BF16. Weight matrices: Q/O = 32 MB (fits L2!)
 
 Memory-bound regime extends to batch ~128 for 8B (vs ~64 for 70B). At batch=64: each additional token is free.
 
+
+# Tensor Parallelism Economics (TP=2, Simulated)
+
+Split Llama-70B gate projection weight: 470 MB → 235 MB per GPU.
+
+## Per-GEMM: single vs chain
+
+| Config | Single µs | **Chain/7 µs** | Chain speedup |
+|--------|----------:|---------------:|---------:|
+| 1-GPU full (470 MB) | 74 | **170** | — |
+| TP=2 half (235 MB) | 40 | **78** | **2.18×** |
+
+**Halving weight gives 2.18× chain speedup** — better than the 1.85× single-GEMM speedup because L2 contention is also reduced (235 MB vs 470 MB).
+
+## TP=2 layer estimate (Llama-70B)
+
+| Component | 1-GPU | TP=2 (per GPU) |
+|-----------|------:|----------:|
+| 7 GEMMs (chain) | 1190 µs (170×7) | **546 µs** (78×7) |
+| 2 allreduces (NVLink) | — | +20 µs |
+| Elementwise | 50 µs | 50 µs |
+| **Total per layer** | **~729** | **~616** |
+| 80 layers | 58 ms | **49 ms** |
+| **Decode tok/s** | **17** | **~20** |
+
+**TP=2 gives only ~18% decode speedup** for Llama-70B. The benefit is modest because:
+1. The half-weight GEMM chain (78 µs) is 46% of full-chain (170 µs), not 50% — L2 contention still exists at 235 MB
+2. Allreduce adds 20 µs/layer overhead
+3. Elementwise ops can't be parallelized
+
+**TP=2 is better for capacity than speed**: doubles available KV cache memory (216 → 432 concurrent requests) with only 18% decode improvement. For decode speed, **FP8 (1.71× chain) is more effective than TP=2 (1.18×) and uses only 1 GPU.**
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
