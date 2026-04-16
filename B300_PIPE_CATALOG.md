@@ -7758,6 +7758,128 @@ At **batch=128-512, decode transitions from memory-bound to compute-bound**. The
 | NVLink | **956 GB/s** bidi | Tensor-parallel across 2 GPUs efficiently |
 
 
+# ═══════════════════════════════════════
+# NVFP4 (E2M1) DEEP DIVE on B300 sm_103a
+# ═══════════════════════════════════════
+
+## Current state (CUDA 13.2, April 2026)
+
+### What WORKS
+
+**1. tcgen05.mma via `kind::f8f6f4` with E2M1 format (idesc a_format=5, b_format=5):**
+
+All 5 sub-byte format codes were tested at M=64, N=8, K=32 with 1000 iterations:
+
+| Format | Format code | cy/iter | vs FP8 |
+|--------|:-----------:|--------:|-------:|
+| FP8 E4M3 | 0 | 64.46 | baseline |
+| FP8 E5M2 | 1 | 64.76 | 1.00× |
+| FP6 E2M3 | 3 | 64.42 | 1.00× |
+| FP6 E3M2 | 4 | 65.02 | 1.00× |
+| **FP4 E2M1** | **5** | **65.32** | **1.00×** |
+| Mixed A=FP4 B=FP8 | 5, 0 | 64.50 | 1.00× |
+
+**ALL FIVE FORMATS HAVE IDENTICAL THROUGHPUT.** The hardware tensor core processes FP4, FP6, and FP8 at the same rate through the `kind::f8f6f4` path. K=32 is fixed regardless of element width.
+
+idesc encoding for FP4: `(1U << 4) | (5U << 7) | (5U << 10) | (n_dim << 17) | (m_dim << 24)` where a_format = b_format = 5 = E2M1.
+
+**Chip-wide FP4 via kind::f8f6f4 = 4.65 PFLOPS** (same as FP8 — 93% of 5 PFLOPS spec).
+
+**2. FP4 conversion ops (`cuda_fp4.h` API):**
+
+| Operation | cy/iter (single warp) |
+|-----------|-----------------------:|
+| `__nv_cvt_float2_to_fp4x2(v, __NV_E2M1, cudaRoundNearest)` (F32 → FP4 pack) | 27 |
+| `__nv_cvt_fp4x2_to_halfraw2(src, __NV_E2M1)` (FP4 → F16 unpack) | 28 |
+
+SASS emits: `F2FP.SATFINITE.E2M1.F32.PACK_AB_MERGE_C` (pack) / `F2FP.F16.E2M1.UNPACK_B` (unpack). Both run on pipe_alu at standard rate (~2 cy per instruction).
+
+**3. BF16 → NVFP4 quantization kernel** (`tests/quantize_bf16_to_nvfp4.cu`):
+Working kernel that computes per-block absmax scaling + converts via `cvt.rn.satfinite.e2m1x2.f32`.
+
+### What's BLOCKED
+
+**1. `kind::mxf4` (block-scaled FP4) — the REAL FP4 path for ~9 PFLOPS:**
+
+```
+PTX: tcgen05.mma.cta_group::1.kind::mxf4 [d], a_desc, b_desc, idesc, {...}, P;
+NVRTC/ptxas lowering: adds '.block32' modifier to SASS
+ptxas error: "Illegal modifier '.block32' for instruction 'tcgen05.mma'"
+```
+
+The `.block32` modifier controls block-scaling granularity (32 FP4 elements share one scale factor stored in TMEM). **The PTX ISA defines this; ptxas cannot generate SASS for it in CUDA 13.2.**
+
+This blocks:
+- `kind::mxf4` — native FP4 with per-block-32 scaling
+- `kind::mxf8f6f4` — block-scaled mixed narrow
+- `kind::f8f6f4.block_scale` — alternate syntax
+- All `.scale_vec::2X` modifiers
+
+**What `kind::mxf4` would unlock**: K=64 FP4 per MMA (double K, double throughput) → **~9.3 PFLOPS** (2× current 4.65). The hardware appears to support this (LDSM.U4x16P64TO8 exists in SASS), but the software path is missing.
+
+**2. `mma.sync.kind::f8f6f4` with E2M1 (warp-sync path):**
+
+```
+ptxas error: "Feature '.kind::e2m1' not supported on .target 'sm_103a'"
+```
+
+Datacenter Blackwell (sm_103a) only exposes FP4/FP6 tensor via the async `tcgen05.mma` path. The warp-sync `mma.sync` path is reserved for consumer Blackwell (sm_120a).
+
+### Observed SASS opcodes for FP4
+
+| SASS | Purpose |
+|------|---------|
+| `F2FP.SATFINITE.E2M1.F32.PACK_AB_MERGE_C` | F32 pair → FP4 pack |
+| `F2FP.F16.E2M1.UNPACK_B` | FP4 → F16 unpack |
+| `LDSM.U4x16P64TO8.M816.4` | **FP4-packed ldmatrix** (no PTX syntax yet — compiler-generated) |
+| `UTCQMMA` / `UTCOMMA` | Tensor core MMA (same opcode for all f8f6f4 formats; format is in idesc) |
+
+### Why FP4 = FP8 throughput on current path
+
+The `kind::f8f6f4` path uses a **fixed K=32 per MMA regardless of element width**:
+- FP8 (1 byte): K=32 → 32 bytes per row → 32 MACs per element-pair
+- FP4 (0.5 byte): K=32 → 16 bytes per row → still only 32 MACs
+- Net: same FLOPs per MMA instruction, same cycle count
+
+The benefit of FP4 on this path is **2× less memory** for the same K:
+- FP8 K=32: each A-row = 32 bytes
+- FP4 K=32: each A-row = 16 bytes → **half the smem / HBM footprint**
+- But NOT double the compute rate
+
+**To get double compute**: need `kind::mxf4` which processes K=64 FP4 per MMA → 64 MACs per element-pair → **2× the FLOPs** in the same cycle time.
+
+### Practical NVFP4 usage today (CUDA 13.2)
+
+1. **Quantize weights to FP4** (E2M1 format with per-block scale factors stored in FP8/BF16):
+   - Use `__nv_cvt_float2_to_fp4x2(v, __NV_E2M1, cudaRoundNearest)` for pack
+   - Store scale = absmax / 6.0 (E2M1 max representable)
+   - 2× memory compression vs FP8
+
+2. **Run MMA via tcgen05.mma.kind::f8f6f4 with idesc a_format=5 (E2M1)**:
+   - Same throughput as FP8 (4.65 PFLOPS chip) BUT with half the memory for A/B matrices
+   - Beneficial when GEMM is **memory-bound** (smaller matrices, batch decode)
+   - Not beneficial when compute-bound (same TFLOPS as FP8)
+
+3. **Dequantize outputs**: use `__nv_cvt_fp4x2_to_halfraw2(src, __NV_E2M1)` to unpack back to FP16
+
+**When `kind::mxf4` ships** (expected CUDA 13.3+ or 14.0): real FP4 peak = ~9.3 PFLOPS = 2× FP8. This will make FP4 inference on B300 strictly dominant for memory-bound LLM decode.
+
+### Format details: E2M1 (NVFP4)
+
+| Property | Value |
+|----------|-------|
+| Exponent bits | 2 |
+| Mantissa bits | 1 |
+| Bias | 1 |
+| Max representable | 6.0 |
+| Min subnormal | 0.5 |
+| Special values | ±0, ±Inf (no NaN) |
+| Dynamic range | [0.5, 6.0] (7 distinct magnitudes per sign) |
+| Storage | 4 bits per element, packed 2 per byte |
+
+E2M1 is the MX (Microscaling) standard's 4-bit float. Combined with a per-block scale factor (FP8 or BF16), the effective dynamic range is much larger than the raw 4-bit format suggests.
+
+
 # cuBLAS GEMM at scale — FP32 / TF32 / FP16 practical peaks
 
 Square GEMM (M=N=K), warm cuBLAS:
