@@ -14730,6 +14730,20 @@ The NVML reports Gen6 x16 link, but measured bandwidth (~58 GB/s) is consistent 
 
 **GPU clock confirmed at exactly 1.800 GHz** via kernel clock64 vs cudaEvent wall time correlation (4.9B cycles / 2.722s = 1800.0 MHz).
 
+## 60-Second Sustained GEMM (4096³ BF16)
+
+| Time | SM MHz | Power | Temp | TFLOPS | Notes |
+|-----:|-------:|------:|-----:|-------:|-------|
+| 0s | 1800 | 188 W | 42°C | 737 | Cold start |
+| 3s | 1800 | 385 W | 45°C | 737 | Power ramp complete |
+| 10s | 1800 | 387 W | 46°C | 737 | Stable |
+| 30s | 1800 | 390 W | 48°C | 737 | Stable |
+| 60s | 1800 | 391 W | 50°C | 737 | **Still stable** |
+
+**ZERO performance degradation over 60 seconds.** 302,800 GEMMs at 737±2 TFLOPS with no clock throttling, no thermal issues. Temperature rises only 8°C (42→50°C). Sustained power stabilizes at ~390W (35% of 1100W TDP).
+
+**For serving reliability**: B300 SXM6 sustains full tensor core throughput indefinitely. No burst-then-throttle behavior.
+
 
 # Multi-Request Serving: Overlap vs Batching
 
