@@ -14728,6 +14728,28 @@ HBM3E ECC is active with zero errors — excellent reliability.
 
 The NVML reports Gen6 x16 link, but measured bandwidth (~58 GB/s) is consistent with Gen5 x16 effective throughput. The host system may negotiate Gen5 compatibility.
 
+**GPU clock confirmed at exactly 1.800 GHz** via kernel clock64 vs cudaEvent wall time correlation (4.9B cycles / 2.722s = 1800.0 MHz).
+
+
+# Multi-Request Serving: Overlap vs Batching
+
+3 key GEMMs per "request" (Q + Gate + Down projections, batch=1 per request):
+
+| Strategy | µs/request | Speedup | Notes |
+|----------|----------:|---------:|-------|
+| **Sequential** (1 stream) | 364 | 1.0× | Baseline |
+| **2-stream overlap** | 358 | **1.02×** | Zero benefit! |
+| **Batched (batch=2)** | 405 | **0.90×** | 10% **slower**! |
+
+**Multi-request overlap is useless for decode GEMMs** — both requests contend for the same HBM bandwidth. The weight matrices must be loaded from HBM regardless, and a second request on a different stream can't avoid this bottleneck.
+
+**Batching 2 requests is worse** than sequential because M=2 GEMMs have slightly higher overhead than M=1 (wider output requires more write traffic without proportionally reducing weight reads).
+
+**Practical for serving**: The only ways to improve per-token throughput are:
+1. **FP8 weights** (1.7-2.3× from halving weight data)
+2. **Large batch sizes** (32-128+) where compute-to-memory ratio favors tensor cores
+3. **Tensor parallelism** across multiple GPUs (split weight matrices)
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
