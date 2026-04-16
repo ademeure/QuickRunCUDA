@@ -299,7 +299,6 @@ static __device__ __forceinline__ void process_group(
 
     // Select best among all 3 candidates
     float best_err = min(min(errs01.x, errs01.y), err2);
-    // Default to candidate 0, override if better
     unsigned char best_fp8 = fp8_0;
     unsigned short *best_bits = b0;
     if (errs01.y == best_err) { best_fp8 = fp8_1; best_bits = b1; }
@@ -307,13 +306,13 @@ static __device__ __forceinline__ void process_group(
 
     out_fp8s = best_fp8;
 #ifdef CONTIGUOUS_SCALES
-    #define BPAK3(x) (x)
+    #define BP3(x) (x)
 #else
-    #define BPAK3(x) ((x) & 0xFF)
+    #define BP3(x) ((x) & 0xFF)
 #endif
-    out_lo = BPAK3(best_bits[0]) | (BPAK3(best_bits[1])<<8) | (BPAK3(best_bits[2])<<16) | (BPAK3(best_bits[3])<<24);
-    out_hi = BPAK3(best_bits[4]) | (BPAK3(best_bits[5])<<8) | (BPAK3(best_bits[6])<<16) | (BPAK3(best_bits[7])<<24);
-    #undef BPAK3
+    out_lo = BP3(best_bits[0]) | (BP3(best_bits[1])<<8) | (BP3(best_bits[2])<<16) | (BP3(best_bits[3])<<24);
+    out_hi = BP3(best_bits[4]) | (BP3(best_bits[5])<<8) | (BP3(best_bits[6])<<16) | (BP3(best_bits[7])<<24);
+    #undef BP3
 
 #elif NUM_CANDIDATES == 4
     // ===== NC=4: two interleaved pairs (0+1) and (2+3) =====
