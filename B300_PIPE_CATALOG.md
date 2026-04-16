@@ -139,6 +139,21 @@ Note: Smem read peak is ~36 TB/s chip at 128 B/clk/SM — true HW peak, confirme
 
 **MMA is smem-layout-insensitive**: B matrix stride (16-256 B) and smem offset (0-2048 B) have zero effect on MMA throughput — always 128 cy. The tensor core uses hardware swizzling; no manual smem layout optimization needed for MMA.
 
+**All f8f6f4 format combinations = identical 128 cy/MMA:**
+E4M3×E4M3, E4M3×E5M2, E5M2×E5M2, E4M3×E2M1(FP4), E2M3(FP6)×E2M3, E3M2×E3M2, E2M3×E4M3 — all 128.0 cy. The tensor core is completely format-agnostic within the f8f6f4 kind. Choose format purely based on numerical precision needs, not performance.
+
+### All-reduce latency (2×B300 via NVLink NV18)
+
+| Size | Latency | Algorithm BW |
+|-----:|--------:|-------------:|
+| ≤ 1 MB | **21 µs** | floor (dominated by NVLink + sync overhead) |
+| 4 MB | 27 µs | 315 GB/s |
+| 16 MB | 44 µs | 772 GB/s |
+| 64 MB | 116 µs | 1159 GB/s |
+| 256 MB | 376 µs | **1428 GB/s** (94% of NVLink peak) |
+
+Custom ring all-reduce (not NCCL). **21 µs floor** for small tensors — the practical cost per tensor-parallel layer. At 256 MB: algorithm BW saturates at 1.43 TB/s = 94% of NVLink.
+
 ---
 
 ## 1. Pipe topology
@@ -10726,6 +10741,17 @@ Without this, each `cudaFreeAsync` hands memory back to the OS, and the next `cu
 | cudaEventRecord + EventSynchronize | 7.38 µs |
 
 **Async kernel launch = 40 ns** — just CPU-side enqueue. Full GPU round-trip = 1.3 µs. cudaStreamQuery (polling) = 1.24 µs — nearly as expensive as sync; avoid tight poll loops.
+
+### Synchronization strategy comparison (kernel launch + sync)
+
+| Method | µs/iter |
+|--------|--------:|
+| **cudaStreamSynchronize** | **1.28** |
+| Spin-poll (cudaStreamQuery) | 1.26 |
+| cudaDeviceSynchronize | 1.38 |
+| **cudaEventSynchronize** | **7.27** (5.7× slower!) |
+
+**StreamSync is optimal** — the CUDA driver already uses efficient spin-wait internally. Manual polling gives no benefit. **Avoid cudaEventSynchronize** unless you specifically need event timing (5.7× overhead from event bookkeeping).
 - Scheduling / kernel dispatch: ≈ 1 µs (GPU scheduler picks up the launch).
 - Kernel minimum execution: ≈ 1 µs.
 - `cudaDeviceSynchronize` round-trip: ≈ 4 µs.
