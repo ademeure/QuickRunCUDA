@@ -7345,6 +7345,41 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# cudaOccupancy cluster APIs
+
+`cudaOccupancyMaxPotentialClusterSize` returns **8** (the default max cluster size on B300 without opt-in).
+Opt-in to 16-CTA clusters via `cudaFuncAttributeNonPortableClusterSizeAllowed`.
+
+`cudaOccupancyMaxActiveClusters` for cluster=2 kernel with 128 thr/CTA returns **592 clusters** = 1184 CTAs = 8 CTAs/SM, matching the 128-thread occupancy ceiling.
+
+
+# cudaMemRangeGetAttribute — UM page state tracking
+
+Query migration / advice state of managed memory ranges:
+
+| Attribute | Meaning |
+|-----------|---------|
+| `PreferredLocationType` / `Id` | Where pages want to live (set via `SetPreferredLocation`) |
+| `LastPrefetchLocationType` / `Id` | Target of last `cudaMemPrefetchAsync` |
+| `ReadMostly` | 0 or 1 |
+| `AccessedBy` | Which devices have `SetAccessedBy` hint |
+
+Example sequence on a 64 MB UM buffer:
+
+```
+[initial]                        PreferredLoc=(0, -2)   LastPrefetch=(0, -2)   ReadMostly=0   # unset
+[after CPU touch]                PreferredLoc=(0, -2)   LastPrefetch=(0, -2)   ReadMostly=0   # still unset
+[after SetPreferredLocation=GPU] PreferredLoc=(1, 0)    LastPrefetch=(0, -2)   ReadMostly=0   # GPU 0 preferred
+[after prefetch to GPU]          PreferredLoc=(1, 0)    LastPrefetch=(1, 0)    ReadMostly=0
+[after GPU touch]                PreferredLoc=(1, 0)    LastPrefetch=(1, 0)    ReadMostly=0   # kernel access doesn't update
+[after SetReadMostly]            PreferredLoc=(1, 0)    LastPrefetch=(1, 0)    ReadMostly=1
+```
+
+Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid/unset" sentinel.
+
+**Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
+
+
 # Tiny PCIe / D2D transfer latency (bytes-KB range)
 
 Transfer latency dominated by fixed setup overhead until ~KB sizes:
