@@ -14473,3 +14473,45 @@ The ALU pipe (IADD3/LOP3/etc.) runs simultaneously with the FMA pipe at zero add
 
 **Practical for mixed-precision**: If your algorithm has both FP64 accumulation and FP32 computation (e.g., iterative refinement, mixed-precision solvers), interleave DFMA with FFMA — the FFMA work is free up to 4 per DFMA.
 
+
+# Format Conversion Latency
+
+Dependent chain (convert → use → convert back), single warp:
+
+| Conversion pair | cy/round-trip | SASS instructions |
+|----------------|-------------:|-------------------|
+| FP32 → FP16 → FP32 | **23** | `F2FP.F16.F32.PACK_AB` + `HADD2.F32` |
+| FP32 → BF16 → FP32 | **79** | `F2F.BF16.F32` + `IMAD.U32 ×0x10000` |
+| INT32 → FP32 → INT32 | 24 | `I2FP.F32.S32` + `F2IP.S32.F32` |
+
+**FP16 conversion is 3.4× faster than BF16** (23 vs 79 cy). FP16 uses the dedicated `F2FP` pipe while BF16 uses the generic `F2F` pipe + integer shift to recover FP32. For hot conversion loops (quantization/dequantization), prefer FP16 over BF16 path.
+
+
+# ALU Instruction Latency
+
+| Instruction | Latency (cy) | Pipe |
+|------------|-------------:|------|
+| PRMT.B32 (byte permute) | **23** | ALU |
+| LOP3.B32 (3-input logic) | **29** | ALU |
+| IADD3 | ~23 | ALU |
+
+PRMT and LOP3 both run on the ALU pipe with latencies similar to FMA. All three co-issue freely with FMA.
+
+
+# Compute-Memory Overlap
+
+L1-cached global load interleaved with FMA chain, single warp:
+
+| Pattern | cy/iter | vs load-only | Load visible? |
+|---------|--------:|:------------:|:-------------:|
+| L1 load only | 23 | — | — |
+| L1 load + 4 FMA | **27** | +4 cy | **Mostly hidden** |
+| L1 load + 8 FMA | 86 | +63 cy | **Completely hidden** |
+| Smem load + 4 FMA | 27 | +4 cy | Mostly hidden |
+
+**L1-cached loads are nearly free when interleaved with compute.** The LSU issues the load on a separate pipe while the warp continues executing FMAs. For 4 FMA (~24 cy), the load adds only 4 cy. For 8 FMA (~82 cy), the load is completely hidden (86 cy ≈ 82 cy FMA-only).
+
+**Shared memory and L1 global loads overlap equally well** with compute — both use the LSU pipe which co-issues with FMA.
+
+**Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
+
