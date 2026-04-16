@@ -14853,6 +14853,19 @@ B300 data: **measured** in this catalog. H100 data: published specs + industry b
 **The B300 delivers 2-2.5× throughput at 1.6× power** — a meaningful efficiency improvement. The 3.6× memory capacity is the biggest jump, enabling 5.4× concurrent serving capacity. For Llama-70B, the B300 can serve the model entirely from one GPU (140 GB BF16 fits in 287 GB) while H100 requires 2-GPU tensor parallelism.
 
 
+# Memory Management for Long-Running Servers
+
+| Operation | Time | Notes |
+|-----------|-----:|-------|
+| Async pool: 10 × 1 GB alloc+free | 4.1 ms | 0.41 ms/pair |
+| Pool trim (reclaim all) | **1.7 ms** | Returns reserved memory to OS |
+| Memory fragmentation | **None** | 13 GB contiguous after 50% fragmented free |
+
+**No fragmentation issues**: After allocating 100 × 256 MB blocks and freeing every other one, the allocator successfully coalesces freed blocks for large contiguous allocations. The CUDA memory allocator is robust for long-running servers with dynamic allocation patterns.
+
+**Pool management**: Async pools retain freed memory (1 GB reserved after 10 × 1 GB cycles). Call `cudaMemPoolTrimTo(pool, 0)` periodically (1.7 ms) to reclaim unused pool memory during quiet periods.
+
+
 # Multi-Request Serving: Overlap vs Batching
 
 3 key GEMMs per "request" (Q + Gate + Down projections, batch=1 per request):
