@@ -9218,19 +9218,85 @@ Square GEMM (M=N=K), warm cuBLAS:
 
 **Practical**: for inference serving, use **FP8 or FP16 with ≥ 4K matrices** to hit tensor peak. For training, TF32 gives ~1 PFLOPS at 8K with FP32-level accuracy.
 
-### cuBLAS FP16 GEMM scaling (square and rectangular)
+### cuBLAS BF16 GEMM — comprehensive sweep (cuBLAS 13.4, CUDA 13.2)
 
-| Shape | TFLOPS | % of 2465 peak | Notes |
-|-------|-------:|---------------:|-------|
-| 1024³ | 326 | 13% | Launch overhead dominates |
-| 2048³ | 1096 | 44% | |
-| 4096³ | 1672 | 68% | |
-| **8192³** | **2075** | **84%** | **Best square** |
-| 16384³ | 2024 | 82% | Slight L2 pressure |
-| 128×8192² | 632 | 26% | Small M = poor tiling |
-| 8192²×128 | 336 | **14%** | **Small K confirms K-depth thesis** |
+**Square GEMMs (BF16 in, BF16 out, F32 compute):**
 
-Small K (128) cuBLAS result (336 TFLOPS = 14%) perfectly validates our microbench finding: small K makes GEMM TMA-limited. At K=128 = 8 FP16 MMA steps, we predict ~99% efficiency, but cuBLAS overhead (prologue, epilogue, scheduling) drops it to 14%.
+| M=N=K | TFLOPS | MFU (of 2465) |
+|------:|-------:|--------------:|
+| 512 | 70 | 2.8% |
+| 1024 | 557 | 22.6% |
+| 2048 | 1491 | 60.5% |
+| 4096 | 1893 | 76.8% |
+| 6144 | 2196 | 89.1% |
+| **8192** | **2259** | **91.6%** |
+| 12288 | 2201 | 89.3% |
+| **16384** | **2255** | **91.5%** |
+
+**BF16 vs FP16**: identical throughput (2259 vs 2250 at 8K). No performance reason to prefer one over the other.
+
+**BF16 LLM shapes (d=8192, simulating Llama-70B layers):**
+
+| M | N | K | TFLOPS | MFU | Use case |
+|---:|---:|---:|-------:|----:|----------|
+| 1 | 8192 | 8192 | 6 | 0.2% | Batch-1 decode |
+| 32 | 8192 | 8192 | 176 | 7.1% | Small batch |
+| 128 | 8192 | 8192 | 686 | 27.8% | Medium batch |
+| 256 | 8192 | 8192 | 1142 | 46.3% | |
+| 1024 | 8192 | 8192 | 1882 | 76.4% | Large batch / prefill |
+| 4096 | 8192 | 8192 | 2232 | **90.6%** | Large prefill |
+| 1 | 28672 | 8192 | 6 | 0.2% | FFN decode |
+| 128 | 28672 | 8192 | 747 | 30.3% | FFN medium batch |
+| 1024 | 28672 | 8192 | 1953 | 79.2% | FFN large batch |
+
+**BF16 skinny K (M=N=4096):**
+
+| K | TFLOPS | MFU |
+|---:|-------:|----:|
+| 64 | 302 | 12.2% |
+| 128 | 562 | 22.8% |
+| 256 | 936 | 38.0% |
+| 512 | 1441 | 58.4% |
+| 1024 | 1694 | 68.7% |
+
+**Non-power-of-2 shapes (BF16):**
+
+| M=N=K | TFLOPS | MFU | Notes |
+|------:|-------:|----:|-------|
+| 1000 | 362 | 14.7% | |
+| 1500 | **157** | **6.4%** | **cuBLAS pathological case** |
+| 2000 | 1542 | 62.6% | |
+| 3000 | 1415 | 57.4% | |
+| 5000 | 1403 | 56.9% | |
+| 10000 | 1996 | 81.0% | |
+| 15000 | 2146 | 87.1% | |
+
+**1500³ = only 6.4% MFU** — cuBLAS has a pathological tile mismatch at this size. Always pad to power-of-2 or multiples of 256 for best performance.
+
+### cuBLAS FP8 E4M3 GEMM (via cublasLt, CUDA 13.2)
+
+| M=N=K | TFLOPS | MFU (of 4929) |
+|------:|-------:|--------------:|
+| 1024 | 459 | 9.3% |
+| 2048 | 2070 | 42.0% |
+| 4096 | 3544 | 71.9% |
+| 6144 | 4281 | 86.9% |
+| **8192** | **4474** | **90.8%** |
+| 16384 | 4425 | 89.8% |
+
+**FP8 LLM shapes (d=8192):**
+
+| M | N | K | TFLOPS | MFU |
+|---:|---:|---:|-------:|----:|
+| 1 | 8192 | 8192 | 13 | 0.3% |
+| 128 | 8192 | 8192 | 1723 | 35.0% |
+| 256 | 8192 | 8192 | 2707 | 54.9% |
+| 1024 | 8192 | 8192 | 3544 | 71.9% |
+| 4096 | 8192 | 8192 | 4399 | **89.3%** |
+| 128 | 28672 | 8192 | 1337 | 27.1% |
+| 1024 | 28672 | 8192 | 3787 | 76.8% |
+
+**FP8 E5M2×E5M2: UNSUPPORTED in cuBLAS.** Mixed E4M3×E5M2: supported, identical throughput to E4M3×E4M3. Use E4M3 for weights, E5M2 for gradients (standard practice).
 
 ### cuBLAS TF32 GEMM scaling
 
