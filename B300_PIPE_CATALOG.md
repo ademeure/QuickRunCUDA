@@ -14726,6 +14726,26 @@ From `cudaGetDeviceProperties` + attribute scan:
 
 **Concurrent D2D copies share HBM bandwidth** — no speedup from multiple engines for device-internal copies. But **PCIe H2D and D2H are full-duplex** at ~100 GB/s combined, enabling simultaneous upload/download for pipelined serving.
 
+## Triple Overlap: Compute + H2D + D2H
+
+| Concurrent operations | Time | BW |
+|----------------------|-----:|---:|
+| Compute (all SMs, heavy) | 121 ms | — |
+| H2D (128 MB, during compute) | 2.57 ms | 52 GB/s |
+| D2H (128 MB, during compute) | 2.75 ms | 49 GB/s |
+| **All three simultaneous** | **YES** | **No interference** |
+
+All three engines run completely independently. H2D and D2H complete at full PCIe bandwidth while all 148 SMs are busy with compute. Zero performance degradation.
+
+## Kernel Launch Overhead (Host-Side)
+
+| Operation | µs/launch | Notes |
+|-----------|----------:|-------|
+| Raw kernel enqueue (no sync) | **4.3** | Minimum per-kernel cost |
+| cuBLAS GEMM enqueue | **9.3** | 2.2× raw (algo selection) |
+
+The 4.3 µs per kernel launch is the irreducible host-side overhead. For inference pipelines with dozens of kernels per request, this adds ~50-100 µs total — negligible for most models but significant for latency-critical single-token decode.
+
 
 # HFMA2 (f16×2 FMA) Pipeline
 
