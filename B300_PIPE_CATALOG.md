@@ -14698,17 +14698,31 @@ HFMA2 and FFMA use **different FMA pipes** and co-issue with zero additional cos
 
 Write bandwidth per SM is **2× read** at low SM count (write-combining is more efficient). At full chip, write achieves 6.1 TB/s (82%).
 
-## Copy (R+W simultaneous)
+## Copy (R+W simultaneous) — occupancy-sensitive
 
-| Active SMs | Per-dir BW | Total R+W | Efficiency |
-|-----------:|-----------:|----------:|-----------:|
-| 74 | 3195 | **6391** | **80%** |
-| 148 | 1424 | 2849 | 36% (!) |
+R+W bandwidth depends heavily on total thread block count, not just SM count:
 
-**Full-chip R+W copy regresses to 36% efficiency** — severe memory controller contention when all 148 SMs issue simultaneous reads AND writes. **74 SMs achieves 2.2× the total R+W bandwidth of 148 SMs.** This is a critical finding for kernels that do both heavy reads and writes (e.g., elementwise ops, layer norm).
+| Total blocks | SMs × blk/SM | R+W GB/s | Notes |
+|-------------:|:------------:|---------:|-------|
+| 148 | 148 × 1 | 2576 | |
+| **296** | **74 × 4 or 148 × 2** | **~6400** | **Sweet spot** |
+| 592 | 148 × 4 | 2851 | Drops 2.2×! |
+| 2368 | 148 × 16 | 6425 | Recovers |
+
+The R+W bandwidth shows a **non-monotonic response** to total block count. ~296 total blocks (2 per SM) and very high block counts (2000+) achieve ~6.4 TB/s, while intermediate counts (592) drop to ~2.85 TB/s. This suggests memory controller queue management has sweet spots.
+
+## SAXPY (2R + 1W per element)
+
+| Active SMs | Total BW | Notes |
+|-----------:|---------:|-------|
+| 37 | 3026 | |
+| 74 | **3584** | Peak |
+| 148 | 3535 | ~Same as 74 |
+
+SAXPY (read A, read+write B) achieves ~3.5 TB/s total HBM traffic at ≥74 SMs. Stable with SM count — the 2R+1W pattern doesn't show the same contention as pure copy.
 
 **Practical**:
 - **Read-only kernels**: use all SMs (7.0 TB/s)
 - **Write-only kernels**: use all SMs (6.1 TB/s)
-- **R+W kernels**: best with ~half the SMs (74 SMs = 6.4 TB/s total R+W) — launching fewer persistent blocks can paradoxically increase memory throughput
+- **R+W kernels**: ~296 total blocks (2/SM) or very high block counts work well (~6.4 TB/s); intermediate block counts may regress. **Always benchmark your specific R+W pattern.**
 
