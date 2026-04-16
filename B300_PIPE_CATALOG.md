@@ -14859,6 +14859,44 @@ The 80 transformer layers dominate at 96%. FP8 weights would bring this to ~17 m
 
 ~500 Gelem/s conversion throughput — adequate for one-time model quantization but too slow for per-inference conversion. Always store weights in the target format.
 
+
+# KV Cache Memory Behavior
+
+Llama-70B GQA: 8 KV-heads × 128 dim × 2 (K+V) = 2048 bytes per position (BF16).
+
+## Per-layer KV read throughput vs context length
+
+| Context | KV FP32 | KV BF16 | Read µs | GB/s | Level |
+|--------:|--------:|--------:|--------:|-----:|:-----:|
+| 256 | 2 MB | 1 MB | 9.7 | 216 | L2 |
+| 1024 | 8 MB | 4 MB | 28 | 302 | L2 |
+| 4096 | 34 MB | 17 MB | 101 | 333 | L2 |
+| 16384 | 134 MB | 67 MB | **1083** | 124 | L2 edge |
+| 32768 | 268 MB | 134 MB | 3749 | 72 | DRAM |
+| 131072 | 1074 MB | 537 MB | **16658** | 64 | DRAM |
+
+**GQA bottleneck**: With only 8 KV-heads → 8 blocks → 8 SMs active. DRAM bandwidth limited to ~65 GB/s (vs 7 TB/s theoretical). FlashAttention splits each KV-head across many warps to use more SMs.
+
+**MHA comparison** (64 heads → 64 SMs): 555 GB/s at ctx=4096 — **7× faster** than GQA's 8-block naive implementation.
+
+## KV cache budget across 80 layers (BF16)
+
+| Context | Per-layer KV | 80 layers total | Fits L2 (126 MB)? |
+|--------:|:-----------:|:---------------:|:-----------------:|
+| 403 | 1.6 MB | 126 MB | **Barely** |
+| 2048 | 8 MB | **640 MB** | ❌ (5× L2) |
+| 8192 | 32 MB | **2.5 GB** | ❌ |
+| 32768 | 128 MB | **10 GB** | ❌ |
+| 131072 | 512 MB | **40 GB** | ❌ |
+
+**KV cache is almost always DRAM-resident** for Llama-70B. The 126 MB L2 only fits the KV for ctx ≤ ~400 across all 80 layers. At typical serving lengths (ctx=2048+), KV must stream from HBM3E.
+
+**Practical implications**:
+1. **FP8 KV cache** halves the memory and doubles the effective bandwidth for attention
+2. **Paged attention** (vLLM-style) amortizes KV across requests sharing prefixes
+3. **Context length directly affects latency**: ctx=32K adds ~3.7 ms per layer, ~300 ms total for 80 layers
+4. **GQA with 8 KV-heads needs multi-warp parallelism** — naive 1-block-per-head gets only 65 GB/s from DRAM
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
