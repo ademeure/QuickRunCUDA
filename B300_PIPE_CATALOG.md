@@ -10814,6 +10814,27 @@ Without this, each `cudaFreeAsync` hands memory back to the OS, and the next `cu
 | **cudaEventSynchronize** | **7.27** (5.7× slower!) |
 
 **StreamSync is optimal** — the CUDA driver already uses efficient spin-wait internally. Manual polling gives no benefit. **Avoid cudaEventSynchronize** unless you specifically need event timing (5.7× overhead from event bookkeeping).
+
+### Memory allocation: cudaMallocAsync vs cudaMalloc
+
+| Size | cudaMalloc+Free | cudaMallocAsync | Speedup |
+|-----:|:---------------:|:---------------:|--------:|
+| 4 KB | 65 µs | **0.4 µs** | **158×** |
+| 64 KB | 65 µs | 0.5 µs | 143× |
+| 1 MB | 66 µs | 1.2 µs | 55× |
+| 16 MB | 75 µs | 1.3 µs | 60× |
+
+**Always use cudaMallocAsync** for dynamic allocation. cudaMalloc's 65 µs driver overhead is constant regardless of size. For 80-layer LLM with 4 allocs/layer: cudaMalloc adds 20.8 ms vs pool's 0.3 ms.
+
+### Global reduction throughput (v4 loads + shfl + smem + atomicAdd)
+
+| Working set | Chip BW | % of read peak |
+|:-----------|--------:|--------------:|
+| 1 MB | 1177 GB/s | L2 cached |
+| 64 MB | 2206 GB/s | DRAM |
+| 256 MB | **2431 GB/s** | **58% of 4.2 TB/s** |
+
+Well-optimized reduction achieves 58% of pure read throughput. The 42% overhead comes from warp shuffle, smem tree, and final atomicAdd.
 - Scheduling / kernel dispatch: ≈ 1 µs (GPU scheduler picks up the launch).
 - Kernel minimum execution: ≈ 1 µs.
 - `cudaDeviceSynchronize` round-trip: ≈ 4 µs.
