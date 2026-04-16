@@ -5987,6 +5987,19 @@ IMAD shares the FMA pipe with identical latency/throughput characteristics. IMAD
 
 Predication adds a fixed 0.19 cy per instruction, **independent of the predicate mask** (all-true, all-false, half-true = identical cost). The predicated instruction occupies the pipe regardless of the mask.
 
+### All-false predication throughput (all threads disabled, no branching, measured)
+
+| Instruction | cy/inst (all-false) | vs real throughput | Notes |
+|:------------|:-------------------:|:------------------:|:------|
+| **@false ld.global** | **0.44** | **~5× faster** | LSU skips memory access |
+| **@false st.global** | **4.06** | **Same as real!** | Store pipe doesn't short-circuit |
+| **@false FMA** | **1.07** | **~2× faster** | FMA pipe skips compute |
+| @half ld.global (16/32) | 2.29 | Intermediate | Partial predication |
+
+**Predicated-off loads are NOT NOPs** — they still occupy the dispatch pipeline (0.44 cy/ld = ~2.3 per cycle max). A chain of 32 @false loads takes 14 cycles, not 0.
+
+**Predicated-off stores are NOT faster at all** (4.06 cy = same as real stores). The LSU store path doesn't recognize the all-false mask for early termination.
+
 ### Memory bandwidth scaling with occupancy
 
 | Warps/SM | Relative BW | Per-warp efficiency |
