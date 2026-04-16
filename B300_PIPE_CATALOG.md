@@ -4865,6 +4865,21 @@ The L1 data cache fills in 32-byte sectors from L2, not full 128-byte lines. Con
 
 **FMA dual-issue**: two independent FMA chains execute at 2.03 cy/fma, confirming the heavy+lite FMA sub-units. Adding IADD (pipe_alu) adds zero overhead — it runs on a separate pipe concurrently.
 
+### FP16x2/BF16x2 packed arithmetic — 2× instruction throughput vs FP32
+
+| Config | cy/op | vs f32 baseline |
+|--------|------:|----------------:|
+| f16x2 FMA (1 chain) | 4.04 | Same latency as f32 |
+| f16x2 × 2 (dual-issue) | **2.02** | 2× f32 dual-issue rate |
+| f16x2 × 4 chains | **1.01** | 4× speedup (fully pipelined) |
+| f16x2 × 8 chains | **0.507** | **8× speedup = 2 ops/cy** |
+| bf16x2 FMA (1 chain) | 4.04 | Same as f16x2 |
+| f16x2 + f32 + ALU | **4.50** | Triple co-issue works |
+
+**HFMA2 (f16x2 packed) issues at 1 cy/pipe** — double the instruction throughput of FFMA (2 cy/pipe). With both heavy+lite pipes: **2 HFMA2/cy = 4 FP16 FMAs per cycle per partition**.
+
+Chip-wide FP16 scalar peak (HFMA2 with max ILP): 2 ops/cy × 4 partitions × 32 threads × 2 FLOP × 2.032 GHz × 148 SMs = **~308 TFLOPS** (vs ~60 TFLOPS for FP32 FFMA = ~5× ratio due to 2 elements per instruction + 2× issue rate).
+
 ### Instruction co-issue rules (measured, 1 warp, serial chains)
 
 | Pattern | cy/iter | vs FMA baseline (4.03) | Co-issues? |
