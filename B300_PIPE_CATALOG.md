@@ -5436,6 +5436,22 @@ Attention becomes significant at seq≥4096 (11%+ of decode). At seq=8192: atten
 
 **With NCCL 2-GPU TP** (70B FP8): 8.3 ms weight + 0.8 ms NCCL (80 layers × 10 µs) = 9.1 ms → **110 tok/s** (NCCL overhead = 9%).
 
+### Batch scaling: GEMM throughput vs batch size (W=4096², FP16)
+
+| Batch | TFLOPS | % of 2465 peak | OI (FLOP/B) | Regime |
+|------:|-------:|---------------:|------------:|--------|
+| 1 | 5 | 0.2% | 1.0 | **Memory-bound** |
+| 8 | 46 | 2% | 8.0 | Memory-bound |
+| 32 | 125 | 5% | 31 | Memory-bound |
+| 64 | 380 | 15% | 61 | Transitioning |
+| 128 | 723 | 29% | 117 | Transitioning |
+| **256** | **967** | **39%** | 216 | Approaching compute |
+| *~400* | *~1500* | *~61%* | *314* | *Crossover (ridge point)* |
+
+**Batch=1 is 0.2% of tensor peak** — purely weight-loading-bound. Tensor cores become significant at batch≥64 (15%). Full compute-bound at batch≈400 where OI crosses the FP16 ridge point (314 FLOP/B).
+
+**For LLM serving**: maximize batch size via continuous batching. Each doubling of batch ≈ 2× throughput until batch≈400.
+
 ### cudaGraph launch overhead scaling
 
 | Kernels in graph | Graph launch | Regular launch | Speedup |
