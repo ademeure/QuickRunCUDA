@@ -7345,6 +7345,29 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# cuLibrary / cuKernel modern APIs (CUDA 12+)
+
+| API | µs/call | vs legacy |
+|-----|--------:|----------:|
+| **`cuLibraryLoadData` + `cuLibraryUnload`** | **14.4** | **6.5× faster** |
+| `cuLibraryGetKernel` (symbol lookup) | **0.013** | 8× faster than cuModuleGetFunction |
+| `cuModuleLoadData` + `cuModuleUnload` (legacy) | 93.8 | baseline |
+| `cuModuleGetFunction` (legacy) | 0.107 | baseline |
+
+**Findings:**
+- **`cuLibrary*` is 6.5× faster** than the legacy `cuModule*` APIs for loading.
+- **Symbol lookup is essentially free** (13 ns / 107 ns).
+- Library API preserves kernel metadata across lookups — multi-kernel libs load once, then any kernel is looked up in ~13 ns.
+
+**Practical**: use `cuLibrary*` (CUDA 12+) for all runtime module management. The legacy `cuModule*` path is deprecated-in-practice. For production JIT patterns:
+1. Compile once via NVRTC → cubin (6 ms).
+2. `cuLibraryLoadData` (14 µs).
+3. `cuLibraryGetKernel(&k, lib, "name")` per kernel (< 20 ns).
+4. `cuLaunchKernel(k, ...)` to run.
+
+Total JIT overhead per unique cubin: ~20 µs (vs ~100 µs legacy).
+
+
 # cudaGraphInstantiate flags
 
 Effect on instantiate cost + per-launch cost (10-node graph):
