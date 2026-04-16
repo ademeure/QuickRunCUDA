@@ -7345,6 +7345,50 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# setp+selp vs min/max vs slct
+
+32 warps × 16 chains × 1000 iter:
+
+| Operation | inst/cy/SM |
+|-----------|-----------:|
+| `setp.ne.u32` + `selp.u32` | 32 |
+| `setp.eq.s32` + `selp.u32` | 32 |
+| `setp.lt.f32` + `selp.u32` | 32 |
+| **`min.u32`** | **64** (2× faster — fused) |
+| **`max.u32`** | **64** |
+| `slct.u32.s32` (signed predicate select) | 31 |
+
+**Findings**:
+- **setp+selp costs 32 inst/cy/SM** — same regardless of type (u32/s32/f32). Each pair counts as 2 insts of ALU work.
+- **`min`/`max` run at 64 inst/cy/SM** — 2× faster because they're **fused into one SASS inst**. Use min/max whenever you need `cond ? a : b` and the condition can be expressed as a compare.
+- **`slct`** (predicate-select based on sign-of-third-arg) runs at setp+selp speed, not min/max — probably not fused in SASS.
+
+**Design rule**: `max(x, 0)` for relu / saturated arithmetic is **2× faster than `x > 0 ? x : 0`** (setp+selp). Always prefer fused min/max when the semantics match.
+
+
+# cg::tiled_partition<N> sub-warp groups
+
+Shuffle cost within various tile sizes (2 shfl_xor per iter):
+
+| Tile size | cy/iter | ≈ cy per shfl |
+|----------:|--------:|--------------:|
+| 16 | 115 | 57 |
+| 8 | 137 | 68 |
+| 4 | 181 | 90 |
+| 2 | 269 | 134 |
+| raw warp `__shfl_xor_sync(0xFFFFFFFF, …)` (for comparison) | 36 | 6 |
+
+**Smaller tile = slower shuffle** — the cg::tiled_partition API adds significant overhead for masking / bounds handling. **Raw warp shuffles with manual lane masks are 10× faster than tile<16> shuffles.**
+
+Use `cg::tiled_partition<N>` for:
+- Prototyping / readability where you want sub-warp scope.
+- Integration with `cg::reduce` / `cg::exclusive_scan` which handle tile semantics internally.
+
+For perf-critical code:
+- Use raw `__shfl_xor_sync(lane_mask, val, delta)` with explicit masks.
+- Or use warp-wide reduce and filter results — usually cheaper than tile-scoped sub-ops.
+
+
 # CUDA virtual memory API (cuMemCreate / cuMemMap / cuMemSetAccess)
 
 Low-level virtual memory management for growable / aliased device arrays. Steps:
