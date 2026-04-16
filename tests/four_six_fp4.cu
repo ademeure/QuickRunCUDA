@@ -538,18 +538,27 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
     *((int2*)((unsigned char*)C + 8 + 8 * group_a)) = make_int2(lo0, hi0);
     *((int2*)((unsigned char*)C + 8 + 8 * group_b)) = make_int2(lo1, hi1);
     #else
-    ((int2*)B)[group_a] = make_int2(lo0, hi0);
-    ((int2*)B)[group_b] = make_int2(lo1, hi1);
+    {
+        int2* dst_a = ((int2*)B) + group_a;
+        int2* dst_b = ((int2*)B) + group_b;
+        asm("st.global.cs.v2.u32 [%0], {%1,%2};" :: "l"(dst_a), "r"(lo0), "r"(hi0));
+        asm("st.global.cs.v2.u32 [%0], {%1,%2};" :: "l"(dst_b), "r"(lo1), "r"(hi1));
+    }
     #endif
     int group = group_a;
     // group_b for scale write handled separately below
 #else
     // 16B store (int4) — one 128-bit coalesced write
+    // Use streaming store to bypass L2 cache (write-only data)
     int4 pack4 = make_int4(lo0, hi0, lo1, hi1);
     #ifdef GOLDEN
     *((int4*)((unsigned char*)C + 8 + 16 * idx)) = pack4;
     #else
-    ((int4*)B)[idx] = pack4;
+    {
+        int4* dst = ((int4*)B) + idx;
+        asm("st.global.cs.v4.u32 [%0], {%1,%2,%3,%4};"
+            :: "l"(dst), "r"(pack4.x), "r"(pack4.y), "r"(pack4.z), "r"(pack4.w));
+    }
     #endif
     int group = idx * 2;
 #endif
