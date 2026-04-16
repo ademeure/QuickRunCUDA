@@ -7380,6 +7380,40 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 **Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
 
 
+# Common ML ops mapped to B300 roofline
+
+Using measured ridge points: **scalar FFMA = 18 FLOP/B, FP16 tensor = 314 FLOP/B, FP8 tensor = 628 FLOP/B**.
+
+| Operation | Typical OI | B300 regime | Optimization lever |
+|-----------|----------:|-------------|-------------------|
+| **Elementwise** (ReLU, GELU, add, mul) | **0.25-0.5** | Memory-bound | **Fusion (N× speedup)** |
+| **LayerNorm** (reduce + normalize) | **2-8** | Memory-bound | Fuse with preceding/following op |
+| **Softmax** (reduce + exp + normalize) | **3-10** | Memory-bound | Fuse; use online softmax |
+| **Attention QK^T** (B×H×S×S matmul, S=seq) | 50-500 | Scalar: compute. Tensor: **memory-bound at S ≤ 2K** | FlashAttention (tile to stay in smem) |
+| **GEMM (M=N=K=1K, FP16)** | **333** | FP16 tensor: **at ridge (borderline)** | Increase tile; use FP8 if accuracy allows |
+| **GEMM (M=N=K=4K, FP16)** | **1 333** | FP16 tensor: **compute-bound** ✓ | Already compute-saturated |
+| **GEMM (M=N=K=4K, FP8)** | **1 333** | FP8 tensor: **compute-bound** ✓ (above 628 ridge) | Optimal regime |
+| **Embedding lookup** | **0.125** | Extremely memory-bound | Batch / fuse; can't really compute-optimize |
+| **Concat / split / reshape** | **0** (zero compute) | Pure memory | Avoid via in-place views |
+| **Conv2d 3×3** (C=256, HW=64) | ~100 | Scalar: compute. FP16 tensor: **memory-bound** | Use Winograd or im2col + tensor GEMM |
+| **Depthwise conv** | **1-4** | Memory-bound | Fuse with pointwise conv (MobileNet pattern) |
+| **BatchNorm** | **2-4** | Memory-bound | Fuse with preceding conv |
+
+**Rules of thumb for B300:**
+1. **OI < 18** → memory-bound on scalar path → focus on BW optimization (wide loads, fusion, smem staging).
+2. **18 < OI < 314** → compute-bound on scalar, but **still memory-bound on FP16 tensor** → the tensor core needs very high OI to earn its keep.
+3. **OI > 314 (FP16) / 628 (FP8)** → compute-bound on tensor path → this is where tcgen05.mma earns its 4.65 PFLOPS.
+4. **Most ML inference ops are memory-bound** (pointwise, LN, softmax, embedding, small GEMM). Fusion is king.
+5. **Large GEMMs (≥ 4K×4K)** are the only ops that reliably saturate tensor cores.
+
+**Inference implication**: a 7B-parameter LLM does:
+- Linear layers: 4K×4K GEMMs → compute-bound (OI ≈ 1333) → tensor core peak.
+- Attention: S × S at S=2K → OI ≈ 500 → borderline for FP16 tensor, compute-bound for FP8.
+- All pointwise (ReLU, RMSNorm, residual): OI < 1 → purely memory-bound → fuse everything.
+
+The model-level split is roughly: **60 % of time in GEMMs (compute-bound) + 40 % in pointwise/attention overhead (memory-bound)**. Fusion of the 40 % is how frameworks like vLLM, TensorRT-LLM, and SGLang extract real performance.
+
+
 # B300 Roofline Model — measured ridge point
 
 Sweep operational intensity (OI = FLOP / byte) from 0.25 to 128, 64 M elements, 4736 × 512 threads:
