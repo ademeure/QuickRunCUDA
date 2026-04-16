@@ -132,8 +132,6 @@ static __device__ __forceinline__ void quant_dequant_fused(
 #define BF16_LO(w) __int_as_float((unsigned int)((w) & 0xFFFFu) << 16)
 #define BF16_HI(w) __int_as_float((unsigned int)((w) & 0xFFFF0000u))
 
-// Process one 16-element group: load from 8 u32 words, quantize, return best.
-// Returns packed lo/hi FP4 words + e4m3 scale byte.
 static __device__ __forceinline__ void process_group(
     unsigned int w0, unsigned int w1, unsigned int w2, unsigned int w3,
     unsigned int w4, unsigned int w5, unsigned int w6, unsigned int w7,
@@ -192,12 +190,10 @@ static __device__ __forceinline__ void process_group(
         float2 sx0 = fmul_ftz_f32x2(x_f32[k],   x_f32[k],   factor_0, factor_1);
         float2 sx1 = fmul_ftz_f32x2(x_f32[k+1], x_f32[k+1], factor_0, factor_1);
 
-        // Fused: quantize + immediately dequantize (keeps .b8 in register)
         half2 dq0, dq1;
-        quant_dequant_fused(sx0.x, sx1.x, bits_0[k >> 1], dq0);  // candidate 0
-        quant_dequant_fused(sx0.y, sx1.y, bits_1[k >> 1], dq1);  // candidate 1
+        quant_dequant_fused(sx0.x, sx1.x, bits_0[k >> 1], dq0);
+        quant_dequant_fused(sx0.y, sx1.y, bits_1[k >> 1], dq1);
 
-        // Error accumulation with FFMA2
         short d0x = *reinterpret_cast<short*>(&dq0.x);
         short d0y = *reinterpret_cast<short*>(&dq0.y);
         short d1x = *reinterpret_cast<short*>(&dq1.x);
@@ -217,11 +213,6 @@ static __device__ __forceinline__ void process_group(
     }
     float2 errs = unpack_f32x2(err_pair);
 
-    // Select best candidate
-    // Pack u16 bytes into u32 for output.
-    // quant_dequant_fused guarantees bits[15:8]=0, so 0xFF mask is logically
-    // redundant. Omitting masks generates better code at low reg counts (44 regs),
-    // but the swizzled path (64 regs) schedules better WITH masks.
 #ifdef CONTIGUOUS_SCALES
     #define BPAK(x) (x)
 #else
@@ -297,22 +288,26 @@ static __device__ __forceinline__ void process_group(
     }
     float2 errs01 = unpack_f32x2(err_pair01);
 
-    // Select best among all 3 candidates
+    // Pack all candidates' bytes into u32, then select at u32 level.
+    // This avoids pointer-based conditional byte access (many ALU ops)
+    // in favor of fewer u32-level SEL instructions.
     float best_err = min(min(errs01.x, errs01.y), err2);
-    unsigned char best_fp8 = fp8_0;
-    unsigned short *best_bits = b0;
-    if (errs01.y == best_err) { best_fp8 = fp8_1; best_bits = b1; }
-    if (err2 == best_err)     { best_fp8 = fp8_2; best_bits = b2; }
-
-    out_fp8s = best_fp8;
 #ifdef CONTIGUOUS_SCALES
     #define BP3(x) (x)
 #else
     #define BP3(x) ((x) & 0xFF)
 #endif
-    out_lo = BP3(best_bits[0]) | (BP3(best_bits[1])<<8) | (BP3(best_bits[2])<<16) | (BP3(best_bits[3])<<24);
-    out_hi = BP3(best_bits[4]) | (BP3(best_bits[5])<<8) | (BP3(best_bits[6])<<16) | (BP3(best_bits[7])<<24);
+    unsigned int pk0_lo = BP3(b0[0])|(BP3(b0[1])<<8)|(BP3(b0[2])<<16)|(BP3(b0[3])<<24);
+    unsigned int pk0_hi = BP3(b0[4])|(BP3(b0[5])<<8)|(BP3(b0[6])<<16)|(BP3(b0[7])<<24);
+    unsigned int pk1_lo = BP3(b1[0])|(BP3(b1[1])<<8)|(BP3(b1[2])<<16)|(BP3(b1[3])<<24);
+    unsigned int pk1_hi = BP3(b1[4])|(BP3(b1[5])<<8)|(BP3(b1[6])<<16)|(BP3(b1[7])<<24);
+    unsigned int pk2_lo = BP3(b2[0])|(BP3(b2[1])<<8)|(BP3(b2[2])<<16)|(BP3(b2[3])<<24);
+    unsigned int pk2_hi = BP3(b2[4])|(BP3(b2[5])<<8)|(BP3(b2[6])<<16)|(BP3(b2[7])<<24);
     #undef BP3
+
+    out_lo = pk0_lo; out_hi = pk0_hi; out_fp8s = fp8_0;
+    if (errs01.y == best_err) { out_lo = pk1_lo; out_hi = pk1_hi; out_fp8s = fp8_1; }
+    if (err2 == best_err)     { out_lo = pk2_lo; out_hi = pk2_hi; out_fp8s = fp8_2; }
 
 #elif NUM_CANDIDATES == 4
     // ===== NC=4: two interleaved pairs (0+1) and (2+3) =====
@@ -375,22 +370,27 @@ static __device__ __forceinline__ void process_group(
     float2 ep01 = unpack_f32x2(err01);
     float2 ep23 = unpack_f32x2(err23);
 
+    // Pack all candidates, then select at u32 level
     float best_err = min(min(ep01.x, ep01.y), min(ep23.x, ep23.y));
-    unsigned char best_fp8 = fp8_0;
-    unsigned short *best_bits = bv0;
-    if (ep01.y == best_err) { best_fp8 = fp8_1; best_bits = bv1; }
-    if (ep23.x == best_err) { best_fp8 = fp8_2; best_bits = bv2; }
-    if (ep23.y == best_err) { best_fp8 = fp8_3; best_bits = bv3; }
-
-    out_fp8s = best_fp8;
 #ifdef CONTIGUOUS_SCALES
-    #define BPAK4(x) (x)
+    #define BP4(x) (x)
 #else
-    #define BPAK4(x) ((x) & 0xFF)
+    #define BP4(x) ((x) & 0xFF)
 #endif
-    out_lo = BPAK4(best_bits[0]) | (BPAK4(best_bits[1])<<8) | (BPAK4(best_bits[2])<<16) | (BPAK4(best_bits[3])<<24);
-    out_hi = BPAK4(best_bits[4]) | (BPAK4(best_bits[5])<<8) | (BPAK4(best_bits[6])<<16) | (BPAK4(best_bits[7])<<24);
-    #undef BPAK4
+    unsigned int p0l=BP4(bv0[0])|(BP4(bv0[1])<<8)|(BP4(bv0[2])<<16)|(BP4(bv0[3])<<24);
+    unsigned int p0h=BP4(bv0[4])|(BP4(bv0[5])<<8)|(BP4(bv0[6])<<16)|(BP4(bv0[7])<<24);
+    unsigned int p1l=BP4(bv1[0])|(BP4(bv1[1])<<8)|(BP4(bv1[2])<<16)|(BP4(bv1[3])<<24);
+    unsigned int p1h=BP4(bv1[4])|(BP4(bv1[5])<<8)|(BP4(bv1[6])<<16)|(BP4(bv1[7])<<24);
+    unsigned int p2l=BP4(bv2[0])|(BP4(bv2[1])<<8)|(BP4(bv2[2])<<16)|(BP4(bv2[3])<<24);
+    unsigned int p2h=BP4(bv2[4])|(BP4(bv2[5])<<8)|(BP4(bv2[6])<<16)|(BP4(bv2[7])<<24);
+    unsigned int p3l=BP4(bv3[0])|(BP4(bv3[1])<<8)|(BP4(bv3[2])<<16)|(BP4(bv3[3])<<24);
+    unsigned int p3h=BP4(bv3[4])|(BP4(bv3[5])<<8)|(BP4(bv3[6])<<16)|(BP4(bv3[7])<<24);
+    #undef BP4
+
+    out_lo = p0l; out_hi = p0h; out_fp8s = fp8_0;
+    if (ep01.y == best_err) { out_lo = p1l; out_hi = p1h; out_fp8s = fp8_1; }
+    if (ep23.x == best_err) { out_lo = p2l; out_hi = p2h; out_fp8s = fp8_2; }
+    if (ep23.y == best_err) { out_lo = p3l; out_hi = p3h; out_fp8s = fp8_3; }
 
 #else
     // ===== Generic NC path (NC=1 or NC>=5) =====
