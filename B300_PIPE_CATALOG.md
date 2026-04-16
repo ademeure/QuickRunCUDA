@@ -7345,6 +7345,44 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# NVTX tracing — FREE when profiler isn't attached
+
+NVTX `nvtxRangePush`/`Pop` and `nvtxMark` calls measured on B300:
+
+| Call | µs/call |
+|------|--------:|
+| `nvtxRangePushA` + `nvtxRangePop` | **0.000** |
+| `nvtxMarkA` | **0.000** |
+| `nvtxRangePushEx` (with color + ASCII message) | **0.000** |
+
+**All NVTX calls are FREE** when no profiler is attached. The NVTX shared library installs no-op stubs by default; when ncu / Nsight attaches, the stubs get swapped for real implementations that record events.
+
+**Practical**: leave NVTX annotations in production code — zero cost. Use them to mark:
+- Inference stages / batches
+- Kernel groups (e.g. "encoder", "decoder")
+- Domain-specific events
+
+Then attach `nsys profile` or ncu to get a full timeline whenever needed.
+
+
+# Function pointer / indirect call dispatch on GPU
+
+Three dispatch patterns, single warp, 1000 iter, `__noinline__` target functions:
+
+| Pattern | cy/iter | Over direct |
+|---------|--------:|------------:|
+| Direct call to `add1(&x)` | **202** | baseline |
+| `switch (i % 3) { add1 / mul7 / xor5 }` (3-way) | 292 | +90 cy (+45 %) |
+| **Indirect call via function pointer** (`fns[i%3](&x)`) | **320** | **+118 cy (+59 %)** |
+
+**Findings:**
+- **Function pointers cost ~5× direct call** on GPU. An indirect jump involves loading the target address and flushing the pipeline around an unknown branch.
+- **Switch-based dispatch is cheaper** than function pointer — the compiler knows all possible targets and can emit direct branches.
+- **Warp divergence applies** when lanes take different targets.
+
+**Design rule**: avoid function pointers in inner loops. Use templates / switch-per-kind at compile time whenever possible. Function pointers only pay off when the **dispatch depth × function body size** justifies the 5× dispatch overhead.
+
+
 # B300 PCIe Gen 6 + ECC + P-state (NVML)
 
 ```
