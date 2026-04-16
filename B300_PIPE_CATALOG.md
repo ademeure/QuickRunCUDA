@@ -7380,6 +7380,27 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 **Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
 
 
+# Kernel fusion — nearly 2× for elementwise ops
+
+Two back-to-back elementwise ops (FMA + sqrt) as 2 separate kernels vs 1 fused:
+
+| N (elements) | 2-kernel ms | Fused ms | Speedup |
+|-------------:|------------:|---------:|--------:|
+| 1 M | 0.017 | 0.015 | 1.12× (launch-overhead limited) |
+| 16 M | 0.049 | 0.029 | **1.71×** |
+| **64 M** | **0.301** | **0.156** | **1.93×** |
+
+**Fusion approaches 2× because it halves memory traffic:**
+- Unfused: read→op_A→write + read→op_B→write = 2 reads + 2 writes.
+- Fused: read→op_A→op_B→write = 1 read + 1 write.
+
+At 64 M elements (256 MB): unfused moves 1 GB total; fused moves 512 MB.
+
+**Rule**: ALWAYS fuse elementwise/pointwise ops. For N ops fused: traffic reduces N×, giving up to N× speedup for memory-bound chains.
+
+This is why **torch.compile / Triton kernel fusion** gives such large speedups for ML workloads — most elementwise ops (activation, LayerNorm, residual add) are memory-bound and chain-fusible.
+
+
 # Register vs shared vs global (L1 hit) — ALL SAME for latency-hidden kernels
 
 Single warp, 10 000 iters of FMA with operand sourced from different levels:
