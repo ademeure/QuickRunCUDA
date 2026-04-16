@@ -5729,6 +5729,18 @@ KV cache per request: 70B at 4K = 1.3 GB, at 32K = 10.7 GB.
 
 **Online quantization adds ~5% overhead** to FP8 inference (1.28 ms for 80 layers at batch=512). Small enough to justify FP8's 1.7-1.9× speedup.
 
+### Speculative decoding: 8B draft + 70B target (measured, BF16)
+
+| K (draft tokens) | Draft (ms) | Verify (ms) | Total | Speedup vs standard | Tok/s (70% accept) |
+|------------------:|:----------:|:-----------:|:-----:|:-------------------:|:-------------------:|
+| 3 | 7.8 | 21.9 | 29.7 | **3.26×** | **104** |
+| 5 | 13.0 | 21.9 | 34.8 | **4.17×** | **129** |
+| **7** | **18.2** | **22.0** | **40.2** | **4.82×** | **147** |
+
+**Verify step is nearly constant** (~22 ms) regardless of K — the 70B model loads 137 GB weights and M=2-8 doesn't change weight-loading time. Draft costs ~2.6 ms/token (8B, cold L2).
+
+**K=7 gives 3.6× throughput**: 147 tok/s vs 41 standard (assuming 70% acceptance). Both models fit: 70B (137 GB) + 8B (14 GB) = 151 GB, leaving 123 GB for KV cache.
+
 ### Prefill (time-to-first-token) at 80-layer level (measured, 70B BF16)
 
 | Prompt length | TTFT | MFU | Tok/s |
