@@ -152,7 +152,18 @@ E4M3×E4M3, E4M3×E5M2, E5M2×E5M2, E4M3×E2M1(FP4), E2M3(FP6)×E2M3, E3M2×E3M2
 | 64 MB | 116 µs | 1159 GB/s |
 | 256 MB | 376 µs | **1428 GB/s** (94% of NVLink peak) |
 
-Custom ring all-reduce (not NCCL). **21 µs floor** for small tensors — the practical cost per tensor-parallel layer. At 256 MB: algorithm BW saturates at 1.43 TB/s = 94% of NVLink.
+Custom ring all-reduce using cudaMemcpyPeer. **21 µs floor** for small tensors.
+
+### NCCL all-reduce (2×B300, NCCL 2.29.3)
+
+| Size | NCCL latency | NCCL algo BW | Custom ring |
+|-----:|---------:|:-------------|:------------|
+| ≤ 256 KB | **10 µs** | — | 21 µs (2× slower) |
+| 1 MB | 13 µs | 156 GB/s | 23 µs |
+| 16 MB | 54 µs | 627 GB/s | 44 µs |
+| 256 MB | 531 µs | **1011 GB/s** | 376 µs (1428 GB/s) |
+
+**NCCL latency floor = 10 µs** — 2× faster than custom for small messages (kernel-based P2P, no cudaMemcpyPeer overhead). Custom is faster for large transfers (DMA engine > kernel-based copy). For LLM tensor parallelism: NCCL gives 10 µs per layer → 0.8 ms for 80-layer model (< 5% of decode time).
 
 ---
 
@@ -5410,7 +5421,9 @@ FMA computes `(a×b)+c` with single rounding (IEEE 754 fused). Kahan summation w
 
 **FP4 is transformative**: a 405B model fits on a single B300 (202 GB < 274 GB HBM) — impossible at FP8/FP16. 70B at FP4 achieves 120 tok/s = conversational speed for many concurrent users. NVLink TP overhead is only 3% (1.7 ms per 80 layers × 21 µs all-reduce).
 
-Real frameworks typically achieve 60-80% of these theoretical peaks.
+Real frameworks typically achieve 60-80% of these peaks. Batch-1 attention is negligible (0.2% of decode time — KV cache read = 0.03 ms vs 16.7 ms weight loading).
+
+**With NCCL 2-GPU TP** (70B FP8): 8.3 ms weight + 0.8 ms NCCL (80 layers × 10 µs) = 9.1 ms → **110 tok/s** (NCCL overhead = 9%).
 
 ### cudaGraph launch overhead scaling
 
