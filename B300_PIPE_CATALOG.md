@@ -5498,6 +5498,28 @@ M=1 achieves 5.8 TB/s effective weight bandwidth (better than raw DRAM streaming
 
 **Batch=1 to batch=64: essentially FREE** — 64× more tokens for only 5% more latency (15.7→16.5 ms). GEMMs are memory-bandwidth-limited; each token adds negligible time until compute-bound at batch≈128+.
 
+### Pipeline overhead: GEMM + elementwise interleaved (measured)
+
+| Batch | GEMM-only (2×d²) | GEMM + norm + silu | Overhead |
+|------:|:----------------:|:------------------:|:--------:|
+| 1 | 0.046 ms | 0.086 ms | **+88%** |
+| 32 | 0.043 ms | 0.043 ms | **0%** |
+| 128 | 0.054 ms | 0.054 ms | **0%** |
+
+**At batch=1: elementwise kernels (RMSNorm, SiLU) add 88% overhead** — the 10 µs kernel launch cost per elementwise is almost as much as the 23 µs GEMM. **Kernel fusion (norm+GEMM, activation+GEMM) gives ~1.9× speedup at batch=1.**
+
+**At batch≥32: elementwise is FREE** — the GPU overlaps dispatch and compute naturally. Fusion doesn't help at larger batch.
+
+### Attention decode latency (measured, batch=1, 64 heads, d=128, cuBLAS batched)
+
+| seq_len | QK^T | softmax | attn×V | Total | % of 70B GEMM (15.7 ms) |
+|--------:|-----:|--------:|-------:|------:|:-----------------------:|
+| 1024 | 0.004 | 0.002 | ~0 | **0.007** | 0.4% |
+| 4096 | 0.006 | 0.002 | ~0 | **0.009** | 0.5% |
+| 8192 | 0.023 | 0.002 | ~0 | **0.025** | 1.6% |
+
+**Attention is negligible at decode** — even at seq=8K, attention takes 0.025 ms per layer = 2 ms for 80 layers = 11% of total. The GEMM weight-loading dominates decode latency.
+
 ### Prefill throughput (compute-bound, FP16 tensor, W=4096²)
 
 | Prompt length | ms/GEMM | TFLOPS | % peak | 70B prefill time | Prefill tok/s |
