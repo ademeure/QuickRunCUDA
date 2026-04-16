@@ -7345,6 +7345,46 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# cudaGraphInstantiate flags
+
+Effect on instantiate cost + per-launch cost (10-node graph):
+
+| Flag | Instantiate (ms) | Launch (µs/call) | Notes |
+|------|----------------:|-----------------:|-------|
+| Default | 0.11 | 8.19 | baseline |
+| **`AutoFreeOnLaunch`** | **0.01 (10× faster)** | 8.19 | Frees allocations after launch completes |
+| `Upload` | err | — | Requires 2-arg `cudaGraphInstantiateWithParams` API |
+| **`DeviceLaunch`** | 0.04 | **13.73 (1.7× slower)** | Enables launch from device code (via `cudaGraphLaunch` in a kernel) |
+| `UseNodePriority` | 0.01 | 8.19 | Honor per-node `cudaLaunchAttributePriority` |
+
+**Key findings:**
+- **`AutoFreeOnLaunch`** skips eager allocation during instantiate (10× faster inst), no runtime cost.
+- **`DeviceLaunch`** enables device-side `cudaGraphLaunch` — useful for nested DP with graphs — but adds ~5 µs to each launch.
+- **`UseNodePriority`** is free — always enable if you set per-node priorities.
+
+**Practical**: for rapid-turnaround graph updates, use `AutoFreeOnLaunch`. Only use `DeviceLaunch` when you need device-side launch (e.g. from dynamic parallelism patterns).
+
+
+# Kernel register-spill threshold — 200 floats per thread max
+
+Single warp × N live `float` values × FMA chain × 1000 iter:
+
+| N live floats | cy/outer-iter | LDL/STL (SASS) | Status |
+|--------------:|--------------:|---------------:|--------|
+| 8 | 23.0 | 0 | all in regs |
+| 32 | 44.0 | 0 | all in regs |
+| 64 | 76.0 | 0 | all in regs |
+| 128 | 140.0 | 0 | all in regs |
+| **192** | **204.1** | **0** | **last size with no spill** |
+| **256** | **388.4** | **23 LDL / 26 STL** | **spill starts** (~1.4× slowdown) |
+| 512 | 3 395 | 576 / 579 | catastrophic spill (**16× slowdown**) |
+
+**Findings:**
+- **ptxas fits up to ~192 live floats per thread in registers** before spilling. This matches the B300 per-thread register budget of 232 (minus a few for loop counters / scratch).
+- **Spill starts between 192 and 256 live values** — well-behaved at 256 (1.4× cost), disaster at 512 (16×).
+- **Use `__launch_bounds__` + careful liveness** to stay below 192. If you need more state, use smem or TMEM for the extra data.
+
+
 # setp+selp vs min/max vs slct
 
 32 warps × 16 chains × 1000 iter:
