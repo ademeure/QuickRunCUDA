@@ -165,12 +165,11 @@ static __device__ __forceinline__ void process_group(
     // This lets us use FFMA2 for error accumulation (d*d) across candidates,
     // shifting work from ALU→FMA pipe and reducing total instruction count.
 
-    // Compute both factors
-    float s_group_0 = absmax * ((1.f/6.f) * SCALE_OVERRIDE);
-    float s_group_1 = absmax * ((1.f/4.f) * SCALE_OVERRIDE);
+    // Compute both factors. Combine (inv_val * SO * inv_scale) into one constant
+    // so the compiler folds to a single FMUL instead of 2 sequential FMULs.
     unsigned char fp8_0, fp8_1;
-    float s_round_0 = roundtrip_e4m3(s_group_0 * inv_scale, fp8_0);
-    float s_round_1 = roundtrip_e4m3(s_group_1 * inv_scale, fp8_1);
+    float s_round_0 = roundtrip_e4m3(absmax * ((1.f/6.f) * SCALE_OVERRIDE * inv_scale), fp8_0);
+    float s_round_1 = roundtrip_e4m3(absmax * ((1.f/4.f) * SCALE_OVERRIDE * inv_scale), fp8_1);
     // s_round is never 0 when AMAX_CONST > 0 (absmax > 0 for most groups)
     // Removing this saves 4 FSETP + 4 FSEL ALU instructions per kernel
     float factor_0 = rcp_approx_ftz(s_round_0 * scale);
@@ -244,9 +243,8 @@ static __device__ __forceinline__ void process_group(
     for (int i = 0; i < NUM_CANDIDATES; ++i) {
         QuantResult& q = q_vec[i];
         const float inv_val = 1.f / cand_all[i];
-        float s_group = absmax * (inv_val * SCALE_OVERRIDE);
         unsigned char s_as_fp8;
-        float s_round = roundtrip_e4m3(s_group * inv_scale, s_as_fp8);
+        float s_round = roundtrip_e4m3(absmax * (inv_val * SCALE_OVERRIDE * inv_scale), s_as_fp8);
         // s_round is never 0 when AMAX_CONST > 0
         float factor = rcp_approx_ftz(s_round * scale);
 
