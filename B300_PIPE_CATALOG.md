@@ -14513,6 +14513,22 @@ L1-cached global load interleaved with FMA chain, single warp:
 
 **Shared memory and L1 global loads overlap equally well** with compute — both use the LSU pipe which co-issues with FMA.
 
+## Activation Function Throughput (Practical)
+
+256M elements (1 GB FP32 / 512 MB BF16), 148 SMs × 8 blocks × 256 threads:
+
+| Activation | FP32 GB/s | FP32 µs | FP32 Gelem/s | Bottleneck |
+|-----------|----------:|--------:|-------------:|:----------:|
+| **ReLU** | 3707 | 579 | 463 | Memory |
+| **GELU** | 3445 | 623 | 431 | Memory (tanhf hides behind loads) |
+| **SiLU/Swish** | 1446 | 1485 | 181 | **Compute** (expf is expensive) |
+| **LayerNorm elem** | 3672 | 585 | 459 | Memory |
+| **ReLU BF16×2** | **6290** | **171** | **1572** | Memory |
+
+ReLU, GELU, and LayerNorm are **memory-bound** at ~3.5-3.7 TB/s R+W. SiLU is **compute-bound** due to `expf()` (2.6× slower than ReLU). **BF16 ReLU is 3.4× faster** element-wise than FP32 (half memory traffic + vectorized `bfloat162` ops).
+
+**Practical for inference**: Always use BF16 for activations — 3.4× throughput improvement. For SiLU, consider approximate computation via raw MUFU instructions (`ex2.approx.ftz.f32` + multiply) to move it back to memory-bound.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
