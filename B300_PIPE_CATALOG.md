@@ -5136,6 +5136,16 @@ The bit-manipulation ops (popc, ffs, clz, brev) run on pipe_alu at standard 2 cy
 
 **MMA adds zero overhead to TMA** — tensor core compute runs entirely in TMA's shadow. The combined time (680 cy) is actually 12 cy less than TMA alone, because MMA keeps the scheduler active and improves TMA polling efficiency.
 
+**GEMM epilogue is FREE** behind MMA:
+
+| Phase | cy/iter |
+|-------|--------:|
+| MMA only (6 K-steps) | 763 |
+| MMA + epilogue (TMEM read + global store) | **766** |
+| Epilogue only (TMEM ld.x4 + 4 global stores) | 104 |
+
+The epilogue adds only 3 cy to the 763 cy MMA phase — **0.4% overhead.** TMEM read and global stores execute concurrently with MMA compute. Even a 104 cy epilogue completely hides in the 768 cy MMA shadow.
+
 **GEMM mainloop: optimal K-depth (TMA 16KB + K×MMA, FP16 M128 N256):**
 
 | K steps | cy/iter | TFLOPS/SM | Efficiency | Bottleneck |
@@ -5198,6 +5208,15 @@ All FP32 value ranges run at identical 4.03 cy: normal, subnormal, overflow, NaN
 | `__ldg` (read-only/texture) | 834 | **-22%** |
 
 **On Blackwell, default `ld.global` is fastest.** The unified L1 cache outperforms the texture cache path (__ldg). This differs from Hopper where __ldg was sometimes faster. Always prefer default loads unless you specifically need non-coherent access.
+
+### L2 broadcast amplification (shared vs unique memory regions)
+
+| Pattern | Chip BW | Notes |
+|---------|--------:|-------|
+| All 148 SMs read same 1 MB | **2599 GB/s** | L2 serves as broadcast cache |
+| Each SM reads unique 1 MB (148 MB total) | 1470 GB/s | L2 misses → DRAM-bound |
+
+**L2 amplifies bandwidth 1.8×** for shared data. This is exploited by batch inference (shared weights), GEMMs (shared B matrix), and broadcast operations. Design data layouts so multiple SMs share the same L2-resident tiles.
 
 ### Coalescing efficiency (single warp, DRAM-resident data)
 
