@@ -15010,6 +15010,35 @@ Peak gate-projection throughput at **seq=512** (1591 TFLOPS) — the sweet spot 
 
 **Practical**: Use whatever layout is most convenient for your data flow. No performance reason to prefer one over another. For decode (M=1), NT/TT are marginally faster (4%) — likely from row-major weight being slightly more cache-friendly when only one output row is computed.
 
+
+# Occupancy Configuration Table
+
+## Max blocks per SM (no shared memory, default registers)
+
+| Threads/block | Blocks/SM | Warps/SM | Occupancy | Limiting factor |
+|--------------:|----------:|---------:|----------:|:---------------|
+| 32 | **32** | 32 | 50% | Block limit (32) |
+| 64 | 32 | **64** | 100% | Block limit |
+| 128 | 16 | 64 | 100% | Warp limit (64) |
+| 256 | 8 | 64 | 100% | Warp limit |
+| 512 | 4 | 64 | 100% | Warp limit |
+| 1024 | 2 | 64 | 100% | Warp limit |
+
+**32 blocks/SM is the hardware maximum.** For 32-thread blocks, this caps occupancy at 50% (32 warps vs 64 max). Use ≥64 threads/block for 100% occupancy.
+
+## Shared memory vs occupancy (128 threads/block)
+
+| Smem/block | Blocks/SM | Warps | Occupancy |
+|-----------:|----------:|------:|----------:|
+| 0 KB | 16 | 64 | 100% |
+| 16 KB | 13 | 52 | 81% |
+| 32 KB | 6 | 24 | 38% |
+| 48 KB | 4 | 16 | 25% |
+
+With 228 KB total smem per SM, each additional 16 KB reduces blocks by ~3. The default smem limit is 48 KB/block; beyond that requires `cudaFuncSetAttribute(MaxDynamicSharedMemorySize)` optin (up to 227 KB).
+
+**Key tradeoff**: 48 KB smem per block gives 4 blocks/SM (25% occupancy). This is typically fine for compute-bound kernels (our earlier measurement showed 99% FMA throughput at 25% occupancy), but devastating for memory-bound kernels.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
