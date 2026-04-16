@@ -14816,6 +14816,27 @@ The B300 achieves **3.5 TFLOPS per incremental watt** above idle — excellent e
 **FP8 + speculative decode achieves $0.013 per 1K output tokens** for Llama-70B — competitive with cloud API pricing. Llama-8B at $0.006/1K is nearly free.
 
 
+# B300 vs H100: Generational Comparison
+
+B300 data: **measured** in this catalog. H100 data: published specs + industry benchmarks.
+
+| Metric | H100 SXM | **B300 SXM6** | **B300/H100** |
+|--------|:--------:|:--------:|:--------:|
+| BF16 tensor (TFLOPS) | 990 | **1776** | **1.8×** |
+| FP8 tensor (TFLOPS) | 1979 | **3411** | 1.7× |
+| HBM bandwidth (TB/s) | 3.35 | **7.0** | **2.1×** |
+| HBM sustained chain | 1.5 | **2.8** | 1.9× |
+| HBM capacity (GB) | 80 | **287** | **3.6×** |
+| L2 cache (MB) | 50 | **126** | 2.5× |
+| L2 bandwidth (TB/s) | 4.0 | **8.5** | 2.1× |
+| TDP (W) | 700 | 1100 | 1.6× |
+| 70B BF16 decode (tok/s) | ~7 | **17** | **2.4×** |
+| 70B concurrent (ctx=2K) | ~40 | **216** | **5.4×** |
+| 8B decode (tok/s) | ~55 | **142** | **2.6×** |
+
+**The B300 delivers 2-2.5× throughput at 1.6× power** — a meaningful efficiency improvement. The 3.6× memory capacity is the biggest jump, enabling 5.4× concurrent serving capacity. For Llama-70B, the B300 can serve the model entirely from one GPU (140 GB BF16 fits in 287 GB) while H100 requires 2-GPU tensor parallelism.
+
+
 # Multi-Request Serving: Overlap vs Batching
 
 3 key GEMMs per "request" (Q + Gate + Down projections, batch=1 per request):
