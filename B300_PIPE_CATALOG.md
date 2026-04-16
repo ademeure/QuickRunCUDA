@@ -7380,6 +7380,47 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 **Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
 
 
+# __threadfence* C++ intrinsics map directly to PTX membar
+
+Single warp × 1000 iter, pure fence cost (no memory traffic):
+
+| Intrinsic | PTX | cy/iter |
+|-----------|-----|--------:|
+| `__threadfence_block()` | `membar.cta` | **27** |
+| `__threadfence()` (GPU) | `membar.gl` | **291** (11×) |
+| `__threadfence_system()` | `membar.sys` | **2 842** (105×) |
+| (no fence baseline) | — | 0 |
+
+**Ratios**: block:GPU:system = **1 : 11 : 105**. Matches earlier PTX-level measurements.
+
+**Practical**: use the narrowest scope that gives you correctness. Block-scope fences are ~40× cheaper than GPU-scope, ~100× cheaper than system-scope.
+
+
+# Address-space conversion (cvta) is FREE
+
+| PTX op | cy/iter |
+|--------|--------:|
+| `cvta.to.global` | 23 |
+| `cvta.global` (global → generic) | 23 |
+| (bare `add` baseline) | 23 |
+
+**Address-space conversion costs 0 cycles** — folds into the baseline loop. Convert freely between generic / shared / global / local pointers. The `__cvta_generic_to_shared` etc. helpers compile to these and have no runtime cost.
+
+
+# cudaFuncSetSharedMemConfig is a NO-OP on Blackwell
+
+`cudaFuncSetSharedMemConfig(fn, cudaSharedMemBankSizeFourByte)` and `cudaSharedMemBankSizeEightByte`:
+
+| Bank mode | cy/iter (FP64 smem read) |
+|-----------|-------------------------:|
+| 4-byte | 53 |
+| 8-byte | **53 (identical)** |
+
+**The API returns `no error` but the setting is SILENTLY IGNORED** on Blackwell. Blackwell's smem has a fixed 4-byte bank layout; 8-byte bank mode was a Kepler/Maxwell-era feature that's been removed.
+
+**Practical**: don't use `cudaFuncSetSharedMemConfig`. For FP64 smem access patterns, pad manually (e.g., add a dummy u32 to break 2-way bank conflicts) or use stride-2 to avoid reading adjacent FP64 values simultaneously.
+
+
 # Tiny PCIe / D2D transfer latency (bytes-KB range)
 
 Transfer latency dominated by fixed setup overhead until ~KB sizes:
