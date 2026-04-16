@@ -250,26 +250,27 @@ static __device__ __forceinline__ void process_group(
 
         q.scale = s_round;
         q.fp8s  = s_as_fp8;
-        #pragma unroll
-        for (int k = 0; k < VSIZE; k += 2) {
-            float2 scaled = fmul_ftz_f32x2(x_f32[k], x_f32[k+1], factor, factor);
-            q.bits[k >> 1] = f32x2_to_e2m1x2(scaled.x, scaled.y);
-        }
 
         const float descale = q.scale * scale;
         half  descale_neg_f16 = static_cast<half>(-descale);
         short descale_neg_s   = *reinterpret_cast<short*>(&descale_neg_f16);
         err_vec[i] = 0.f;
         #pragma unroll
-        for (int k = 0; k < E2M1_PAIRS; ++k) {
-            half2 dq = e2m1x2_to_f16x2(q.bits[k]);
+        for (int k = 0; k < VSIZE; k += 2) {
+            float2 scaled = fmul_ftz_f32x2(x_f32[k], x_f32[k+1], factor, factor);
+            // Fused quantize+dequant: .b8 stays in asm block
+            half2 dq;
+            unsigned short byte_tmp;
+            quant_dequant_fused(scaled.x, scaled.y, byte_tmp, dq);
+            q.bits[k >> 1] = (unsigned char)(byte_tmp & 0xFF);
+
             short dx = *reinterpret_cast<short*>(&dq.x);
             short dy = *reinterpret_cast<short*>(&dq.y);
             float d0, d1;
             asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-                : "=f"(d0) : "h"(dx), "h"(descale_neg_s), "f"(x_f32[2*k]));
+                : "=f"(d0) : "h"(dx), "h"(descale_neg_s), "f"(x_f32[k]));
             asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-                : "=f"(d1) : "h"(dy), "h"(descale_neg_s), "f"(x_f32[2*k+1]));
+                : "=f"(d1) : "h"(dy), "h"(descale_neg_s), "f"(x_f32[k+1]));
             err_vec[i] += d0 * d0;
             err_vec[i] += d1 * d1;
         }
