@@ -14674,7 +14674,21 @@ From `cudaGetDeviceProperties` + attribute scan:
 | | Memory pools | YES |
 | | Cluster max size | 32 blocks |
 
-**4 async copy engines** enable 4 simultaneous H2D/D2H/D2D transfers — pipeline data staging across multiple streams. The **7680-bit memory bus** (60 × 128-bit HBM3E channels) is the widest bus in any commercial GPU.
+**4 async copy engines** enable concurrent transfers. The **7680-bit memory bus** (60 × 128-bit HBM3E channels) is the widest bus in any commercial GPU.
+
+## Copy Engine Concurrency (measured)
+
+| Configuration | BW | Notes |
+|--------------|---:|-------|
+| 1× D2D (256 MB) | 3017 GB/s | Single copy engine |
+| 2× concurrent D2D | 3132 GB/s | **No speedup** — shares internal BW |
+| 4× concurrent D2D | 3195 GB/s | Same — D2D is BW-capped, not engine-capped |
+| H2D unidirectional | 52.8 GB/s | PCIe Gen5 x16 |
+| D2H unidirectional | 49.9 GB/s | |
+| **H2D + D2H simultaneous** | **100 GB/s** | **Full-duplex!** (2× unidirectional) |
+| Compute + D2D | Overlap | Yes — independent engines |
+
+**Concurrent D2D copies share HBM bandwidth** — no speedup from multiple engines for device-internal copies. But **PCIe H2D and D2H are full-duplex** at ~100 GB/s combined, enabling simultaneous upload/download for pipelined serving.
 
 
 # HFMA2 (f16×2 FMA) Pipeline
