@@ -7380,6 +7380,52 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 **Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
 
 
+# Register vs shared vs global (L1 hit) — ALL SAME for latency-hidden kernels
+
+Single warp, 10 000 iters of FMA with operand sourced from different levels:
+
+| Source | cy/iter |
+|--------|--------:|
+| Register | 23.00 |
+| Shared memory | 23.00 |
+| Global (L1 hit, warm) | 23.04 |
+
+**All identical!** When the memory access latency is hidden by the FMA pipeline (warp-level scheduling + ILP), the staging level doesn't affect throughput.
+
+**This holds when**:
+- Enough warps or ILP to hide load latency.
+- Data is hot in L1/smem (not cold DRAM).
+- Compute-to-load ratio is high (many FMAs per load).
+
+**When staging level DOES matter**:
+- Cold DRAM loads with no ILP → register is obviously faster.
+- Tight loops where load is on the critical path → smem ~40 cy vs L1 ~52 cy vs L2 ~295 cy.
+
+**Design rule**: don't pre-optimize staging level until profiling shows the load on the critical path. Use the most convenient source — register for compile-time constants, smem for inter-thread sharing, global for bulk data.
+
+
+# Warp specialization — ONLY helps with async overlap, NOT sequential barriers
+
+8 warps (256 threads), 100 tiles of 4096 floats, load from global → smem → compute:
+
+| Pattern | cy/tile | Notes |
+|---------|--------:|-------|
+| **All-thread** (256 thr load, then 256 thr compute) | **1 861** | max occupancy per phase |
+| Warp-specialized (2 warps load, 6 warps compute, sequential) | 7 081 (**3.8× slower!**) | warps waste time at barriers |
+
+**Naive warp specialization is an ANTI-PATTERN** when:
+- Load and compute phases are separated by `__syncthreads` (not overlapping).
+- All warps wait at both barriers regardless of role.
+- Producer warps (2/8 = 25 %) waste 75 % of compute capacity during compute phase.
+
+**Warp specialization only pays off when:**
+1. **Async overlap**: producers issue cp.async/TMA while consumers compute on previous tile (double-buffered, no barrier between phases).
+2. **Register budget asymmetry**: producers need few regs (frees register file for consumers via setmaxnreg).
+3. **Different pipe usage**: producers use LSU pipe exclusively; consumers use FMA pipe exclusively — can co-issue without contention.
+
+**For simple load→sync→compute patterns, all-thread mode always wins.** Use warp specialization only in CUTLASS/FlashAttention-style pipelined kernels with multi-stage async prefetch.
+
+
 # cudaDeviceSetCacheConfig — marginal effect on Blackwell
 
 | Config | Memory-bound (256 MB stream) | Smem-heavy (32 KB) |
