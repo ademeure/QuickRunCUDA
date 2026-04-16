@@ -131,3 +131,27 @@ Byte 4 = source register. Change this for register rename.
 - `rename_lop3.py`: Automated NOP+rename+delete pipeline
 - `patch_lop3.py`: Simpler NOP-only or identity-mask patcher
 - `SASS_MODIFICATION.md`: This document
+
+## Why adj_mbps0 Doesn't Tolerate Deletions
+
+The deletion safety depends on the **control word scheduling byte** (lo[5]):
+
+| Config | Regs | lo[5] pattern | Deletable |
+|--------|------|---------------|-----------|
+| stride1K_mbps8 | 64 | uniform 0xe2 | 22/26 |
+| adj_mbps0 | 47 | mixed 0xe2/0xe4/0xc6 | 0/30 |
+
+**Explanation**: Lower register count → compiler must pack instructions
+more tightly → position-sensitive dependency chains in the control word.
+When an instruction is deleted and subsequent code shifts, the control
+word's dependency reference (which implicitly targets the preceding
+instruction) now points to a different instruction, breaking the
+scoreboard timing.
+
+The 64-reg build has "scheduling slack" — uniform control words that
+tolerate position changes. The 47-reg build has no slack — every
+instruction's position is critical for the dependency chain.
+
+**Implication**: For SASS deletion to work, prefer builds with higher
+register counts (e.g., `MIN_BLOCKS_PER_SM=8` with 128 threads) that
+generate looser, position-tolerant scheduling.
