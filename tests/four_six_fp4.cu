@@ -231,7 +231,27 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
 #elif GROUPS_PER_THREAD == 2
     unsigned int wa0,wa1,wa2,wa3,wa4,wa5,wa6,wa7;
     unsigned int wb0,wb1,wb2,wb3,wb4,wb5,wb6,wb7;
-    asm(
+
+#ifdef STRIDE_1024
+    // Warp-strided: each warp covers 2 × 32 groups with 1024B between halves.
+    // This puts the two 256-bit loads into different HBM pages/banks.
+    const int warp = idx >> 5;
+    const int lane = idx & 31;
+    const int group_a = warp * 64 + lane;
+    const int group_b = group_a + 32;
+    const unsigned int* pA = reinterpret_cast<const unsigned int*>(A) + group_a * 8;
+    const unsigned int* pB = reinterpret_cast<const unsigned int*>(A) + group_b * 8;
+    asm volatile("ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
+                 : "=r"(wa0),"=r"(wa1),"=r"(wa2),"=r"(wa3),
+                   "=r"(wa4),"=r"(wa5),"=r"(wa6),"=r"(wa7)
+                 : "l"(pA));
+    asm volatile("ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
+                 : "=r"(wb0),"=r"(wb1),"=r"(wb2),"=r"(wb3),
+                   "=r"(wb4),"=r"(wb5),"=r"(wb6),"=r"(wb7)
+                 : "l"(pB));
+#else
+    // Adjacent: thread idx loads groups [2*idx, 2*idx+1] (stride = 64B/thread)
+    asm volatile(
         "ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%16];\n\t"
         "ld.global.v8.u32 {%8,%9,%10,%11,%12,%13,%14,%15}, [%17];"
         : "=r"(wa0),"=r"(wa1),"=r"(wa2),"=r"(wa3),
@@ -239,11 +259,24 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
           "=r"(wb0),"=r"(wb1),"=r"(wb2),"=r"(wb3),
           "=r"(wb4),"=r"(wb5),"=r"(wb6),"=r"(wb7)
         : "l"(pIn), "l"(pIn + 8));
+#endif
 
     int lo0,hi0,lo1,hi1; unsigned char fp8s0,fp8s1;
     process_group(wa0,wa1,wa2,wa3,wa4,wa5,wa6,wa7, scale, lo0,hi0,fp8s0);
     process_group(wb0,wb1,wb2,wb3,wb4,wb5,wb6,wb7, scale, lo1,hi1,fp8s1);
 
+#ifdef STRIDE_1024
+    // Two separate 8B stores at the correct output positions
+    #ifdef GOLDEN
+    *((int2*)((unsigned char*)C + 8 + 8 * group_a)) = make_int2(lo0, hi0);
+    *((int2*)((unsigned char*)C + 8 + 8 * group_b)) = make_int2(lo1, hi1);
+    #else
+    ((int2*)B)[group_a] = make_int2(lo0, hi0);
+    ((int2*)B)[group_b] = make_int2(lo1, hi1);
+    #endif
+    int group = group_a;
+    // group_b for scale write handled separately below
+#else
     // 16B store (int4) — one 128-bit coalesced write
     int4 pack4 = make_int4(lo0, hi0, lo1, hi1);
     #ifdef GOLDEN
@@ -251,9 +284,8 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
     #else
     ((int4*)B)[idx] = pack4;
     #endif
-
-    // 2 scale writes
     int group = idx * 2;
+#endif
 #endif
 
     // Scale writes (1 or 2 per thread)
@@ -262,9 +294,16 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
 #if GROUPS_PER_THREAD >= 2
     fp8_arr[1] = fp8s1;
 #endif
+#if GROUPS_PER_THREAD == 2 && defined(STRIDE_1024)
+    int grp_arr[2] = { group_a, group_b };
+#endif
     #pragma unroll
     for (int g = 0; g < GROUPS_PER_THREAD; ++g) {
+#if GROUPS_PER_THREAD == 2 && defined(STRIDE_1024)
+        int grp = grp_arr[g];
+#else
         int grp = group + g;
+#endif
 #ifdef COLS_PARAM_CONST
         int col = grp & (COLS_PARAM_CONST - 1);
         int row = grp / COLS_PARAM_CONST;
