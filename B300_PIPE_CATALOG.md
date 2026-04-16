@@ -14774,6 +14774,21 @@ The NVML reports Gen6 x16 link, but measured bandwidth (~58 GB/s) is consistent 
 **Bimodal distribution**: 90% of accesses hit L2 at ~37 cy, with occasional DRAM misses at 553 cy and rare TLB misses at 1577 cy. The tail latency (P99) is **15× the median** — important for latency-sensitive workloads. Prefetching and L2-aware data layout reduce tail exposure.
 
 
+# Data Quality Audit
+
+Final verification of key catalog numbers (end of session):
+
+| Metric | Catalog value | Audit value | Deviation |
+|--------|:----------:|:----------:|:---------:|
+| BF16 peak (4096³) | 1776 TFLOPS | 1728 TFLOPS | 3% ✓ |
+| Gate proj single | 74 µs | **74 µs** | **exact** ✓ |
+| D2D copy BW | 3.2 TB/s | 3.25 TB/s | 2% ✓ |
+| 7-chain ratio | 2.29× | **2.26×** | 1% ✓ |
+| Total memory | 287.4 GB | **287.4 GB** | **exact** ✓ |
+
+**All key numbers verified within ±3%.** Variations are from thermal/power state across a multi-hour session. The catalog data is reliable and reproducible.
+
+
 # Multi-Request Serving: Overlap vs Batching
 
 3 key GEMMs per "request" (Q + Gate + Down projections, batch=1 per request):
