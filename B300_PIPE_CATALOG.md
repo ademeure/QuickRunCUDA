@@ -5033,6 +5033,34 @@ Precise ops compile to MUFU + Newton-Raphson refinement + special-case handling.
 
 All tested patterns (1-reg self-FMA, 3-reg distinct sources, cross-chain, interleaved) give identical 4.03 cy. No bank conflict penalty detected — the operand collector handles all combinations.
 
+### Shared memory atomic costs
+
+| Operation | No contention (unique addr) | 32-way contention (same addr) |
+|-----------|----------------------------:|------------------------------:|
+| atomicAdd int | **4.3 cy** | 7.7 cy (1.8×, HW coalesced) |
+| atomicAdd float | **85.4 cy** | **2785 cy** (33×, CAS retry storm) |
+| atomicMin int | 6.7 cy | — |
+| atomicCAS | 6.4 cy | — |
+| atomicExch | 5.3 cy | — |
+| atomicOr | 6.7 cy | — |
+
+**Integer smem atomics = 4-7 cy.** Hardware coalescing keeps 32-way contention at only 1.8×.
+
+**Float smem atomics = 85-2785 cy** — never use in hot loops! Float atomicAdd uses CAS retry internally. Use `redux.sync.add` (8.5 cy) or SHFL reduction instead.
+
+### Maximum IPC with mixed instruction types (single warp, single partition)
+
+| Instruction mix | cy/iter | IPC |
+|----------------|--------:|----:|
+| 1× FMA | 4.03 | 0.25 |
+| 2× FMA (dual-issue) | 4.07 | 0.49 |
+| 2× FMA + ALU | 4.35 | 0.69 |
+| 2× FMA + ALU + LD | 4.35 | **0.92** |
+| 2× FMA + ALU + LD + SETP | 4.35 | **1.15** |
+| 2× FMA + ALU + LD + SETP + ST | 4.41 | **1.36** |
+
+**>1 IPC is achievable** through multi-pipe co-issue: FMA dual-issue + ALU + LSU (load+store) + predicate compute all execute in the same dispatch cycle. The practical IPC ceiling for a well-mixed instruction stream is ~1.3-1.5 per partition.
+
 ### Bit manipulation intrinsic latency
 
 | Operation | Latency | Pipe |
@@ -5102,6 +5130,16 @@ All FP32 value ranges run at identical 4.03 cy: normal, subnormal, overflow, NaN
 | 4 compute, 4 mem | 4.11 |
 
 **Zero interference.** The warp scheduler perfectly overlaps compute (FMA pipe) and memory (LSU pipe) across different warps.
+
+**Scheduler overhead from co-scheduled memory warps:**
+
+| Memory warps alongside 1 compute warp | Compute cy/fma | Overhead |
+|---------------------------------------:|---------------:|---------:|
+| 0 | 4.04 | — |
+| 1-3 | 4.03 | **0%** |
+| 4-7 | 4.14 | **2.5%** |
+
+Memory-stalled warps cause virtually no overhead on compute warps. The scheduler efficiently skips stalled warps. Only at 5+ warps per partition does minimal contention appear (~3%).
 
 ### IMAD (integer multiply-add)
 
