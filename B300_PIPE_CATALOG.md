@@ -13919,13 +13919,13 @@ Single warp (32 threads), measuring branch-induced serialization.
 
 ptxas uses **two distinct strategies** for divergent branches:
 
-1. **Predication** (N ≤ 6 instructions per side): Both paths execute with `@P0`/`@!P0` masks, interleaved. No BSSY/BSYNC. Cost ≈ max(both paths) + small overhead.
+1. **Predication** (if-path ≤ 6, else-path ≤ 7 SASS instructions): Both paths execute with `@P0`/`@!P0` masks, interleaved. No BSSY/BSYNC. Cost ≈ max(both paths) + small overhead.
 
-2. **BSSY/BSYNC serialization** (N ≥ 7 instructions per side): `BSSY.RECONVERGENT` pushes reconvergence point, `@P0 BRA` splits the warp, paths execute serially, `BSYNC.RECONVERGENT` reconverges. Cost ≈ sum(both paths) + ~93 cy overhead.
+2. **BSSY/BSYNC serialization** (either side over threshold): `BSSY.RECONVERGENT` pushes reconvergence point, `@P0 BRA` splits the warp, paths execute serially, `BSYNC.RECONVERGENT` reconverges. Cost ≈ sum(both paths) + ~93 cy overhead.
 
 ### The predication→BSSY crossover (SASS-verified)
 
-Divergent 16/16 split with N FMA per side, measured cost:
+**Symmetric branches** (N FMA each side):
 
 | N FMA/side | cy/iter | Method | SASS pattern |
 |-----------:|--------:|--------|-------------|
@@ -13941,7 +13941,27 @@ Divergent 16/16 split with N FMA per side, measured cost:
 | 12 | 339 | BSSY | |
 | 16 | 414 | BSSY | |
 
-**The crossover from predication to BSSY is at exactly 7 instructions per side.** The penalty is catastrophic: 32 cy → 257 cy = **8× jump**. This is the single most important number for kernel optimization on Blackwell.
+**Asymmetric branches** — the threshold is direction-dependent:
+
+| If-path | Else-path | cy/iter | Method |
+|--------:|----------:|--------:|--------|
+| 1 | 7 | **35** | **Predication** |
+| 1 | 8 | 181 | BSSY (hybrid) |
+| 2 | 7 | 35 | Predication |
+| 2 | 8 | 182 | BSSY |
+| 3 | 7 | 35 | Predication |
+| 3 | 8 | 182 | BSSY |
+| 6 | 6 | 32 | Predication |
+| 6 | 7 | **35** | **Predication** |
+| **7** | **6** | **253** | **BSSY!** |
+| 3 | 10 | 187 | BSSY (hybrid) |
+| 4 | 10 | 191 | BSSY |
+
+**The exact rule: if-path (fall-through) ≤ 6 SASS insns AND else-path (branch target) ≤ 7 SASS insns → predication. Otherwise → BSSY.**
+
+The 6/7 asymmetry exists because the if-path (fall-through) requires an extra ISETP instruction that the else-path doesn't, so both sides effectively budget 7 SASS instruction slots. The crossover penalty is catastrophic: **32 cy → 257 cy (8× jump)** for symmetric branches, or **35 cy → 181 cy (5× jump)** for asymmetric.
+
+**Note on instruction type**: The threshold counts **SASS instructions**, not source-level statements. The compiler may fold multiple source operations into a single SASS instruction (e.g., 7 integer additions → 1 `VIADD`), so source-level instruction count is not the threshold — inspect SASS.
 
 ### BSSY overhead decomposition
 
