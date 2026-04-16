@@ -14773,7 +14773,17 @@ Successfully boosted via `nvmlDeviceSetGpuLockedClocks(dev, 2032, 2032)` — GPU
 
 **Clock boost is irrelevant for LLM decode** (0.9% — memory-bound). Moderate benefit for compute-bound workloads (3.2%). HBM bandwidth is independent of SM clock, so memory-bound operations don't benefit from boosting.
 
-All catalog measurements are at 1800 MHz base clock. At 1920 MHz boost: decode throughput would increase from 17 to ~17.2 tok/s (negligible).
+## Full boost (2032 MHz) verified numbers
+
+After `nvmlDeviceResetGpuLockedClocks`, the GPU boosts to full 2032 MHz:
+
+| Metric | 1800 MHz | 2032 MHz | Change |
+|--------|--------:|---------:|:------:|
+| BF16 4096³ | 1776 TF | **1839 TF** | +3.5% |
+| Gate proj decode | 74 µs | 73 µs | +1.4% |
+| D2D copy | 3.2 TB/s | 3.3 TB/s | +3% |
+
+**Clock boost is negligible for decode** — confirms all catalog measurements at 1800 MHz are representative. The 1800→2032 MHz difference amounts to ~17.2 vs 17 tok/s for Llama-70B decode.
 
 **GPU clock confirmed at exactly 1.800 GHz** via kernel clock64 vs cudaEvent wall time correlation (4.9B cycles / 2.722s = 1800.0 MHz).
 
