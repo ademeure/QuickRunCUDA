@@ -6063,8 +6063,9 @@ There is NO true hardware predicated LDG instruction on Blackwell. The LDG is wa
 | **STG (store)** | `@!P0 STG.E` | True `@P` predication | **None (4.21 cy)** |
 | **FFMA** | `@!P0 FFMA` | True `@P` predication | **None (1.18 cy)** |
 | **STS (smem store)** | `@!P0 STS` | True `@P` predication | None (4.07 cy) |
+| **LDS (smem load)** | `@P0 BRA` + `LDS` | **Branch-based skip** | Same as LDG |
 
-**Loads are the ONLY instruction using branch-based skip.** Stores and FMA use true hardware `@P` predication — but the pipe doesn't short-circuit. The instruction enters at full speed; the predicate only suppresses writeback/commit at the output stage.
+**ALL loads (LDG + LDS) use branch-based skip. ALL stores and compute use true `@P` predication** — but the pipe doesn't short-circuit. The instruction enters at full speed; the predicate only suppresses writeback/commit at the output stage.
 
 **Design rationale**: loads use branch-based skip because memory access is expensive and has side effects (cache line fill, TLB lookup). Stores/FMA are processed at full speed with output suppression — cheaper than branch overhead for short sequences.
 
