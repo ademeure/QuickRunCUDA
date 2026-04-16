@@ -5528,6 +5528,28 @@ M=1 achieves 5.8 TB/s effective weight bandwidth (better than raw DRAM streaming
 
 The speedup is less than theoretical 2× because: output is still BF16 (same write BW), cuBLAS FP8 kernel suboptimal at small M, and dispatch overhead is constant.
 
+### Llama-3-8B full layer (BF16, measured, d=4096, ffn=14336, 32 layers)
+
+| Batch | ms/layer | 32 layers | Tokens/s |
+|------:|:--------:|:---------:|:--------:|
+| 1 | 0.327 | 10.5 ms | 96 |
+| 8 | **0.084** | **2.7 ms** | **2993** |
+| 64 | 0.113 | 3.6 ms | 17660 |
+| 128 | 0.131 | 4.2 ms | 30512 |
+| 512 | 0.205 | 6.6 ms | **77937** |
+
+**Batch=8 is the sweet spot**: 2.7 ms for 32 layers → 3K tok/s. At batch=512: 78K tok/s — B300 can serve many concurrent users with an 8B model.
+
+### Summary: measured decode throughput on B300 (GEMM-only, BF16)
+
+| Model | batch=1 | batch=8 | batch=128 | batch=512 |
+|:------|--------:|--------:|----------:|----------:|
+| **Llama-70B** | 40 tok/s | 365 | 4038 | 11278 |
+| **Llama-70B FP8** | **55** | **565** | **7551** | **18887** |
+| **Llama-8B** | 96 | **2993** | 30512 | **77937** |
+
+Add ~15% for attention + RMSNorm overhead at batch=1.
+
 ### Pipeline overhead: GEMM + elementwise interleaved (measured)
 
 | Batch | GEMM-only (2×d²) | GEMM + norm + silu | Overhead |
