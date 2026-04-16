@@ -5842,7 +5842,16 @@ d=16384, qkv/gpu=9216, ffn/gpu=26624, **126 layers**
 | 4096 | 0.006 | 0.002 | ~0 | **0.009** | 0.5% |
 | 8192 | 0.023 | 0.002 | ~0 | **0.025** | 1.6% |
 
-**Attention is negligible at decode** — even at seq=8K, attention takes 0.025 ms per layer = 2 ms for 80 layers = 11% of total. The GEMM weight-loading dominates decode latency.
+### Complete layer time from all measured components
+
+| batch | seq | GEMMs | attn | norm+elem | **total** | 80L ms | tok/s |
+|------:|----:|------:|-----:|:---------:|:--------:|:------:|------:|
+| 1 | 512 | 0.303 | 0.002 | 0.011 | **0.316** | 25.3 | **40** |
+| 1 | 4096 | 0.303 | 0.009 | 0.011 | **0.323** | 25.8 | 39 |
+| 8 | 4096 | 0.272 | 0.009 | 0.006 | **0.287** | 23.0 | **348** |
+| 64 | 4096 | 0.320 | 0.010 | 0.002 | **0.332** | 26.6 | **2410** |
+
+**Attention adds 1-8%** depending on sequence length. At seq=4096: 2.9% of layer time. **GEMMs dominate at 90%+ for all practical configurations.**
 
 ### Prefill throughput (compute-bound, FP16 tensor, W=4096²)
 
