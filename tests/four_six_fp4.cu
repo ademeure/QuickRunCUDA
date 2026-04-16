@@ -562,13 +562,61 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
     #endif
     int group = idx * 2;
 #endif
+
+#elif GROUPS_PER_THREAD == 4
+    // GPT=4: 4 groups per thread, 4 × 256-bit loads, 2 × int4 stores
+    unsigned int wa0,wa1,wa2,wa3,wa4,wa5,wa6,wa7;
+    unsigned int wb0,wb1,wb2,wb3,wb4,wb5,wb6,wb7;
+    unsigned int wc0,wc1,wc2,wc3,wc4,wc5,wc6,wc7;
+    unsigned int wd0,wd1,wd2,wd3,wd4,wd5,wd6,wd7;
+    asm volatile(
+        "ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%32];\n\t"
+        "ld.global.v8.u32 {%8,%9,%10,%11,%12,%13,%14,%15}, [%33];\n\t"
+        "ld.global.v8.u32 {%16,%17,%18,%19,%20,%21,%22,%23}, [%34];\n\t"
+        "ld.global.v8.u32 {%24,%25,%26,%27,%28,%29,%30,%31}, [%35];"
+        : "=r"(wa0),"=r"(wa1),"=r"(wa2),"=r"(wa3),
+          "=r"(wa4),"=r"(wa5),"=r"(wa6),"=r"(wa7),
+          "=r"(wb0),"=r"(wb1),"=r"(wb2),"=r"(wb3),
+          "=r"(wb4),"=r"(wb5),"=r"(wb6),"=r"(wb7),
+          "=r"(wc0),"=r"(wc1),"=r"(wc2),"=r"(wc3),
+          "=r"(wc4),"=r"(wc5),"=r"(wc6),"=r"(wc7),
+          "=r"(wd0),"=r"(wd1),"=r"(wd2),"=r"(wd3),
+          "=r"(wd4),"=r"(wd5),"=r"(wd6),"=r"(wd7)
+        : "l"(pIn), "l"(pIn+8), "l"(pIn+16), "l"(pIn+24));
+
+    int lo0,hi0,lo1,hi1,lo2,hi2,lo3,hi3;
+    unsigned char fp8s0,fp8s1,fp8s2,fp8s3;
+    process_group(wa0,wa1,wa2,wa3,wa4,wa5,wa6,wa7, scale, lo0,hi0,fp8s0);
+    process_group(wb0,wb1,wb2,wb3,wb4,wb5,wb6,wb7, scale, lo1,hi1,fp8s1);
+    process_group(wc0,wc1,wc2,wc3,wc4,wc5,wc6,wc7, scale, lo2,hi2,fp8s2);
+    process_group(wd0,wd1,wd2,wd3,wd4,wd5,wd6,wd7, scale, lo3,hi3,fp8s3);
+
+    // Two int4 stores (each covers 2 groups)
+    #ifdef GOLDEN
+    *((int2*)((unsigned char*)C + 8 + 8*(4*idx)))   = make_int2(lo0,hi0);
+    *((int2*)((unsigned char*)C + 8 + 8*(4*idx+1))) = make_int2(lo1,hi1);
+    *((int2*)((unsigned char*)C + 8 + 8*(4*idx+2))) = make_int2(lo2,hi2);
+    *((int2*)((unsigned char*)C + 8 + 8*(4*idx+3))) = make_int2(lo3,hi3);
+    #else
+    {
+        int4* dst0 = ((int4*)B) + idx * 2;
+        int4* dst1 = dst0 + 1;
+        asm("st.global.cs.v4.u32 [%0], {%1,%2,%3,%4};" :: "l"(dst0), "r"(lo0), "r"(hi0), "r"(lo1), "r"(hi1));
+        asm("st.global.cs.v4.u32 [%0], {%1,%2,%3,%4};" :: "l"(dst1), "r"(lo2), "r"(hi2), "r"(lo3), "r"(hi3));
+    }
+    #endif
+    int group = idx * 4;
 #endif
 
-    // Scale writes (1 or 2 per thread)
+    // Scale writes
     unsigned char fp8_arr[GROUPS_PER_THREAD];
     fp8_arr[0] = fp8s0;
 #if GROUPS_PER_THREAD >= 2
     fp8_arr[1] = fp8s1;
+#endif
+#if GROUPS_PER_THREAD >= 4
+    fp8_arr[2] = fp8s2;
+    fp8_arr[3] = fp8s3;
 #endif
 #if GROUPS_PER_THREAD == 2 && defined(STRIDE_1024)
     int grp_arr[2] = { group_a, group_b };
