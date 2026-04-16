@@ -7380,6 +7380,42 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 **Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
 
 
+# B300 Roofline Model — measured ridge point
+
+Sweep operational intensity (OI = FLOP / byte) from 0.25 to 128, 64 M elements, 4736 × 512 threads:
+
+| FMAs/elem | OI (FLOP/B) | GFLOPS | GB/s | Regime |
+|----------:|------------:|-------:|-----:|--------|
+| 1 | 0.25 | 914 | **3 654** | memory |
+| 2 | 0.50 | 1 816 | 3 632 | memory |
+| 4 | 1.00 | 3 571 | 3 571 | memory |
+| 8 | 2.00 | 7 085 | 3 543 | memory |
+| 16 | 4.00 | 13 943 | 3 486 | memory |
+| 32 | 8.00 | 25 560 | 3 195 | **transition** |
+| 64 | 16.00 | 43 698 | 2 731 | transition |
+| 128 | 32.00 | 56 944 | 1 780 | compute |
+| 256 | 64.00 | 61 901 | 967 | compute |
+| 512 | 128.00 | **64 857** | 507 | **compute ceiling** |
+
+**Roofline ceilings:**
+- **Memory ceiling ≈ 3.5 TB/s** (float loads, 4736 × 512 config — not fully optimized for BW)
+- **Compute ceiling ≈ 65 TFLOPS** (scalar FFMA peak with this occupancy)
+
+**Ridge point (where ceilings intersect):**
+- Scalar FFMA: **OI ≈ 18 FLOP/byte** (65 TFLOPS / 3.5 TB/s)
+- tcgen05.mma FP16: OI ≈ **314 FLOP/byte** (2 325 TFLOPS / 7.4 TB/s)
+- tcgen05.mma FP8: OI ≈ **628 FLOP/byte** (4 651 TFLOPS / 7.4 TB/s)
+
+**What this means in practice:**
+- **Pointwise ops** (OI < 1): always memory-bound → fuse, fuse, fuse.
+- **Scalar GEMM** (OI ~ 10-50): transition zone → optimize both BW and compute.
+- **Tensor GEMM** (OI ~ 100-1000+): memory-bound until matrices are VERY large.
+  - E.g. a 1K × 1K FP16 GEMM: `2×1K³ = 2 GFLOP` / `3×1K²×2B = 6 MB` = OI = 333 → barely above FP16 tensor ridge. Below FP8 tensor ridge!
+  - A 4K × 4K FP16 GEMM: OI = 1333 → compute-bound for all tensor paths.
+
+**This roofline is the FUNDAMENTAL design guide** for B300 kernel optimization.
+
+
 # Kernel fusion scaling — perfectly linear up to 8×
 
 64 M elements (256 MB), each "op" = `x = x * 0.99 + 1.5` (1 FMA per element):
