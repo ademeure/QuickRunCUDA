@@ -7345,6 +7345,69 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# __reduce_*_sync variants — min/max faster than add/and/or/xor
+
+Single-warp chain, 1000 iter:
+
+| Op | cy/iter |
+|----|--------:|
+| `__reduce_min_sync` (u32) | **31** |
+| `__reduce_max_sync` (u32) | 31 |
+| `__reduce_min_sync` (s32) | 31 |
+| `__reduce_add_sync` | **54** |
+| `__reduce_and_sync` | 54 |
+| `__reduce_or_sync` | 54 |
+| `__reduce_xor_sync` | 54 |
+
+**Two speed tiers:**
+- **MIN / MAX = 31 cy** (both u32 and s32 — same SASS)
+- **ADD / AND / OR / XOR = 54 cy** (74 % slower)
+
+Surprising finding — intuition says add has carry propagation (slower) while bitwise are free. But the measurement is opposite: MIN/MAX wins, ADD matches bitwise. Suggests different SASS emission paths. Likely: MIN/MAX uses a dedicated `REDUX.S32.MIN` op, while ADD/AND/OR/XOR go through a shuffle tree.
+
+**Practical**: use `__reduce_min_sync` over `__reduce_add_sync` when you have a choice (e.g. flag-style reductions where you want "any set"). For pure add reductions, this is the best you can do — 54 cy for a full warp reduction.
+
+
+# Warp-wide inclusive scan (Kogge-Stone) vs reduce
+
+| Op | cy/iter (1000-iter avg) |
+|----|------------------------:|
+| `__reduce_add_sync` (sum only) | 54 |
+| Kogge-Stone inclusive scan (5-step shuffle tree) | **186** (3.5× more) |
+| Same, fully unrolled | 186 (no diff from loop) |
+
+**Warp scan = 3.5× more expensive than reduce** — produces all 32 partial sums vs 1 total. Each of 5 steps has a shuffle (~6 cy) + conditional add; self-dependency forces the 5 × ~37 cy = 186 cy execution.
+
+**Practical**: for histograms or prefix-sum patterns, warp scan (186 cy) is cheap enough that you can do ~11 K warp-scans/µs. A 1 M-element scan: group into 32-K warps × 31 elements = ~62 K warps worth of scan = ~11.5 µs of pure warp-scan time + tree aggregation.
+
+
+# Graph-scope memory allocation (cudaGraphAddMemAllocNode)
+
+10-node graph with alloc → kernel → free nodes, 1 KB allocation:
+
+| Pattern | µs/iter |
+|---------|--------:|
+| **Graph alloc + kernel + free (one graph launch)** | **4.10** |
+| Stream `cudaMallocAsync` + kernel + `cudaFreeAsync` | 4.26 |
+
+Essentially the same timing (3.8 % difference). Key benefits of graph-scope allocation:
+- **Deterministic pointer** across launches (same address every time — `0x320000000` in test).
+- Allocation lifecycle tied to graph structure — the runtime pre-resolves at instantiation.
+- No need to hold external pointers for scratch memory.
+
+**Pattern — graph-scope scratch:**
+```cpp
+cudaGraph_t g;
+cudaMemAllocNodeParams p = {.bytesize = ...,
+  .poolProps = {cudaMemAllocationTypePinned, {cudaMemLocationTypeDevice, 0}}};
+cudaGraphAddMemAllocNode(&alloc, g, nullptr, 0, &p);
+// use p.dptr in kernel node …
+cudaGraphAddMemFreeNode(&freeN, g, &kernel, 1, p.dptr);
+```
+
+For iterative kernels that need temporary buffers, this keeps memory management entirely within the graph — clean and replayable.
+
+
 # CUDA IPC (Inter-Process Communication) handles
 
 | Operation | µs/call |
