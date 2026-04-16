@@ -5249,6 +5249,16 @@ All FP32 value ranges run at identical 4.03 cy: normal, subnormal, overflow, NaN
 
 **L2 amplifies bandwidth 1.8×** for shared data. This is exploited by batch inference (shared weights), GEMMs (shared B matrix), and broadcast operations. Design data layouts so multiple SMs share the same L2-resident tiles.
 
+### L2 cache aggregate bandwidth (32 MB resident, 128b ops, full chip)
+
+| Operation | Chip BW | vs DRAM (7.4 TB/s) |
+|-----------|--------:|-------------------:|
+| L2 read | **14.0 TB/s** | **1.9×** |
+| L2 write | 8.8 TB/s | 1.2× |
+| L2 read-modify-write | 20.9 TB/s (r+w) | 2.8× |
+
+**L2 read:write asymmetry = 1.6:1** — reads are 60% faster than writes. L2-resident data effectively doubles the available memory bandwidth (14 vs 7.4 TB/s).
+
 ### Coalescing efficiency (single warp, DRAM-resident data)
 
 | Inter-thread stride | cy/ld | Sectors/request | Slowdown vs coalesced |
