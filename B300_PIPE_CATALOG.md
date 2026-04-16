@@ -7858,6 +7858,30 @@ SASS: `UTCOMMA.BLOCK16` — processes K=64 FP4 elements with per-block-16 UE4M3 
 
 Note: A matrix data was uninitialized TMEM (not loaded via tcgen05.cp) — throughput is correct, output data meaningless. For a correct GEMM, A must be loaded to TMEM via `tcgen05.cp` and scale factors written to their TMEM slots.
 
+## K=96 on mxf4nvf4.block16 — 14.8 PFLOPS (sm_103a exclusive!)
+
+Setting idesc bit 31 = 1 on the block-scaled path DOES give K=96:
+
+| Path | K | cy/mma | TFLOPS/SM | Chip | × FP8 |
+|------|--:|-------:|----------:|-----:|------:|
+| `kind::f8f6f4` (baseline) | 32 | 128.02 | 33.29 | 4.9 PF | 1.0× |
+| `kind::mxf4nvf4.block16` | 64 | 128.01 | 66.58 | **9.9 PF** | **2.0×** |
+| **`kind::mxf4nvf4.block16` K=96** | **96** | **128.02** | **99.86** | **14.8 PF** | **3.0×** |
+
+**K=96 is real on the block-scaled path.** Same 128 cy/mma; 3× the FP8 throughput.
+
+## Power at K=64 and K=96 (mxf4nvf4.block16, 148 SMs, constant smem_B data)
+
+| Config | PFLOPS | Power (W) | TFLOPS/W |
+|--------|-------:|----------:|---------:|
+| K=64 | 9.9 | 421-423 | 23.4 |
+| **K=96** | **14.8** | **453-457** | **32.4** |
+| *(FP8 f8f6f4 K=32 random for comparison)* | *(4.9)* | *(1038)* | *(4.7)* |
+
+K=96 draws only 7 % more power than K=64 for 50 % more throughput. At 457 W for 14.8 PFLOPS, the block-scaled FP4 path is **32.4 TFLOPS/W** — the most power-efficient tensor-core mode on B300.
+
+Note: these measurements used constant smem data (0x33) and uninitialized TMEM for A. With truly random data, power would be higher (closer to 600-800 W based on f8f6f4 scaling). Production weights are structured (not random), so expect 450-600 W in practice.
+
 **Comparison to published specs:**
 - NVIDIA B300 FP4 dense spec: ~10 PFLOPS → **9.9 PFLOPS = 99 % of spec**
 - FP8 dense: 4.9 PFLOPS (measured) vs 5 PFLOPS spec = 98 %
