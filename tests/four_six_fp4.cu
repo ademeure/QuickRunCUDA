@@ -415,9 +415,19 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
         int grp = group + g;
 #endif
 #ifdef CONTIGUOUS_SCALES
-        // Simple linear layout: scale[group] — no swizzle computation.
-        // Saves ~12 ALU instructions per scale write vs cuBLAS swizzled layout.
         long long tgt = grp;
+#elif defined(COLS_PARAM_CONST) && COLS_PARAM_CONST == 2048
+        // Direct bit permutation — the cuBLAS e8 swizzle for CPC=2048 is:
+        //   grp bits [1:0]   → offset [1:0]    (innerK, identity)
+        //   grp bits [17:16] → offset [3:2]     (innerM)
+        //   grp bits [15:11] → offset [8:4]     (outerM)
+        //   grp bits [10:2]  → offset [17:9]    (kTileIdx)
+        //   grp bits [31:18] → offset [31:18]   (mTileIdx, identity)
+        long long tgt = (grp & 0x3)
+                      | (((grp >> 16) & 0x3) << 2)
+                      | (((grp >> 11) & 0x1F) << 4)
+                      | ((long long)((grp >> 2) & 0x1FF) << 9)
+                      | (grp & ~0x3FFFFLL & ~0x3LL);  // bits [31:18] preserved
 #elif defined(COLS_PARAM_CONST)
         int col = grp & (COLS_PARAM_CONST - 1);
         int row = grp / COLS_PARAM_CONST;
