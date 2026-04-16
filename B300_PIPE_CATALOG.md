@@ -14619,6 +14619,46 @@ Measured per-component with cuBLAS (OP_T for weights), RMSNorm and SiLU×Up kern
 
 **FP8 weights are the single biggest optimization for decode** — 1.77× faster per layer, 71 tok/s vs 40 tok/s. The speedup is memory-bound (weight loading), not compute-bound, so it works at batch=1.
 
+
+# Attention Q×K^T and Attn×V (cuBLAS Batched GEMM)
+
+64 heads, head_dim=128, BF16, strided batched GEMM:
+
+## Decode (batch=1, seq=1) — KV-cache loading dominated
+
+| Context len | QK^T (µs) | Attn×V (µs) | KV cache | Dominant level |
+|------------:|----------:|-------------:|---------:|:--------------:|
+| 512 | 2.5 | 2.7 | 8 MB | L2 |
+| 2048 | 4.7 | 5.3 | 34 MB | L2 |
+| 8192 | 22.8 | 22.0 | 134 MB | L2/DRAM edge |
+| 32768 | 80.4 | 82.7 | 537 MB | DRAM |
+
+**KV cache in L2 (≤34 MB) gives 5-10 µs attention** per layer. Beyond L2 (134+ MB), attention scales linearly with context length at ~7 TB/s KV-read rate.
+
+## Prefill (seq=ctx)
+
+| Shape | QK^T (µs) | QK^T TFLOPS | Attn×V TFLOPS |
+|------:|----------:|------------:|--------------:|
+| 128² | 2.4 | 110 | — |
+| 2048² | 102 | **671** | 325 |
+
+Prefill QK^T achieves **671 TFLOPS** at 2048² — compute-bound and well-optimized.
+
+## Complete Llama-70B Decode Estimate (single GPU, ctx=2048)
+
+| Component | BF16 (µs) | FP8 (µs) |
+|-----------|----------:|----------:|
+| RMSNorm × 2 | 32 | 32 |
+| Q+K+V+O projections | 67 | 32 |
+| Attention (QK^T + softmax + AV) | ~20 | ~20 |
+| SiLU × Up | 4 | 4 |
+| Gate + Up + Down projections | 222 | 123 |
+| **Total per layer** | **~345** | **~211** |
+| **80 layers** | **27.6 ms** | **16.9 ms** |
+| **Decode tok/s** | **~36** | **~59** |
+
+These estimates include attention compute but exclude embedding lookup and final LM head projection. Real frameworks with optimized FlashAttention may differ.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
