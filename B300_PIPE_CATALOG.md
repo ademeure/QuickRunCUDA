@@ -5479,7 +5479,24 @@ Attention becomes significant at seq≥4096 (11%+ of decode). At seq=8192: atten
 
 M=1 achieves 5.8 TB/s effective weight bandwidth (better than raw DRAM streaming due to L2 caching of weight tiles). Powers of 2 and multiples of 8 get the best throughput.
 
-**For LLM serving**: maximize batch size via continuous batching. But avoid M=2,3. Each doubling of batch ≈ 2× throughput until batch≈400.
+**For LLM serving**: maximize batch size via continuous batching. But avoid M=2,3.
+
+### Llama-3-70B full layer latency (derived from measured per-GEMM, BF16)
+
+4 GEMMs per layer: QKV + O + gate_up + down. Excludes attention/norm.
+
+| Batch | ms/layer | 80-layer (ms) | Tokens/s |
+|------:|---------:|--------------:|---------:|
+| 1 | 0.196 | 15.7 | **64** |
+| 4 | 0.400 | 32.0 | 125 (**SLOWER** — M=4 pathological!) |
+| 8 | 0.204 | 16.3 | **490** |
+| 32 | 0.204 | 16.3 | **1961** |
+| 64 | 0.206 | 16.5 | **3883** |
+| 128 | 0.215 | 17.2 | 7442 |
+| 512 | 0.354 | 28.3 | 18079 |
+| 1024 | 0.636 | 50.9 | 20126 |
+
+**Batch=1 to batch=64: essentially FREE** — 64× more tokens for only 5% more latency (15.7→16.5 ms). GEMMs are memory-bandwidth-limited; each token adds negligible time until compute-bound at batch≈128+.
 
 ### Prefill throughput (compute-bound, FP16 tensor, W=4096²)
 
