@@ -15788,4 +15788,20 @@ SAXPY (read A, read+write B) achieves ~3.5 TB/s total HBM traffic at ≥74 SMs. 
 - **Continuous batching is free for GEMMs** (decode tokens ride on prefill weight load)
 - **MoE is 13.4× slower** than equivalent dense (8× weight loading)
 - **All glue operations (KV append, gather, D2D) cost ~6-9 µs** regardless of data size (launch overhead)
+- **Naive INT4 dequant is 13× slower** than BF16 GEMM — fused dequant-GEMM kernels (Marlin/AWQ) are essential
+
+
+# INT4 Weight Dequantization
+
+| Operation | Time | Notes |
+|-----------|-----:|-------|
+| Raw INT4 packed read (117 MB) | — | 4534 GB/s (fits L2!) |
+| **INT4→BF16 dequant (28672×8192)** | **961 µs** | **13× slower than BF16 GEMM** |
+| BF16 GEMM (same shape) | 74 µs | Baseline |
+
+**Naive dequantize-then-GEMM is catastrophically slow** (1035 µs total = 14× BF16). The dequantization kernel is compute-bound: unpacking 8 INT4 values per uint32 + scale multiplication + BF16 conversion is expensive per-element.
+
+**Fused dequant-GEMM kernels** (Marlin, AWQ, GPTQ) are essential — they dequantize on-the-fly inside the GEMM tile loop, avoiding the separate 961 µs kernel. With proper fusion, INT4 inference achieves near-BF16 latency with 4× less memory.
+
+**INT4 memory advantage**: 35 GB model (vs 140 GB BF16) → 250 GB for KV cache → **372 concurrent requests** (vs 216 BF16).
 
