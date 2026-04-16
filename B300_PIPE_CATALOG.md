@@ -137,6 +137,8 @@ Note: Smem read peak is ~36 TB/s chip at 128 B/clk/SM — true HW peak, confirme
 
 **For maximum efficiency**: use M=128, N≥128. Smaller tiles waste tensor core cycles on the 44 cy minimum overhead.
 
+**MMA is smem-layout-insensitive**: B matrix stride (16-256 B) and smem offset (0-2048 B) have zero effect on MMA throughput — always 128 cy. The tensor core uses hardware swizzling; no manual smem layout optimization needed for MMA.
+
 ---
 
 ## 1. Pipe topology
@@ -5145,7 +5147,15 @@ The bit-manipulation ops (popc, ffs, clz, brev) run on pipe_alu at standard 2 cy
 | 8 | 1032 | 16.51 | 99% | MMA-limited |
 | 16 | 2048 | 16.65 | 100% | MMA-limited |
 
-**Crossover at K=6 steps** (K_total = 6×16 = 96 FP16 elements): TMA cost (680 cy) ≈ 6 × MMA cost (128 cy = 768 cy). Below K=6: TMA-limited (MMA free in shadow). Above: MMA-limited (TMA free). **For max GEMM throughput: use K≥6 steps per pipeline stage** (matches CUTLASS/cuBLAS K=96-128 configurations).
+**Universal crossover at K=6 steps for ALL formats** (TMA 680 cy ≈ 6 × MMA 128 cy):
+
+| Format | K/MMA | K_total at K=6 | Efficiency | Chip peak |
+|--------|------:|---------------:|-----------:|----------:|
+| FP16 | 16 | **96** | 98% | 2.4 PFLOPS |
+| FP8 | 32 | **192** | 98% | 4.9 PFLOPS |
+| FP4 block16 | 64 | **384** | 99% | **9.7 PFLOPS** |
+
+Below K=6: TMA-limited (MMA free in shadow). Above: MMA-limited (TMA free). The crossover is format-independent because all formats share 128 cy/MMA. **For max GEMM throughput: use K≥6 steps per pipeline stage.** This matches CUTLASS/cuBLAS K=96-128 (FP16) and K=192-256 (FP8) configurations.
 
 ### clock64 read latency
 
