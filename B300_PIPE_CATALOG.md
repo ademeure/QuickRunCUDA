@@ -15175,6 +15175,25 @@ Each expert GEMM takes ~23 µs (loading 112 MB at ~5 TB/s). The M dimension has 
 | 70B BF16, prefill 512 | — | **11853** | Prefill throughput |
 | 8B BF16, batch=1 | 1 | **~90** | 2.5× faster than 70B (fewer layers) |
 
+
+# Optimized Decode Pipeline (End-to-End Measured)
+
+Full Llama-70B-like layer with all optimizations applied (fused QKV, fused Gate+Up, MUFU SiLU, residual adds):
+
+| Method | µs/layer | 80 layers | tok/s |
+|--------|--------:|----------:|------:|
+| Direct launch (9 kernels) | 729 | 58.3 ms | **17** |
+| cudaGraph (10 layers) | 731 | 58.5 ms | 17 |
+
+**cudaGraph provides zero benefit** for the optimized pipeline — the 9 kernels per layer are dominated by GEMM execution time, not launch overhead.
+
+**729 µs vs earlier 345 µs estimate**: The full pipeline is ~2× the sum-of-parts estimate because:
+1. Fused Gate+Up (N=57344) is a very wide GEMM that cuBLAS handles less efficiently at M=1
+2. NN layout GEMMs are slightly different from earlier NT measurements
+3. Pipeline effects (memory controller contention between back-to-back GEMMs)
+
+**The 17 tok/s measured decode** is the realistic BF16 single-GPU number including all overheads. FP8 weights would bring this to ~30+ tok/s.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
