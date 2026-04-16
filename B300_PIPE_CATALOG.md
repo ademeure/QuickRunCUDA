@@ -15128,6 +15128,53 @@ Each expert GEMM takes ~23 µs (loading 112 MB at ~5 TB/s). The M dimension has 
 3. **FP8 expert weights**: 2× less weight data per expert
 4. **Expert weight caching**: if the same experts are repeatedly activated, their weights may stay in L2
 
+
+# B300 Serving Capacity Analysis
+
+287.4 GB HBM3E total memory. KV cache: 2 × layers × kv_heads × head_dim × 2B (BF16) per token per layer.
+
+## Llama-70B concurrent request capacity (ctx=2048)
+
+| Weight format | Model GB | KV available | Max requests (BF16 KV) | Max (FP8 KV) |
+|:-------------|----------:|:-----------:|:--------------------:|:----------:|
+| FP32 | 280 | 5 GB | 8 | 16 |
+| **BF16** | **140** | **145 GB** | **216** | 433 |
+| **FP8** | **70** | **215 GB** | 321 | **642** |
+| INT4 | 35 | 250 GB | 373 | **746** |
+
+**FP8 weights + FP8 KV: 642 concurrent Llama-70B requests** on a single B300. This is massive serving capacity.
+
+## Context length impact on capacity (BF16 model)
+
+| Context | KV/request | Max concurrent |
+|--------:|-----------:|---------------:|
+| 2048 | 671 MB | **216** |
+| 4096 | 1.3 GB | 108 |
+| 8192 | 2.7 GB | 54 |
+| 32768 | 10.7 GB | 13 |
+| 131072 | 42.9 GB | **3** |
+
+**Long context is the biggest capacity killer** — ctx=128K allows only 3 concurrent requests vs 216 at ctx=2K.
+
+## Llama-8B on B300
+
+| Metric | Value |
+|--------|-------|
+| Model (BF16) | 16 GB |
+| KV available | 269 GB |
+| Max concurrent (ctx=2048) | **1003** |
+| Decode latency | ~11 ms/token |
+
+## Aggregate throughput estimates
+
+| Config | Batch | tok/s aggregate | Notes |
+|--------|------:|-----------:|-------|
+| 70B BF16, batch=1 | 1 | 35 | Single request |
+| 70B BF16, batch=64 | 64 | **~2240** | Memory-bound sweet spot |
+| 70B FP8, batch=64 | 64 | **~3800** | 1.7× from FP8 weights |
+| 70B BF16, prefill 512 | — | **11853** | Prefill throughput |
+| 8B BF16, batch=1 | 1 | **~90** | 2.5× faster than 70B (fewer layers) |
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
