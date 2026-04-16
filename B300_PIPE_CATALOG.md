@@ -14529,6 +14529,26 @@ ReLU, GELU, and LayerNorm are **memory-bound** at ~3.5-3.7 TB/s R+W. SiLU is **c
 
 **Practical for inference**: Always use BF16 for activations — 3.4× throughput improvement. For SiLU, consider approximate computation via raw MUFU instructions (`ex2.approx.ftz.f32` + multiply) to move it back to memory-bound.
 
+### SiLU optimization: MUFU approximation
+
+| SiLU variant | GB/s | Gelem/s | vs stdlib |
+|-------------|-----:|--------:|:---------:|
+| Standard (expf) | 1447 | 181 | 1.0× |
+| **MUFU (ex2.approx)** | **2015** | **252** | **1.39×** |
+
+Replacing `expf(-x)` with `ex2.approx.ftz.f32(-x * 1.4427)` improves SiLU throughput by **39%**. The approximate version uses MUFU.EX2 (6 cy) instead of the stdlib expf expansion (~10 SASS instructions). Still not fully memory-bound (2.0 vs 3.7 TB/s for ReLU) because of the remaining division.
+
+### Row-wise softmax (naive, 1 warp/row, FP32)
+
+| Sequence length | GB/s | µs/256M | Gelem/s |
+|----------------:|-----:|--------:|--------:|
+| 128 | 776 | 2768 | 97 |
+| 512 | 789 | 2721 | 99 |
+| 2048 | 648 | 3316 | 81 |
+| 8192 | 364 | 5902 | 45 |
+
+Naive softmax achieves only 5-10% of HBM bandwidth — heavily compute-bound from 3 passes over data (max, exp+sum, normalize). FlashAttention fuses softmax into the MMA loop to avoid these passes.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
