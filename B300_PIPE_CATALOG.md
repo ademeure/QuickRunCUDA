@@ -5390,6 +5390,40 @@ Cycle counts (cy/op) are clock-independent. Throughput numbers (TFLOPS, TB/s) in
 
 FMA computes `(a×b)+c` with single rounding (IEEE 754 fused). Kahan summation with FMA: **13× more precise** than naive (error 4.7e-11 vs 6.3e-10 for summing 1000 × 1e-7).
 
+### LLM batch-1 decode throughput (estimated from measured 4.2 TB/s DRAM read)
+
+**Llama-70B (single B300, 274 GB HBM3E):**
+
+| Precision | Weight size | ms/token | Tokens/s | KV cache (4K ctx) |
+|-----------|:----------:|:--------:|:--------:|:-----------------:|
+| FP16 | 140 GB | 33.3 | **30** | 21.5 GB |
+| FP8 | 70 GB | 16.7 | **60** | 10.7 GB |
+| **FP4** | **35 GB** | **8.3** | **120** | 5.4 GB |
+
+**Llama-405B:**
+
+| Precision | Weight | 1 GPU? | 2 GPU (TP)? | Tokens/s |
+|-----------|:------:|:------:|:-----------:|:--------:|
+| FP16 | 810 GB | No | No | — |
+| FP8 | 405 GB | No | **Yes** | 20 (TP) |
+| **FP4** | **202 GB** | **Yes!** | Yes | **21** (1 GPU) / **39** (TP) |
+
+**FP4 is transformative**: a 405B model fits on a single B300 (202 GB < 274 GB HBM) — impossible at FP8/FP16. 70B at FP4 achieves 120 tok/s = conversational speed for many concurrent users. NVLink TP overhead is only 3% (1.7 ms per 80 layers × 21 µs all-reduce).
+
+Real frameworks typically achieve 60-80% of these theoretical peaks.
+
+### cudaGraph launch overhead scaling
+
+| Kernels in graph | Graph launch | Regular launch | Speedup |
+|-----------------:|-----------:|--------------:|--------:|
+| 1 | 1.3 µs | 1.3 µs | 1.0× |
+| 8 | 1.4 µs | 1.6 µs | 1.1× |
+| 32 | 1.4 µs | 2.4 µs | 1.8× |
+| 128 | 1.4 µs | 6.4 µs | 4.7× |
+| **256** | **1.4 µs** | **11.1 µs** | **8.2×** |
+
+**Graph launch = constant 1.4 µs** regardless of node count. Breakeven at ~8 kernels. For transformer inference (150+ kernels): use graphs for launch overhead reduction.
+
 ### Practical kernels: fused elementwise (GELU+bias+residual)
 
 **Fused GELU+bias+residual with v4 loads** (3 reads + 1 write = 16 B/element):
