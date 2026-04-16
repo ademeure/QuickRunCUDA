@@ -6049,6 +6049,14 @@ LDG.E R16, [...]  ← unpredicated load (only reached if P0=false)
 
 There is NO true hardware predicated LDG instruction on Blackwell. The LDG is warp-wide: either all lanes load or the instruction is skipped via branch.
 
+**FMA uses TRUE hardware predication** (verified in SASS):
+```sass
+@!P0 FFMA R25, R25, R25, R25   ← native predicated FFMA
+@!P0 FFMA R24, R24, R24, R24   ← (NOT branch-based)
+```
+
+**Architecture difference**: LDG uses branch-based skip (binary fast/slow). FFMA uses true `@P` predication but takes the same 1.18 cy/fma regardless of predicate value — **the FMA pipe doesn't check the active mask for early termination.**
+
 Shared memory: @false ld.shared = DCE'd (0 cy). @false st.shared = 4.07 cy (same as real). @half ld.shared (16/32) = 1.16 cy.
 
 ### Memory bandwidth scaling with occupancy
