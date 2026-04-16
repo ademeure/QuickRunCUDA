@@ -15187,12 +15187,23 @@ Full Llama-70B-like layer with all optimizations applied (fused QKV, fused Gate+
 
 **cudaGraph provides zero benefit** for the optimized pipeline — the 9 kernels per layer are dominated by GEMM execution time, not launch overhead.
 
-**729 µs vs earlier 345 µs estimate**: The full pipeline is ~2× the sum-of-parts estimate because:
-1. Fused Gate+Up (N=57344) is a very wide GEMM that cuBLAS handles less efficiently at M=1
-2. NN layout GEMMs are slightly different from earlier NT measurements
-3. Pipeline effects (memory controller contention between back-to-back GEMMs)
+**ROOT CAUSE: Fused Gate+Up (N=57344) is 1.9× SLOWER than separate Gate + Up at batch=1!**
 
-**The 17 tok/s measured decode** is the realistic BF16 single-GPU number including all overheads. FP8 weights would bring this to ~30+ tok/s.
+| GEMM | Separate µs | Fused µs | Weight |
+|------|----------:|--------:|-------:|
+| Gate (1×28672×8192) | 75 | — | 470 MB |
+| Up (1×28672×8192) | 74 | — | 470 MB |
+| **Gate+Up separate** | **149** | — | 940 MB (2 loads) |
+| **Gate+Up fused** | — | **288** | 940 MB (1 load) |
+
+The 940 MB fused weight matrix achieves only 3.3 TB/s vs 6.3 TB/s for two separate 470 MB loads. cuBLAS tiles the very wide N=57344 poorly at M=1.
+
+**Corrected optimal pipeline** (separate Gate+Up):
+- Fused QKV: 29 µs + O: 24 µs + Gate: 75 µs + Up: 74 µs + Down: 73 µs = **275 µs GEMMs**
+- Elementwise: ~32 µs → **~307 µs/layer**
+- With pipeline contention (~1.3×): **~400 µs/layer × 80 = 32 ms → ~31 tok/s**
+
+**Key lesson**: Fusion helps at batch≥32 (fused QKV saves 17%) but **hurts at batch=1** for very wide N dimensions. Always benchmark fused vs separate for your actual batch size.
 
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
