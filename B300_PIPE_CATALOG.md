@@ -4531,12 +4531,24 @@ Pairs well with HMMA/tcgen05.mma: `ldmatrix → register → HMMA` is the canoni
 | `__threadfence` (global memory fence) | **281** | 286 | 292 | **328** |
 | `__threadfence_block` | 23 | 23 | 35 | 64 |
 
-- `__syncwarp` is near-constant (~23-33 cy) — scales with warp-wide barrier only, not with CTA size.
-- `__syncthreads` scales linearly with warp count (2.7 cy per warp at bs=1024).
-- `__threadfence` has a high fixed floor (~280 cy) for global memory coherence — use sparingly.
-- `__threadfence_block` is cheap (local-only) — near `__syncthreads` cost.
+- `__syncwarp` is near-constant (~1-23 cy) — single warp, essentially free.
+- **`__syncthreads` = 12 + 2 × N_warps cycles** (verified clean linear scaling 1→32 warps).
+- `__threadfence` has a high fixed floor (~273 cy) for global memory coherence — use sparingly.
+- `__threadfence_block` is cheap (8.6 cy) — 30× cheaper than global fence.
+- `__threadfence_system` = 2818 cy (~1.4 μs) — includes PCIe/NVLink fence for CPU visibility.
 
-Design: for CTA-local sync use `__syncthreads` or `__threadfence_block`; avoid `__threadfence` unless you need chip-wide memory ordering (280+ cy).
+**__syncthreads scaling (single-warp measurement, no contention):**
+
+| Warps | cy/call | Formula 12+2W |
+|------:|--------:|-------------:|
+| 1 | 14.0 | 14 ✓ |
+| 2 | 16.0 | 16 ✓ |
+| 4 | 20.0 | 20 ✓ |
+| 8 | 28.0 | 28 ✓ |
+| 16 | 44.0 | 44 ✓ |
+| 32 | 76.0 | 76 ✓ |
+
+Design: for CTA-local sync use `__syncthreads` (~20 cy for 4 warps) or `__threadfence_block` (8.6 cy); avoid `__threadfence` unless you need chip-wide memory ordering (273 cy). System fence (2818 cy) should be used only for CPU-GPU synchronization.
 
 ### Register bank conflicts (FP32 FMA, ncu-verified)
 
@@ -4939,6 +4951,17 @@ The measured "latency" for rcp/lg2 without `.ftz` includes compiler-generated de
 SHFL is fully pipelined with 6-stage pipeline (24/4 = 6). With ≥6 independent SHFL chains, throughput saturates at 4 cy/op.
 
 Local memory (register spill) = **43 cy** per load — approximately L1 cache latency (39 cy) + addressing overhead. Register access = 0 cy (part of FMA pipeline). **Spilling costs 10× vs register access.**
+
+### ALU (pipe_alu) throughput vs warp count
+
+| Warps | Total ALU ops/cy | Notes |
+|------:|-----------------:|-------|
+| 1 | 0.24 | Latency-limited (1 partition) |
+| 4 | 0.98 | 1 warp/partition, still latency-limited |
+| **8** | **1.92** | 2 warps/partition, **96% saturated** |
+| 16 | 2.09 | Fully saturated at **2 ops/cy** |
+
+**ALU pipe: 2 cy throughput, 4 cy latency, 4 partitions → 2 ops/cy peak per SM.** Need 8 warps (2 per partition) to hide latency and saturate.
 
 ### FMA throughput vs warp count (single-chain serial FMA per warp)
 
