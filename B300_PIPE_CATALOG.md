@@ -14594,3 +14594,52 @@ In a single scheduler cycle, B300 can simultaneously issue to ALL of these pipes
 
 This is effectively **6-way co-issue** when the instruction mix provides independent operations across all pipes. The B300 SM can execute 6+ distinct operations simultaneously from a single warp, making instruction mix optimization highly valuable.
 
+
+# Stream Priority & Preemption
+
+B300 supports 6 priority levels (0 = lowest, -5 = highest):
+
+| Test | Low-pri time | High-pri time | Preempted? |
+|------|------------:|-------------:|:----------:|
+| All-SM compute + 1-block high-pri | 248.6 ms | **2.6 ms** | **YES** |
+| 100 cuBLAS GEMMs + 1 high-pri GEMM | 0.42 ms | **0.01 ms** | YES |
+
+**Stream priority preemption works on B300** — a high-priority kernel preempts low-priority work with ~2.5 ms overhead. For cuBLAS GEMMs that finish quickly, preemption is nearly instant (0.01 ms).
+
+**Practical for serving**: Use `cudaStreamCreateWithPriority(&s, cudaStreamNonBlocking, -5)` for latency-critical inference streams. Low-priority batch processing on other streams will be preempted.
+
+
+# Concurrent Kernel Execution
+
+## SM sharing between concurrent kernels
+
+| Configuration | Time | Notes |
+|--------------|-----:|-------|
+| 2 kernels × 74 blocks each | 21.4 ms | **Perfect 50/50 sharing** |
+| Full-SM kernel + 1-block kernel | 0.29 ms / 50.8 ms | Small kernel runs alongside |
+
+Two half-SM kernels from different streams share the GPU perfectly — each gets exactly half the SMs and both complete simultaneously.
+
+## Concurrent dispatch limit
+
+| Concurrent kernels (1 block each) | Completion time | Batches |
+|-----------------------------------:|-----------:|--------:|
+| 1-8 | 4.9 ms | 1 (all overlap) |
+| 16 | 10 ms | 2 |
+| 32 | 22 ms | 4 |
+| 64 | 45 ms | 8 |
+
+**Maximum concurrent kernel dispatch = 8** — the hardware block scheduler dispatches ~8 thread blocks per scheduling cycle. Single-block kernels beyond 8 serialize in batches. The blocks consistently land on the same 8 SMs (likely one GPC), suggesting per-GPC round-robin dispatch.
+
+**Practical**: For multi-request serving, batch at least 8 requests onto different streams for maximum concurrency. Beyond 8, additional requests queue behind the first batch.
+
+
+# CUDA Runtime API Cost
+
+| Operation | Cost |
+|-----------|-----:|
+| `cudaSetDevice` (same device) | 0.04 µs |
+| `cudaGetDevice` | 0.016 µs |
+
+Both are essentially free — thread-local variable reads with no kernel/driver interaction.
+
