@@ -7380,6 +7380,44 @@ Location-type codes: **0 = unset, 1 = Device, 2 = Host**. Id = -2 means "invalid
 **Practical**: use these queries for debugging UM migration behavior. If pages are stuck on host (`LastPrefetch` → host, or blank), add `SetPreferredLocation + Prefetch` as documented earlier.
 
 
+# Ballot+popc histogram — 31× faster than naive atomicAdd
+
+64 M elements, 256 bins, all threads map to same bin (best-case dedup):
+
+| Pattern | Time | GElem/s |
+|---------|-----:|--------:|
+| Naive (1 `atomicAdd` per thread) | 46.07 ms | 1.5 |
+| **Ballot `__match_any_sync` + `__popc` + 1 atom per unique bin per warp** | **1.48 ms** | **45.5 (31× faster)** |
+
+**How it works**:
+```cuda
+unsigned bin = data[i] & 0xFF;
+unsigned mask = __match_any_sync(0xFFFFFFFF, bin);
+int leader = __ffs(mask) - 1;
+if (lane == leader) atomicAdd(&hist[bin], __popc(mask));
+```
+
+Each warp identifies which lanes share the same bin (via `__match_any_sync`), counts them (`__popc`), and a single leader thread issues one `atomicAdd` with the summed count. This reduces global atomic traffic by up to 32× when many lanes share a bin.
+
+**Real-world speedup** (random-ish distribution across 256 bins): expect 1.5-4× (matches vary less). Still always better than naive — the `__match_any_sync` + `__popc` overhead (56 cy + 16 cy) is cheap vs saved atomics.
+
+
+# P2P attributes between 2× B300 SXM6 AC
+
+| Attribute | Value |
+|-----------|------:|
+| `cudaDevP2PAttrPerformanceRank` | **0** (highest = NVLink) |
+| `cudaDevP2PAttrAccessSupported` | **1** |
+| `cudaDevP2PAttrNativeAtomicSupported` | **1** (cross-GPU atomic via NVLink) |
+| **`cudaDevP2PAttrCudaArrayAccessSupported`** | **1** (cross-GPU texture array access!) |
+
+**`cudaDeviceEnablePeerAccess(0→1)` = 131 ms** — one-time setup cost for peer page table mapping.
+
+**CudaArrayAccessSupported = 1** means textures / surfaces allocated on GPU 0 can be directly sampled from GPU 1 via NVLink. No explicit memcpy needed — useful for multi-GPU rendering or shared texture caches.
+
+**Practical**: call `cudaDeviceEnablePeerAccess` once during initialization (131 ms is acceptable boot cost). After that, direct peer-GPU loads/stores/atomics/textures are all enabled at NVLink speed (956 GB/s bidi).
+
+
 # Work-stealing vs grid-stride — grid-stride wins 2.8× for uniform work
 
 10 000 uniform work items (each = 100 FMAs):
