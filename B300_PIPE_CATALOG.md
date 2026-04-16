@@ -14644,6 +14644,39 @@ Two half-SM kernels from different streams share the GPU perfectly — each gets
 Both are essentially free — thread-local variable reads with no kernel/driver interaction.
 
 
+# Complete B300 Hardware Configuration (cudaDeviceProp)
+
+From `cudaGetDeviceProperties` + attribute scan:
+
+| Category | Parameter | Value |
+|----------|-----------|-------|
+| **Compute** | GPU name | NVIDIA B300 SXM6 AC |
+| | Compute capability | **10.3** (sm_103a) |
+| | SMs | **148** |
+| | Max threads/SM | 2048 (64 warps) |
+| | Max threads/block | 1024 |
+| | Max blocks/SM | 32 |
+| | Registers/SM | 65536 |
+| | Clock | 1800 MHz base, ~2032 MHz boost |
+| **Memory** | HBM3E total | **287.4 GB** |
+| | Memory bus | **7680-bit** |
+| | Memory clock | 3996 MHz |
+| | Theoretical peak BW | **7.7 TB/s** |
+| | L2 cache | **126 MB** |
+| | Shared memory/SM | 228 KB |
+| | Shared memory/block (optin) | 227 KB (232448 B) |
+| **Async** | Copy engines | **4** |
+| | Concurrent kernels | YES |
+| | Cooperative launch | YES |
+| **Features** | Managed memory | YES |
+| | Pageable memory access | YES |
+| | GPUDirect RDMA | YES (64) |
+| | Memory pools | YES |
+| | Cluster max size | 32 blocks |
+
+**4 async copy engines** enable 4 simultaneous H2D/D2H/D2D transfers — pipeline data staging across multiple streams. The **7680-bit memory bus** (60 × 128-bit HBM3E channels) is the widest bus in any commercial GPU.
+
+
 # HFMA2 (f16×2 FMA) Pipeline
 
 | Measurement | cy | Notes |
