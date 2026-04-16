@@ -7345,6 +7345,41 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# CUDA graph conditional nodes (if / while / switch on device)
+
+CUDA 12.3+ adds **device-side control flow** in graphs via `cudaGraphNodeTypeConditional`.
+
+```cpp
+cudaGraphConditionalHandle handle;
+cudaGraphConditionalHandleCreate(&handle, g, 1, cudaGraphCondAssignDefault);
+// Default value = 1 (execute body)
+
+cudaGraphNodeParams np = {};
+np.type = cudaGraphNodeTypeConditional;
+np.conditional.handle = handle;
+np.conditional.type = cudaGraphCondTypeIf;  // or CondTypeWhile, CondTypeSwitch
+np.conditional.size = 1;
+cudaGraphAddNode(&cond_node, g, nullptr, nullptr, 0, &np);
+
+cudaGraph_t body = np.conditional.phGraph_out[0];
+// Add nodes to `body` — they'll execute iff the handle's value matches.
+```
+
+**Verified working** on B300 — added an `if` conditional node with a kernel in its body, launched the graph; the kernel executed (atom counter went to 1) because the default condition is 1.
+
+**Use cases:**
+- Dynamic batching with early-exit (stop iterating once convergence criterion met).
+- Multi-branch dispatch based on an atomic flag.
+- Warm-up vs hot-path selection in persistent workflows.
+
+Condition value can be set by a kernel node earlier in the graph via `cudaGraphSetConditional` (device API) — pure on-device control flow without CPU round-trip.
+
+Available condition types on sm_103a:
+- `cudaGraphCondTypeIf` — execute body once if true.
+- `cudaGraphCondTypeWhile` — loop until condition goes false.
+- `cudaGraphCondTypeSwitch` — multi-way branch (with `size > 1` and `phGraph_out` array).
+
+
 # __reduce_*_sync variants — min/max faster than add/and/or/xor
 
 Single-warp chain, 1000 iter:
