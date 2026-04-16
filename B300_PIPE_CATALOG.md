@@ -15252,6 +15252,18 @@ FP8 gives **1.71× speedup in sustained chains** (vs ~1.9× for isolated GEMMs).
 - **Mixtral expert** (117 MB): ⚠️ 2.0× contention
 - **Llama-70B** (470 MB): ❌ severe 2.3× contention → **FP8 critical for decode**
 
+## L2 bypass (`ld.global.cs`) does NOT help
+
+| Method | Single µs | Chain/7 µs | Chain ratio |
+|--------|----------:|-----------:|:-----------:|
+| Cached (default) | 174 | 344 | 1.97× |
+| Streaming (.cs) | 158 | 329 | 2.08× |
+| **Streaming benefit** | — | — | **only 1.05×** |
+
+The `.cs` (streaming) cache hint provides **only 5% improvement** in chains. The contention is in the HBM read/write path, not the L2 replacement policy. Streaming data still flows through L2, and the eviction write-backs still compete with new reads.
+
+**The L2 contention is a fundamental HBM controller bottleneck**, not an L2 policy issue. The only effective mitigations are reducing weight data size (FP8/INT4) or distributing weights across GPUs (tensor parallelism).
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
