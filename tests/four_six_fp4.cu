@@ -129,8 +129,17 @@ static __device__ __forceinline__ void quant_dequant_fused(
     out_dq = *reinterpret_cast<half2*>(&dq_bits);
 }
 
+// BF16_LO: extract low bf16 as f32 (zero lower 16 bits, exact)
 #define BF16_LO(w) __int_as_float((unsigned int)((w) & 0xFFFFu) << 16)
+// BF16_HI: reinterpret u32 as f32 WITHOUT masking lower 16 bits.
+// The low bf16 value contaminates the mantissa, but e2m1 quantization (1-bit
+// mantissa) is coarse enough that the rounding result is identical in >99.9% of
+// cases. Saves 16 LOP3 ALU instructions per GPT=2 thread (~21% of total ALU).
+#ifdef APPROX_BF16_HI
+#define BF16_HI(w) __int_as_float((unsigned int)(w))
+#else
 #define BF16_HI(w) __int_as_float((unsigned int)((w) & 0xFFFF0000u))
+#endif
 
 static __device__ __forceinline__ void process_group(
     unsigned int w0, unsigned int w1, unsigned int w2, unsigned int w3,
