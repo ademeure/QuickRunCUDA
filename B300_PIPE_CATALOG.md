@@ -14062,3 +14062,37 @@ An 8-way switch with 1 FMA per case costs **575 cy/iter** — ptxas generates ca
 
 Writes show different behavior: stride-2 loses 50% because it triggers read-modify-write on L2 cache lines (each line is only partially written, requiring a read first). Stride-32 recovers because each warp writes exactly 1 word per cache line, and the hardware can optimize this with write combining.
 
+
+# Shared Memory Atomics
+
+Single warp (32 threads), measured via `clock64`.
+
+## FP32 vs INT32 atomicAdd
+
+| Operation | No contention (cy) | Full contention (32-way, cy) |
+|-----------|-------------------:|-----------------------------:|
+| **INT32 atomicAdd** | **4.6** | **4.6** |
+| FP32 atomicAdd | 85 | 5729 |
+| INT32 atomicCAS | 6.2 | — |
+
+**INT32 smem atomics are 18× faster than FP32** and show **zero contention overhead** — the hardware processes all 32 lanes simultaneously, even when all threads target the same address. FP32 atomics must serialize the read-modify-write because floating-point addition is not associative in hardware.
+
+## FP32 atomicAdd contention scaling
+
+| Contention degree | Threads/slot | cy/atom | vs no-contention |
+|------------------:|-----------:|--------:|-----------------:|
+| 1 (none) | 32 | 85 | 1.0× |
+| 2-way | 16 | 172 | 2.0× |
+| 4-way | 8 | 346 | 4.1× |
+| 8-way | 4 | 1120 | **13×** |
+| 16-way | 2 | 2666 | **31×** |
+| 32-way | 1 | 5729 | **67×** |
+
+FP32 contention scaling is **super-linear** — 32-way contention costs 67× more than no contention (not 32×). The extra cost comes from conflict serialization overhead in the shared memory arbiter.
+
+**Practical guidance**:
+1. **Use INT32 atomics wherever possible** — they're 18× faster and don't degrade under contention.
+2. For FP32 reductions: use `redux.sync.add` (56 cy) instead of shared memory atomics (85-5729 cy).
+3. If FP32 atomics are unavoidable: **minimize contention** by partitioning across multiple smem locations, then reducing.
+4. For histogram-like patterns: accumulate in per-warp INT32 bins, convert to FP32 only at the end.
+
