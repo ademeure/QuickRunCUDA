@@ -16134,3 +16134,14 @@ All threads atomicAdd to SAME global address:
 
 **Practical**: A single global atomic counter can sustain 47 billion increments/second without optimization — sufficient for most counting/synchronization patterns.
 
+
+# Thread Block → SM Assignment
+
+296 blocks (2 per SM), 32 threads each:
+
+**Assignment pattern**: GPC-round-robin, non-sequential. First blocks go to SMs 142→147→0→1, then strides through GPC groups: SM16→17→32→33→48→49→64→65...
+
+**Load balance: perfectly even** — exactly 2 blocks per SM (min=2, max=2). The hardware scheduler distributes blocks with zero imbalance across all 148 SMs.
+
+**Practical**: No need for manual block-to-SM affinity tricks — the hardware's GPC-round-robin achieves perfect balance automatically. Block indices are NOT assigned sequentially to SM IDs.
+
