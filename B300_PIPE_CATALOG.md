@@ -355,6 +355,20 @@ The XU pipe accepts a simple op every 2 cycles (0.5/SM/cy) for compound MUFUs. C
 
 That's 1/80th the FP32 FMA rate on a per-cycle basis — FP64 is not a B300 strength.
 
+**FP64 detailed characterization (single warp):**
+
+| Operation | Latency | 4-chain throughput | Notes |
+|-----------|--------:|-------------------:|-------|
+| DFMA | **63.9 cy** | **63.9 cy/op** | NOT pipelined — zero ILP benefit |
+| DADD | 64.5 cy | — | Same as DFMA |
+| DMUL | 64.6 cy | — | Same as DFMA |
+| DFMA + FFMA | **63.9 cy** | — | **FFMA is free** during DFMA |
+| DFMA + ALU | 64.6 cy | — | ALU nearly free |
+
+**DFMA is NOT pipelined**: 4 independent chains give zero speedup (63.9 cy/op each). Only 1 FP64 op can be in flight per partition at a time. FFMA and ALU co-issue freely during the 64 cy window.
+
+B300 FP64 peak = ~1.2 TFLOPS with 4 warps (1 per partition). This is 1/50 of FP32 FMA peak — B300 is an inference chip, not HPC.
+
 ---
 
 ## 3. Contention rules (from u-metric sweeps)
