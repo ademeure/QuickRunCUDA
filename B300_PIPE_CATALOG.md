@@ -5558,6 +5558,26 @@ The speedup is less than theoretical 2× because: output is still BF16 (same wri
 
 Peak FP8 advantage: **1.87-1.90×** at batch=8 (8B) and batch=128 (70B). At batch=1: only 1.1-1.4× (dispatch overhead dominates). Add ~15% for attention + RMSNorm.
 
+### Llama-3.1-405B TP=2 per-GPU layer (BF16, measured)
+
+d=16384, qkv/gpu=9216, ffn/gpu=26624, **126 layers**
+
+| Batch | Layer ms | 126 layers | Tok/s | Weight BW |
+|------:|:--------:|:----------:|:-----:|:---------:|
+| 1 | 0.512 | 64.5 ms | **16** | 6750 GB/s |
+| 8 | 0.518 | 65.2 ms | 123 | 6671 |
+| 128 | 0.531 | 66.9 ms | 1912 | 6510 |
+| 512 | 0.949 | 119.6 ms | 4281 | 3641 |
+
+**Weight per layer (per GPU):** 3456 MB (BF16), 1728 MB (FP8).
+
+| Precision | Per GPU total | 2×B300 (548 GB) | Fits? |
+|:---------:|:------------:|:----------------:|:-----:|
+| BF16 | 435 GB | 870 GB | **NO** |
+| **FP8** | **218 GB** | 436 GB | **YES** |
+
+**405B FP8 fits on 2×B300 at TP=2** (218 GB < 274 GB per GPU, 56 GB for KV cache). BF16 requires TP=4 (4 GPUs). Measured batch=1: ~16 tok/s per-GPU GEMM time + ~1.3 ms NCCL → **~14 tok/s** with 2-GPU TP.
+
 ### Pipeline overhead: GEMM + elementwise interleaved (measured)
 
 | Batch | GEMM-only (2×d²) | GEMM + norm + silu | Overhead |
