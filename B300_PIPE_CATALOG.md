@@ -5452,6 +5452,24 @@ Attention becomes significant at seq≥4096 (11%+ of decode). At seq=8192: atten
 
 **For LLM serving**: maximize batch size via continuous batching. Each doubling of batch ≈ 2× throughput until batch≈400.
 
+### Prefill throughput (compute-bound, FP16 tensor, W=4096²)
+
+| Prompt length | ms/GEMM | TFLOPS | % peak | 70B prefill time | Prefill tok/s |
+|--------------:|--------:|-------:|-------:|-----------------:|--------------:|
+| 128 | 0.006 | 708 | 29% | 2 ms | 75K |
+| 512 | 0.012 | 1452 | 59% | 3 ms | **155K** |
+| 2048 | 0.040 | 1731 | 70% | **11 ms** | **184K** |
+| 8192 | 0.128 | 2150 | **87%** | 36 ms | **229K** |
+
+**Prefill is compute-bound** — tensor cores utilized at all prompt lengths (29-87%). Time-to-first-token for a 2K prompt = ~11 ms (70B FP16). Prefill is 1000-4000× faster than decode per token.
+
+**Complete LLM serving picture on B300:**
+- **Prefill**: 155K-229K tok/s (compute-bound, tensor cores)
+- **Decode (batch=1)**: 30-120 tok/s depending on precision (memory-bound)
+- **Decode (batch=256)**: ~967 TFLOPS → transitions toward compute-bound
+- **TTFT** (2K prompt, 70B FP16): ~11 ms
+- **Decode latency**: ~16.7 ms/token (FP8) or ~8.3 ms (FP4)
+
 ### cudaGraph launch overhead scaling
 
 | Kernels in graph | Graph launch | Regular launch | Speedup |
