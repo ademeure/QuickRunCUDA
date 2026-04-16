@@ -7345,6 +7345,30 @@ deferredMappingCudaArraySupported: 1
 - **hostNativeAtomicSupported = 0**: no cross-domain atomic ordering via NVLink-C2C (this is a pure PCIe B300).
 
 
+# PCIe full-duplex concurrency (H2D + D2H)
+
+128 MB transfers on 4 nonblocking streams:
+
+| Pattern | Time | Aggregate GB/s |
+|---------|-----:|---------------:|
+| H2D alone | 2.33 ms | 57.5 |
+| D2H alone | 2.35 ms | 57.1 |
+| **H2D + D2H concurrent (different directions)** | **2.72 ms** | **98.8** (1.72× aggregate) |
+| 2 H2D + 2 D2H (4 streams) | 5.47 ms | 98.2 (no improvement) |
+
+**Findings:**
+
+1. **H2D and D2H run CONCURRENTLY** — different directions use different PCIe lanes (full-duplex).
+2. **Combined BW = 99 GB/s** ≈ Gen 5 x16 full-duplex peak (128 GB/s theoretical, 77 % efficient).
+3. **Adding more streams in the SAME direction doesn't help** — the single-direction lane is bandwidth-limited, not queue-limited.
+4. **The 99 GB/s combined vs 256 GB/s PCIe Gen 6 x16 theoretical** suggests the host is operating the link at Gen 5 speed (as suspected earlier). The card advertises Gen 6 but the realized throughput is Gen 5.
+
+**Design rule for data pipelining**:
+- Use **2 streams** (one H2D, one D2H) for max async bi-directional BW.
+- More same-direction streams waste resources — they serialize on the PCIe lane.
+- For max pipelining: overlap H2D (staging next batch) with D2H (retrieving previous batch) + compute.
+
+
 # NVTX tracing — FREE when profiler isn't attached
 
 NVTX `nvtxRangePush`/`Pop` and `nvtxMark` calls measured on B300:
