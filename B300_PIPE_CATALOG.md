@@ -14996,6 +14996,20 @@ Peak gate-projection throughput at **seq=512** (1591 TFLOPS) — the sweet spot 
 
 **Non-power-of-2**: 4000³ achieves 1466 TFLOPS (85% of peak) — cuBLAS handles any multiple of ~64 well. The cliff is specifically for dimensions that are 1 over a tile boundary.
 
+
+# GEMM Layout: NN vs NT vs TN vs TT
+
+| Layout | 4096³ TFLOPS | 8192³ TFLOPS | Decode 1×8192² µs |
+|--------|------------:|------------:|------------------:|
+| NN | 1775 | 923 | 24.6 |
+| NT | 1772 | 922 | 23.6 |
+| TN | 1777 | 925 | 24.5 |
+| TT | 1776 | 924 | 23.6 |
+
+**All four layouts give identical performance** (within 0.3%). cuBLAS on B300 handles NN, NT, TN, and TT equally well — the tensor cores work from shared memory tiles loaded by TMA, which transposes on the fly.
+
+**Practical**: Use whatever layout is most convenient for your data flow. No performance reason to prefer one over another. For decode (M=1), NT/TT are marginally faster (4%) — likely from row-major weight being slightly more cache-friendly when only one output row is computed.
+
 **Practical**: In GEMM inner loops, the ratio of FMA to load determines whether loads are free. With ≥4 FMA per load, the load overhead is negligible. This is why GEMM achieves near-peak TC utilization — the data movement hides behind the MMA computation.
 
 
