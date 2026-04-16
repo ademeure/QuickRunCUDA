@@ -5269,6 +5269,15 @@ All FP32 value ranges run at identical 4.03 cy: normal, subnormal, overflow, NaN
 
 **L2 read:write asymmetry = 1.6:1** — reads are 60% faster than writes. L2-resident data effectively doubles the available memory bandwidth (14 vs 7.4 TB/s).
 
+### DRAM read vs write bandwidth (v4, 1 GB buffer, persistent grid)
+
+| Operation | Chip BW | Notes |
+|-----------|--------:|-------|
+| DRAM read (v4) | **4.2 TB/s** | Synchronous — thread waits for data |
+| DRAM write (v4) | **8.5 TB/s** | Fire-and-forget — write buffer absorbs |
+
+Writes appear 2× faster because stores return immediately and the L2 write buffer queues them. The actual sustained DRAM drain rate is limited by memory controllers. **For bandwidth planning: use the read BW (4.2 TB/s) as the conservative bound.**
+
 ### L2 atomic throughput scaling (unique per-thread addresses, no contention)
 
 | SMs active | Gatom/s | Per-atom cy | Scaling |
