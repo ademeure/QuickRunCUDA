@@ -18213,3 +18213,17 @@ After hours of sustained benchmarking (hundreds of kernel launches, thermal cycl
 **cudaMemset = 7.37 TB/s** — the true HBM write bandwidth (write-only, optimal write-combining). This is 5% higher than streaming read (7.0 TB/s) because memset has no read-modify-write overhead.
 
 **Dispatch floor = 1.4 µs** (lighter than cudaMemcpyAsync's 2.4 µs). Saturates at ~256 MB.
+
+
+# CUDA Occupancy API Cost
+
+| API | Cost | Safe per-launch? |
+|-----|-----:|:----------------:|
+| `cudaDeviceGetAttribute` | 0.01 µs | Yes (cached) |
+| `cudaOccupancyMaxActiveBlocksPerSM` | 0.07 µs | Yes |
+| `cudaFuncGetAttributes` | 0.15 µs | Yes |
+| **`cudaOccupancyMaxPotentialBlockSize`** | **15.3 µs** | **No — cache result!** |
+
+**`MaxPotentialBlockSize` = 15.3 µs** — does a full block-size search. This is 7× the kernel launch cost. Call once at initialization, cache the result.
+
+All other occupancy APIs are sub-microsecond and safe to call per-kernel.
