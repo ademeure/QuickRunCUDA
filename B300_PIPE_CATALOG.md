@@ -14370,23 +14370,26 @@ Pointer chase at page-aligned strides, single warp:
 | 8192 | 512 MB | 804 | |
 | 16384 | 1 GB | 971 | Full page table walk |
 
-## 2 MB page stride
+## 2 MB page stride (extended)
 
-| Pages touched | Address range | cy/chase |
-|--------------:|---------:|--------:|
-| 4 | 8 MB | 38 |
-| 64 | 128 MB | 39 |
-| 256 | 512 MB | 42 |
-| 512 | 1 GB | 46 |
+| Pages touched | Address range | cy/chase | Notes |
+|--------------:|---------:|--------:|-------|
+| 4 | 8 MB | 38 | L1/TLB hit |
+| 64 | 128 MB | 39 | |
+| 256 | 512 MB | 42 | |
+| 512 | 1 GB | 46 | |
+| 1024 | 2 GB | 39 | L1 cache hit (8 CLs/page test) |
+| **2048** | **4 GB** | **308** | **L1→L2 cache transition (WS > 192 KB)** |
+| **4096** | **8 GB** | **308** | **Still L2 — ZERO TLB penalty** |
 
-**No TLB miss with 2 MB pages** up to 1 GB address range. The TLB handles 512 × 2MB = 1 GB effortlessly.
+**No TLB miss with 2 MB pages up to 8 GB.** Even random-permutation chases through 4096 × 2 MB = 8 GB show pure L2 latency (307-308 cy) with no TLB walk overhead. The 2048→4096 page jump from 39 to 308 cy is the L1 data cache transition (WS exceeds 192 KB), not TLB.
 
 ## Key findings
 
-- **L1 TLB ≈ 1024 entries** covering ~64 MB with 64 KB pages
-- **TLB miss penalty: 10× (53 → 518 cy)** — roughly equal to L2 cache access latency
-- **2 MB huge pages extend TLB coverage to ≥1 GB** without misses
-- `cudaMalloc` appears to use 64 KB page granularity by default, but the TLB handles 2 MB strides identically — the GPU may transparently use large pages for large allocations
+- **L1 TLB ≈ 1024 entries** covering ~64 MB with 64 KB pages (original measurement)
+- **64K-page TLB miss penalty: 10× (53 → 518 cy)** at the 1024→2048 page transition — includes both L1→L2 cache effect AND TLB walk cost
+- **With 2 MB pages: no TLB misses through 8 GB** — `cudaMalloc` uses 2 MB huge pages internally, so the TLB covers (TLB_entries × 2 MB) = multi-GB address ranges
+- The 64K-page cliff at 128 MB is confounded: L1 data cache (192 KB) overflows at 1536 64K-pages, and TLB may also overflow simultaneously. Pure TLB walk cost is difficult to isolate because cudaMalloc's 2 MB internal pages reduce TLB pressure below measurable thresholds
 
 **Practical**: For random-access workloads spanning >64 MB, TLB misses add ~400+ cy overhead per access. Use `cudaMemAdvise(cudaMemAdviseSetPreferredLocation)` or explicit large-page allocations to extend TLB coverage.
 
