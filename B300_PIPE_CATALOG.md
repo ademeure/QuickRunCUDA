@@ -16418,3 +16418,58 @@ Each SM simultaneously runs a 512 KB pointer chase through its own L2-resident r
 **Cause**: likely L2 bank contention (not physical distance). Under 148-way concurrent access, some SMs' address regions hash to the same L2 bank as many neighbors, creating queuing. The outlier pattern is deterministic because the address hash and SM-to-region mapping are fixed.
 
 **Practical**: For latency-sensitive single-SM workloads, L2 access is ~300 cy regardless of which SM the block lands on. The 37% variation only appears under heavy multi-SM contention and is fully hidden by TLP in bandwidth-bound workloads.
+
+
+# L2 Cache: Randomized Hash + Capacity Profile (`.cg` pointer chase)
+
+## L2 set indexing: randomized hash (immune to stride attacks)
+
+Tested stride-N pointer chase with `.cg` loads at strides 256K through 8 MB, node counts 4-96. **No associativity cliff at ANY stride** — all show constant ~305-315 cy (L2 hit) regardless of stride alignment or node count. Even 96 nodes × 8 MB stride (768 MB address span) stays at L2 latency.
+
+**B300's L2 uses a randomized hash** for set indexing. No power-of-2 stride can create worst-case set conflicts. This is a significant improvement over simple modular indexing — pathological access patterns that thrash CPUs' set-associative caches are impossible on B300.
+
+## L2 capacity profile (sequential `.cg` chase, L1 bypassed)
+
+| Buffer size | cy/hop | Level |
+|-----------:|-------:|-------|
+| 4-48 MB | **307** | L2 hit (one partition) |
+| 64 MB | 443 | **Transition** (near+far L2) |
+| 80-112 MB | 673 | Partial DRAM |
+| 128+ MB | **859** | Full DRAM |
+
+**3-step transition** at 48→64→128 MB confirms the 2-partition L2 architecture:
+1. **≤48 MB**: fits in near-side partition (~63 MB each) — full L2 speed
+2. **64-112 MB**: crosses partitions, mix of near/far + partial DRAM
+3. **≥128 MB**: exceeds total L2 (126 MB) — pure DRAM
+
+**Note**: `.cg` loads use streaming eviction, which may reduce effective capacity vs `.ca`. The near-side capacity of ~48 MB (vs theoretical 63 MB per partition) reflects eviction policy overhead.
+
+
+# Warp Reduce / Scan Cost Comparison
+
+Single warp, 65536 iterations with dependency chain:
+
+| Operation | cy/op | vs shuffle | Notes |
+|-----------|------:|----------:|-------|
+| FMA baseline | 4.0 | — | reference |
+| **Inclusive scan** (5× shfl_up) | **150** | 1.0× | Hillis-Steele, no HW intrinsic |
+| Sum reduce (5× shfl_xor) | 150 | 1.0× | Butterfly pattern |
+| Max reduce (5× shfl_xor) | 151 | 1.0× | Same cost as sum |
+| **`__reduce_add_sync`** (HW) | **47** | **3.2×** | REDUX.SUM via ADU pipe |
+| **`__reduce_min_sync`** (HW) | **23** | **6.5×** | CREDUX.MIN via ALU pipe |
+
+**Multi-warp throughput scaling (reduces/cy/SM):**
+
+| Warps | shfl reduce | HW add | HW min |
+|------:|----------:|-------:|-------:|
+| 1 | 0.007 | 0.02 | 0.04 |
+| 8 | 0.05 | 0.17 | 0.34 |
+| 16 | 0.10 | 0.33 | 0.68 |
+| 32 | 0.19 | 0.49 | **0.98** |
+
+**Key findings:**
+1. **HW reduce intrinsics are 3-6× faster** than shuffle trees — always prefer `__reduce_min/max/add_sync`.
+2. **Reduce-min/max is 2× faster than reduce-add** (CREDUX vs REDUX, different pipe).
+3. **SM saturates at ~1 HW reduce-min/cy** with 32 warps. The CREDUX pipe is the bottleneck.
+4. **No HW inclusive scan exists** — shuffle-based at 150 cy is unavoidable for prefix sums (critical path in online softmax).
+5. Per-warp latency is constant up to 16 warps. At 32 warps: +30-41% degradation from pipe saturation.
