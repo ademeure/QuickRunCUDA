@@ -17648,3 +17648,27 @@ Linear scaling. No batching benefit — each alloc is independently O(1).
 | 1 GB fresh (after `cudaMemPoolTrimTo(0)`) | **210 ms** | **48,000×** |
 
 **Pre-allocating pools is critical.** vLLM/TensorRT-LLM pre-allocate large pools at startup to avoid the 210 ms per-allocation penalty during inference.
+
+
+# cuBLAS Warmup Behavior (First Call Penalty)
+
+## FP32 SGEMM (4096×4096)
+
+| Call # | Latency | TFLOPS | Status |
+|-------:|--------:|-------:|--------|
+| **1** | **74 ms** | 1.9 | **COLD (35× penalty)** |
+| 2 | 2.1 ms | 64.9 | **Warmed** |
+| 3+ | 2.1 ms | 65.5 | Steady-state |
+
+## BF16 GEMM (4096×4096)
+
+| Call # | Latency | TFLOPS | Status |
+|-------:|--------:|-------:|--------|
+| **1** | **36 ms** | 4 | **COLD (420× penalty)** |
+| 2 | 117 µs | 1179 | Warming |
+| 3 | 87 µs | 1589 | Near-steady |
+| **4+** | **86 µs** | **1600** | **Steady-state** |
+
+**First call = 35-74 ms** of JIT compilation and algorithm heuristic selection. The penalty is per-unique-shape — a new (M, N, K) triggers another cold call.
+
+**For LLM serving**: warmup each GEMM shape once at startup. ~20 shapes × ~50 ms = ~1 second total warmup (negligible vs 2.1s context init). After warmup, every call is steady-state.
