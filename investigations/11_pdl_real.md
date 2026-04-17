@@ -135,15 +135,15 @@ Signal at 100% (signal AFTER all compute and writes) gives slightly MORE savings
 
 | k_iters | nopdl us/k | pdl us/k | save us/k | save % |
 |---:|---:|---:|---:|---:|
-| 500 | 8.26 | 7.03 | +1.23 | 14.9% |
-| 1000 | 14.40 | 13.05 | +1.35 | 9.4% |
-| 2500 | 32.83 | 31.16 | +1.67 | 5.1% |
-| 5000 | 63.55 | 61.05 | +2.49 | 3.9% |
-| 10000 | 202.0 | 200.1 | +1.92 | 0.95% |
-| 25000 | 619.7 | 617.3 | +2.42 | 0.39% |
-| 50000 | 1314.4 | 1314.6 | -0.15 | -0.01% |
+| 500 | 8.25 | 6.71 | +1.54 | 18.7% |
+| 1000 | 14.39 | 12.37 | +2.02 | 14.0% |
+| 2500 | 30.81 | 29.45 | +1.35 | 4.4% |
+| 5000 | 59.44 | 57.77 | +1.67 | 2.8% |
+| 10000 | 116.8 | 114.4 | +2.39 | 2.1% |
+| 25000 | 286.6 | 284.1 | +2.52 | 0.88% |
+| 50000 | 569.2 | 567.2 | +1.99 | 0.35% |
 
-Key pattern: absolute savings stay roughly constant (~1.3-2.5 us/kernel) regardless of kernel length, but percentage savings decrease as kernels get longer. At 50 ms kernels, PDL is noise (±0.1 us). For kernels under 200 us, PDL provides meaningful percentage savings (1-15%).
+Key pattern: absolute savings stay roughly constant (~1.3-2.5 us/kernel) regardless of kernel length, but percentage savings decrease as kernels get longer. At 50 ms kernels, PDL provides ~2 us saving (0.35%) — still positive but below noise floor for most use cases. For kernels under 300 us, PDL provides meaningful percentage savings (0.9-18%).
 
 ---
 
@@ -181,14 +181,16 @@ For single-stream chains, PSS and ProgrammaticEvent are equivalent in behavior. 
 
 | Kernel type | PDL saving us/kernel |
 |---|---:|
-| Pure compute, conditional write | +1.5 to +2.1 |
-| Full output tile (every thread writes) | +1.7 to +2.5 |
-| True A→B data dependency chain | ~0 to +1.4 |
-| GEMM-like (read+compute+write) | +1.2 to +1.3 |
+| Pure compute, conditional write | +1.9 to +2.2 |
+| Full output tile (every thread writes) | +1.4 to +1.8 |
+| True A→B data dependency chain | -0.3 to -0.7 |
+| GEMM-like (read+compute+write) | +1.8 to +2.2 |
 
 ### 3. Does griddepcontrol.wait overhead kill PDL benefit?
 
-**No.** `griddepcontrol.wait` adds only ~0.4-0.5 us in isolation. The launch overlap savings (+2-3 us/kernel) far exceed the wait cost. The exception is true data-dependency chains where the consumer kernel must actually WAIT for producer data to be visible — in that case the overlap is reduced by the memory latency, leaving ~0 net benefit. But for independent consecutive kernels (where PDL is mainly a launch-overlap optimization), `griddepcontrol.wait` is not a bottleneck.
+**For independent kernels: No.** `griddepcontrol.wait` adds only ~0.4-0.5 us in isolation. The launch overlap savings (+1.5-2.2 us/kernel) far exceed the wait cost.
+
+**For true A→B data dependency chains: Yes, slightly.** When kernel B must read kernel A's output, `griddepcontrol.wait` provides a full memory ordering barrier. The barrier overhead (-0.3 to -0.7 us/kernel net) slightly exceeds the launch-latency savings, making PDL mildly harmful for true producer-consumer patterns. This makes sense: if B must wait for A's data anyway, the early launch enabled by PDL cannot actually start useful work until A's writes are complete.
 
 ### 4. For what kinds of kernels SHOULD developers use PDL?
 
