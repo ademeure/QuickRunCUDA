@@ -17729,8 +17729,8 @@ Linear scaling. No batching benefit — each alloc is independently O(1).
 | 6 | HBM latency | **860 cy** |
 | 7 | HBM bandwidth | **7.0 TB/s** |
 | 8 | Smem bandwidth (v4) | **37.7 TB/s** |
-| 9 | BF16 tensor peak | **1806 TFLOPS** |
-| 10 | FP32 peak (TF32) | **65.8 TFLOPS** |
+| 9 | BF16 tensor (sustained) | **2192 TFLOPS** |
+| 10 | BF16 tensor power | **962 W** |
 | 11 | Kernel launch | **2.05 µs** |
 | 12 | Pool alloc | **0.31 µs** |
 | 13 | Barrier (256 thr) | **30 cy** |
@@ -17739,7 +17739,7 @@ Linear scaling. No batching benefit — each alloc is independently O(1).
 | 16 | Min load width | **float2** (v1 wastes 57%) |
 | 17 | Cold start | **2.1 s** (cudaSetDevice) |
 | 18 | cuBLAS JIT warmup | **36-74 ms** (per shape) |
-| 19 | Power (FMA) | **386 W** |
+| 19 | Attn crossover ctx | **~80K tokens** |
 | 20 | Llama-70B decode | **42 tok/s** (batch=1) |
 
 ## The 5 Biggest Wins
@@ -17754,9 +17754,9 @@ Linear scaling. No batching benefit — each alloc is independently O(1).
 
 ## This Catalog
 
-17,700+ lines | 150+ commits | 349 sections | 7,200+ table rows
+17,900+ lines | 160+ commits | 360+ sections
 Validated: 96-97% accuracy across 3 LLM model sizes
-Scope: 4 cy FMA → 7 TB/s HBM → 1806 TFLOPS → $0.36/Mtok
+Scope: 4 cy FMA → 7 TB/s HBM → 2192 TFLOPS → $0.36/Mtok → 15.6s cold start
 
 
 # BF16 Free Batching: Verified at LLM MLP Shapes
