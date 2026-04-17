@@ -16857,3 +16857,33 @@ This differs from x86 CPUs where denormals can be 10-100× slower. NVIDIA's FMA 
 **One padding element transforms column-major from 32-way bank conflict (5.5× slower) to conflict-free (slightly FASTER than row-major).** The stride changes from 32 (all threads hit same bank) to 33 (coprime with 32 → all banks used).
 
 **Always use `tile[N][N+1]`** for shared memory tiles that will be accessed in both row and column directions (matrix transpose, GEMM accumulator, attention score matrix). The 1-element padding wastes <4% smem but gives 5.8× column-access speedup.
+
+
+# Warp Shuffle Pipeline Depth (shfl_xor + FADD Chain)
+
+| ILP chains | cy/iter | cy/shfl | Regime |
+|-----------:|--------:|--------:|--------|
+| 1 | 30.0 | **30.0** | **Latency-bound** |
+| 2 | 33.1 | 16.6 | Partial ILP |
+| 4 | 32.9 | 8.2 | Near-saturated |
+| 8 | 33.1 | 4.1 | Issue-rate limited |
+| 16 | 34.8 | **2.2** | **Fully saturated** |
+
+**Shuffle latency = 26 cy** (30 cy chain includes 4 cy FADD). Throughput saturates at ~2 cy/SHFL (= 1 warp-instruction per issue cycle, since each shuffle + its consumer = 2 warp-instructions). Pipeline depth = 26/2 ≈ **13 chains** needed to fully saturate.
+
+**Shuffle is the deepest pipeline on B300** — deeper than MUFU (3 chains) or FMA (2 chains). This makes shuffle-heavy algorithms (warp scan, butterfly reduce) inherently latency-bound unless the kernel has many independent reductions in flight.
+
+
+# Threadfence Variants: Block is Free, System is 261×
+
+Single warp, no pending stores (minimum fence overhead):
+
+| Fence | cy | vs block | SASS |
+|-------|---:|--------:|------|
+| `__threadfence_block()` | **11** | **1.0×** | MEMBAR.SC.CTA |
+| `__threadfence()` | **269** | **24×** | MEMBAR.SC.GPU + CCTL |
+| `__threadfence_system()` | **3031** | **268×** | MEMBAR.SC.SYS + PCIe fence |
+
+**CTA-scope fence is essentially free** (same cost as FMA baseline). GPU-scope costs ~270 cy for L2/NoC coherence. System-scope = 3031 cy (~1.5 µs) for PCIe/NVLink fabric acknowledgment.
+
+**With pending stores**: costs increase proportionally to store buffer depth. The numbers above are the MINIMUM — the fence instruction's own overhead without waiting for stores to drain.
