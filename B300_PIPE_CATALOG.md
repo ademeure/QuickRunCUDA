@@ -18362,3 +18362,65 @@ Slow = 221 ms, Fast = 111 ms (2× shorter). All 1 block × 256 threads:
 **Test D shows the converse**: when 128 SLOW kernels fill all slots, 64 fast kernels can't start until t=221 ms → total = 221+111 = 332 ms.
 
 **For continuous batching**: short decode tokens (fast) can be processed in gaps left by long prefill computations (slow) — effectively for free. This is the hardware mechanism that makes continuous batching work.
+
+
+# Programmatic Dependent Launch (PDL) — API Research
+
+PDL allows overlapping sequential kernels on the same stream by letting the producer signal partial completion before all its blocks finish.
+
+## Device-Side PTX Instructions
+
+```
+griddepcontrol.launch_dependents;  // Signal: "dependent can start scheduling"
+griddepcontrol.wait;               // Wait: "block until producer signals"
+```
+
+**Wrapper functions** (require `-rdc=true` or NVRTC):
+- `cudaTriggerProgrammaticLaunchCompletion()` → `griddepcontrol.launch_dependents`
+- `cudaGridDependencySynchronize()` → `griddepcontrol.wait`
+
+## Host-Side Launch Configuration
+
+```cpp
+cudaLaunchAttribute attr;
+attr.id = cudaLaunchAttributeProgrammaticStreamSerialization;
+attr.val.programmaticStreamSerializationAllowed = 1;
+
+cudaLaunchConfig_t config;
+config.attrs = &attr;
+config.numAttrs = 1;
+// ... set gridDim, blockDim, stream
+
+cudaLaunchKernelExC(&config, (void*)producer_kernel, args);
+// Next kernel on same stream can overlap with producer's tail
+cudaLaunchKernelExC(&config_no_attr, (void*)consumer_kernel, args);
+```
+
+## PDL Mechanics
+
+1. Producer kernel runs normally until it calls `griddepcontrol.launch_dependents`
+2. This signals the GPU scheduler that dependent blocks can start
+3. Consumer kernel's blocks begin scheduling on freed SMs
+4. Producer's remaining blocks continue on their SMs
+5. Consumer calls `griddepcontrol.wait` to ensure producer data is visible
+
+**Key constraint**: ALL blocks in the producer must call `launch_dependents` before the consumer can start. This means the overlap equals `(100% - signal_point%)` of the producer's runtime.
+
+## Compilation Requirements
+
+- Requires `sm_90` or higher target architecture
+- On B300 (sm_103a): nvcc `-arch=native` fails to detect GPU → falls back to sm_75 (incompatible)
+- **NVRTC (QuickRunCUDA)**: auto-detects sm_103a → should compile PDL correctly
+- nvcc workaround: use `-gencode arch=compute_100a,code=compute_100a` for PTX JIT
+
+## Expected Impact for LLM Serving
+
+Without PDL: sequential GEMV kernels have a gap between kernel N finishing and kernel N+1 starting (~2 µs launch overhead per kernel × 640 kernels = 1.3 ms wasted per token).
+
+With PDL: kernel N+1's blocks start arriving on SMs as kernel N's blocks finish. The overlap eliminates the inter-kernel gap for compute-bound phases.
+
+**Estimated savings**: up to ~5% of decode time for long pipeline chains (80 layers × 8 kernels). The benefit grows with the ratio of kernel tail time to total kernel time.
+
+## Status: BLOCKED
+
+PDL benchmarking blocked by CUDA driver corruption (nvidia_uvm stuck from PCI unbind attempt). Requires instance reboot to test. The PDL code compiles correctly via NVRTC for sm_103a.
