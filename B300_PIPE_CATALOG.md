@@ -17976,3 +17976,19 @@ Tested 0 B to 256 MB workspace across 5 shapes (4096³, 8192³, GEMV, batch=128,
 - 4096³: 1830 TFLOPS (73% of 2500 peak)
 - **8192³: 2251 TFLOPS (90% of peak)**
 - **MLP 8192×8192×28672: 2243 TFLOPS (90%)** — rectangular = equally efficient
+
+
+# cuBLAS Transpose Effect: Zero on B300
+
+## Square GEMM (8192³ BF16)
+
+| Mode | TFLOPS | vs NN |
+|------|-------:|------:|
+| NN (A × B) | 2252 | 1.000× |
+| TN (A^T × B) | 2249 | 0.999× |
+| NT (A × B^T) | 2257 | 1.002× |
+| TT (A^T × B^T) | 2258 | 1.003× |
+
+**All four transpose modes give identical performance** within 0.4%. cuBLAS's TMA-based data loading handles all memory layouts equally efficiently on B300.
+
+**Don't pre-transpose matrices for performance** — it wastes memory and adds no speedup. Use whichever layout is natural for your data flow.
