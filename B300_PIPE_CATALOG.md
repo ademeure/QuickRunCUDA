@@ -18616,3 +18616,178 @@ Source files in `tests/`:
 - `cuda_graphs.cu` — Graphs vs Streams
 - `graph_pdl.cu` — combined Graph+PDL
 - `streams3.cu` — multi-stream concurrency
+
+
+# All cudaLaunchAttribute Types on B300
+
+CUDA 13.2 driver supports these `cudaLaunchAttributeID` values (per `driver_types.h`):
+
+| ID | Name | Scope | Use |
+|---:|---|---|---|
+| 1 | AccessPolicyWindow | streams, graph nodes, launches | L2 persisting cache hint |
+| 2 | Cooperative | graph nodes, launches | Cooperative launch (CG) |
+| 3 | SynchronizationPolicy | streams | Stream blocking behavior |
+| 4 | ClusterDimension | graph nodes, launches | CGA cluster size (Hopper+) |
+| 5 | ClusterSchedulingPolicyPreference | graph nodes, launches | Cluster placement |
+| 6 | **ProgrammaticStreamSerialization** | launches | **PDL via stream** |
+| 7 | **ProgrammaticEvent** | launches | **PDL via event (cross-stream)** |
+| 8 | Priority | streams, graph nodes, launches | Per-launch priority |
+| 9 | MemSyncDomainMap | streams, graph nodes, launches | Map domain semantics |
+| 10 | MemSyncDomain | streams, graph nodes, launches | Domain selection |
+| 11 | PreferredClusterDimension | graph nodes, launches | Hint cluster dim |
+| 12 | **LaunchCompletionEvent** | launches | **Event when blocks have started** |
+| 13 | DeviceUpdatableKernelNode | graph nodes only | Runtime device-side update |
+| 14 | PreferredSharedMemoryCarveout | launches | L1/SHMEM split |
+| 16 | NvlinkUtilCentricScheduling | streams, graph nodes, launches | NVLink scheduling hint |
+| 17 | PortableClusterSizeMode | graph nodes, launches | Portable cluster |
+| 18 | SharedMemoryMode | graph nodes, launches | SHMEM mode |
+
+
+# B300 L2 Cache Architecture
+
+| Attribute | Value | Notes |
+|---|---:|---|
+| Total L2 size | **126.5 MB** | 132,644,864 bytes (vs H100's 60 MB) |
+| Max persisting L2 | **79.1 MB** | 82,903,040 bytes |
+| Max access window size | **128 MB** | 134,217,728 bytes |
+
+### L2 Bandwidth vs Workload Size
+
+Sequential reads of N bytes, repeated 8×:
+
+| Window | Time | Bandwidth | In L2? |
+|---:|---:|---:|---|
+| 16 MB | 0.064 ms | **2084 GB/s** | yes |
+| 32 MB | 0.167 ms | 1609 GB/s | yes |
+| 64 MB | 0.356 ms | 1509 GB/s | yes |
+| 79 MB | 0.439 ms | 1508 GB/s | yes |
+| 100 MB | 1.153 ms | 728 GB/s | partial L2 miss |
+| 128 MB | 1.902 ms | 564 GB/s | DRAM-dominated |
+
+**B300 L2 effective bandwidth ~1.5-2 TB/s for L2-resident data.** When workload exceeds 100 MB, L2 hit rate drops sharply and bandwidth converges to DRAM peak (~7 TB/s peak DRAM, ~560 GB/s effective for cold-miss-heavy access).
+
+### AccessPolicyWindow (L2 Persistence Hint)
+
+For pure-read workloads with no L2 contention, AccessPolicyWindow showed NO speedup vs baseline. The mechanism is for situations where multiple kernels share L2 and you want some data to evict-resist others.
+
+```cpp
+cudaLaunchAttribute attr;
+attr.id = cudaLaunchAttributeAccessPolicyWindow;
+attr.val.accessPolicyWindow.base_ptr = d_in;
+attr.val.accessPolicyWindow.num_bytes = win_bytes;
+attr.val.accessPolicyWindow.hitRatio = 1.0f;
+attr.val.accessPolicyWindow.hitProp = cudaAccessPropertyPersisting;
+attr.val.accessPolicyWindow.missProp = cudaAccessPropertyStreaming;
+cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, persist_max);
+```
+
+
+# Memory Sync Domains on B300
+
+`cudaDevAttrMemSyncDomainCount` = **4** on B300.
+
+Per docs: "Memory operations done in kernels launched in different domains are considered system-scope distanced. A GPU-scoped memory synchronization is not sufficient for memory order to be observed by kernels in another memory synchronization domain even if they are on the same GPU."
+
+**Use case**: separate independent workloads that don't need cross-fence sync. Avoids unnecessary system-scope fences.
+
+For pure-compute kernels (no cross-stream memory ordering ops), MemSyncDomain has NO measurable effect. The benefit appears only when kernels do atomic ops or memory writes observed across streams.
+
+```cpp
+cudaLaunchAttributeValue val;
+val.memSyncDomain = cudaLaunchMemSyncDomainRemote;  // 0 = default, 1 = remote
+cudaStreamSetAttribute(stream, cudaLaunchAttributeMemSyncDomain, &val);
+```
+
+
+# LaunchCompletionEvent (Block-Start Signal)
+
+```cpp
+cudaLaunchAttribute attr;
+attr.id = cudaLaunchAttributeLaunchCompletionEvent;
+attr.val.launchCompletionEvent.event = my_event;
+attr.val.launchCompletionEvent.flags = 0;
+```
+
+Per docs: "Nominally triggered once all blocks of the kernel have begun execution. Best-effort. Similar to ProgrammaticEvent with triggerAtBlockStart, but not visible to `cudaGridDependencySynchronize()` and works with CC < 9.0."
+
+| Pattern | Time | Notes |
+|---|---:|---|
+| 2-stream w/ regular `cudaEventRecord` | **0.128 ms** | full producer + consumer time |
+| 2-stream w/ `LaunchCompletionEvent` | **0.068 ms** | producer launch ≈ consumer launch (concurrent on shared SMs) |
+
+**Saves 60 us (47%)** because it signals when blocks START, not when kernel finishes. Consumer can launch immediately and run alongside producer if SMs hold both.
+
+**Cautions**: best-effort means consumer might still wait for producer to complete in resource-constrained scenarios.
+
+
+# Stream MemOps: cuStreamWaitValue / cuStreamWriteValue
+
+B300 supports:
+- 64-bit stream memops: YES
+- WAIT_VALUE_NOR predicate: YES
+- cuStreamBatchMemOp: YES (combine multiple ops in one driver call)
+
+| Sync method | Time |
+|---|---:|
+| `cudaEventRecord` + `cudaStreamWaitEvent` | 0.1276 ms |
+| `cuStreamWriteValue32` + `cuStreamWaitValue32` | 0.1277 ms |
+| `cuStreamBatchMemOp` (write+wait) | 0.1275 ms |
+
+**All three are within noise — equivalent on B300.** StreamValue/BatchMemOp don't beat events on this hardware.
+
+```cpp
+// Atomic flag-based cross-stream sync
+unsigned int *d_flag;
+cudaMalloc(&d_flag, sizeof(unsigned int));
+cudaMemset(d_flag, 0, sizeof(unsigned int));
+
+cuStreamWriteValue32((CUstream)s0, (CUdeviceptr)d_flag, 1, 0);
+cuStreamWaitValue32((CUstream)s1, (CUdeviceptr)d_flag, 1,
+                    CU_STREAM_WAIT_VALUE_GEQ);
+```
+
+
+# Host Callback Overhead
+
+Two APIs available; modern `cudaLaunchHostFunc` is slightly faster.
+
+| API | Per-callback cost (chained) |
+|---|---:|
+| `cudaLaunchHostFunc` | **1.74-1.85 us** |
+| `cudaStreamAddCallback` (legacy) | 1.85-2.22 us |
+
+Single callback latency: ~9 us (dominated by stream sync, not callback itself).
+
+Stream capture cost:
+- 32-kernel chain capture+destroy: 8.7 us
+- 32-kernel + 32-callback capture: 11.3 us (+82 ns/cb during capture)
+
+
+# Per-Thread Default Stream (PTDS) vs Legacy
+
+Compile flag: `--default-stream per-thread` (or `#define CUDA_API_PER_THREAD_DEFAULT_STREAM 1`).
+
+4 host threads, each launching on NULL stream:
+| Build mode | Total time | Effective parallelism |
+|---|---:|---:|
+| Legacy (default) | 2.51 ms | 1× (NULL stream serializes) |
+| Per-thread | 1.14 ms | **2.2× (each thread gets own stream)** |
+
+Single-thread NULL+explicit non-blocking stream: 0.6 ms in both modes (parallel).
+
+**Use PTDS when multiple host threads launch on the implicit default stream.**
+
+
+# Cluster Dimension on B300
+
+`cudaDevAttrClusterLaunch` = 1 (supported on B300, sm_103a).
+
+Cluster sizes 1, 2, 4, 8 all launch successfully on 148-SM grid:
+| Cluster dim | Time | gridDim | Notes |
+|---:|---:|---:|---|
+| 1 | 0.0644 ms | 148 | base |
+| 2 | 0.0645 ms | 148 | |
+| 4 | 0.0666 ms | 148 | slight extra |
+| 8 | 0.0644 ms | 144 | rounds to multiple of cluster |
+
+Cluster + PDL works: ProgrammaticEvent at block-start lets cluster kernel signal cross-stream dependent.
