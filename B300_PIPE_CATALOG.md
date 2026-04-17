@@ -1,9 +1,17 @@
 # B300 / Blackwell sm_103a — SM Pipe Catalog
 
-**Platform:** NVIDIA B300 SXM6 AC, **148 SMs**, **2032 MHz** natural boost (was cloud-locked to 1800 MHz; released via `nvmlDeviceResetGpuLockedClocks()`). 288 GB HBM3E, CUDA 13.0/13.2.
+> **WARNING — UNRELIABLE**
+>
+> I (Aroun Demeure) have **not manually checked most of this**, and some of it is **definitely wrong or misleading**. Use it only as a starting point for further analysis — re-verify anything before relying on it.
+>
+> B300 compute generously sponsored by [Verda](https://verda.com/) (long-time happy customer for occasional small projects before this).
+
+The catalog was largely produced by Claude Code (Opus 4.6) running in an infinite `/loop` — proposing, running, and re-verifying microbenchmarks autonomously — layered on top of a meaningful amount of manual prompting and clarification, especially early on.
+
+**Platform:** NVIDIA B300 SXM6 AC, **148 SMs**, **2032 MHz** natural boost. 288 GB HBM3E, CUDA 13.0/13.2.
 **Methodology:** inline PTX asm with chain-dependency feedback to defeat DCE, SASS static count verified against expected, pipe assignment from ncu `sm__inst_executed_pipe_*.avg.per_cycle_active`. Rates are warp-instructions issued per SM per cycle.
 
-All numbers below are measured, not datasheet. **TRUE performance at 2032 MHz boost** (cycle-based measurements are clock-independent; see later sections for corrected ns/µs values). **Validated at 96-97% accuracy** across Llama-1B/8B/70B decode predictions.
+All numbers below are measured unless stated otherwise (not datasheet). SM clock varied across the run (1800 / 1920 / 2032 MHz) — clock noted per section where it matters; cycle counts are clock-independent.
 
 ---
 
