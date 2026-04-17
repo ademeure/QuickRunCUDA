@@ -16801,3 +16801,45 @@ ld.global.cg.f32  →  CCTL.IVALL (invalidate L1) + LDG.E (load from L2)
 | 4101 lines | ~700 ms | — |
 
 **NVRTC is fast**: 64-700 ms depending on kernel complexity. The ~2s total per QuickRunCUDA run is dominated by CUDA context initialization (cudaInit, buffer allocation), not compilation. Server mode amortizes the init cost.
+
+
+# Global Memory Coalescing Efficiency vs Inter-Thread Stride
+
+148 blocks × 256 threads, 512 MB buffer, scalar (4B) loads, 256 iterations:
+
+| Stride (dwords) | Bytes/warp | Sectors/warp | BW (TB/s) | % of peak | Efficiency |
+|---------------:|----------:|-----------:|----------:|----------:|-----------:|
+| **1** | 128 | 4 | **1.91** | **27%** | 100% |
+| 2 | 256 | 8 | 1.81 | 26% | 50% |
+| **4** | 512 | 16 | **0.76** | **11%** | 25% |
+| 8 | 1024 | 32 | 0.63 | 9% | 12.5% |
+| 16 | 2048 | 64 | 0.43 | 6% | 6.2% |
+| **32** | 4096 | 128 | **0.22** | **3%** | **3.1% (worst)** |
+| 64 | 8192 | 128+ | 0.21 | 3% | 3.1% |
+| 256 | 32768 | — | 0.70 | 10% | (DRAM row recovery) |
+| 1024 | 131072 | — | 1.00 | 14% | (bank parallelism) |
+
+**Stride 1→32: 8.7× bandwidth loss.** Each doubling of stride halves coalescing efficiency. At stride=32 (128B = one cache line per thread), the warp fetches 32× more data than it uses.
+
+**Stride ≥256: partial recovery** from DRAM bank-level parallelism — threads hitting different memory banks get served concurrently.
+
+**Design rules:**
+1. **Always coalesce**: stride-1 is 8.7× faster than stride-32 for the same data volume
+2. **If you must stride**: prefer stride ≥256 (1 KB) over stride 32-64 — DRAM parallelism partially compensates
+3. **Use vectorized loads** (v4 = 16B) to improve per-thread utilization at any stride
+
+
+# Special Float Values: Zero Performance Penalty (Verified)
+
+| Input value | cy/FMA | vs normal |
+|------------|-------:|----------:|
+| Normal (1.0+ε) | 4.06 | 1.00× |
+| **NaN** | **4.06** | **1.00×** |
+| **+Inf** | **4.06** | **1.00×** |
+| **Denorm (smallest)** | **4.05** | **1.00×** |
+| **Zero** | **4.05** | **1.00×** |
+| **Mixed (half NaN, half normal)** | **4.05** | **1.00×** |
+
+**No special-value penalty on B300.** NaN propagation, Inf arithmetic, denormal handling, and zero computation all run at full FMA throughput. Even lane-heterogeneous patterns (half NaN) have zero cost.
+
+This differs from x86 CPUs where denormals can be 10-100× slower. NVIDIA's FMA unit handles all IEEE 754 special cases in hardware at full speed.
