@@ -17061,6 +17061,9 @@ Both static (`__shared__ float s[N]`) and dynamic (`extern __shared__ float d[]`
 | HW reduce (23 cy) | smem tree (212 cy) | **9.2×** |
 | 8+ warps/SM | 1-2 warps/SM | **6× BW** |
 | CUDA graphs | per-kernel launch | **~50×** (for 100 tiny kernels) |
+| `float2` loads | scalar `float` loads | **2.3× BW** |
+| v4 smem loads | v1 smem loads | **1.9× smem BW** |
+| 256-thread CTA | 1024-thread CTA | **2× faster reduce** |
 
 
 # Power Draw per Workload Type (148 SMs × 1024 Threads, NVML Sampled)
