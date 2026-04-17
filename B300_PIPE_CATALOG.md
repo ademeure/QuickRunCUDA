@@ -17043,11 +17043,15 @@ Single warp, no pending stores (minimum fence overhead):
 | L2 load latency | **307 cy** | 8 warps/SM needed to hide |
 | DRAM load latency | **860 cy** | 32 warps/SM for 86% BW |
 | Kernel launch | **2.05 µs** | Graph launch = 1.4 µs |
-| cudaMalloc | **20 ms** | Use cudaMallocAsync (18 µs = 1100×) |
+| cudaMalloc | **20 ms** | Use pool (0.31 µs = **64,500×**) |
+| cudaGetLastError | **0 µs** | Free! Always use for error checking |
 | __syncthreads | **14+2W cy** | W = warps in CTA |
 | __threadfence_block | **~0 cy** | Free! |
 | __threadfence | **269 cy** | 24× vs block |
 | __threadfence_system | **3031 cy** | 268× vs block |
+| Cold start | **2.1 s** | cudaSetDevice = 99% of cost |
+| cuBLAS first call | **36-74 ms** | JIT per shape; warmup at startup |
+| BF16 batch 1→64 | **same 22 µs** | 66× free throughput via batching |
 
 ## What to Use / What to Avoid
 
@@ -17055,7 +17059,7 @@ Single warp, no pending stores (minimum fence overhead):
 |---------|----------|--------:|
 | `__reduce_max_sync` | shuffle butterfly max | **6.5×** |
 | `exp2f(x * 1.44)` | `expf(x)` | **1.17×** |
-| `cudaMallocAsync` | `cudaMalloc` | **1100×** |
+| `cudaMallocAsync` (pool) | `cudaMalloc` | **64,500×** |
 | `tile[32][33]` padding | `tile[32][32]` | **5.8×** (column) |
 | Stride-1 coalesced | Stride-32 scattered | **8.7×** |
 | FP16 conversion | BF16 conversion | **2.4×** |
@@ -17065,6 +17069,10 @@ Single warp, no pending stores (minimum fence overhead):
 | `float2` loads | scalar `float` loads | **2.3× BW** |
 | v4 smem loads | v1 smem loads | **1.9× smem BW** |
 | 256-thread CTA | 1024-thread CTA | **2× faster reduce** |
+| BF16 weights | FP32 weights | **2.1× decode** |
+| Batch ≥16 | Batch 1 | **16× TFLOPS** |
+| Multi-stream | Single stream | **Perfect overlap** |
+| `nvcc -arch=native` | default arch | **Required on B300** |
 
 
 # Power Draw per Workload Type (Sustained, Correctly Compiled)
