@@ -18791,3 +18791,190 @@ Cluster sizes 1, 2, 4, 8 all launch successfully on 148-SM grid:
 | 8 | 0.0644 ms | 144 | rounds to multiple of cluster |
 
 Cluster + PDL works: ProgrammaticEvent at block-start lets cluster kernel signal cross-stream dependent.
+
+
+# B300 Stream Synchronization Policy
+
+`cudaLaunchAttributeSynchronizationPolicy` controls how cudaStreamSynchronize waits.
+
+| Policy | us per kernel+sync | Behavior |
+|---|---:|---|
+| **Spin** | **8.50** | Busy-wait CPU (lowest latency) |
+| Yield | 8.91 | Yield CPU thread to OS |
+| Auto | 9.23 | CUDA chooses |
+| BlockingSync | 10.91 | Sleep CPU thread (lowest CPU) |
+
+**Difference**: ~25% (2.4 us) between fastest (spin) and slowest (blocking). For latency-critical loops, set spin. For background workloads, set blocking to free CPU.
+
+Same can be set device-wide via `cudaSetDeviceFlags(cudaDeviceScheduleSpin/Yield/BlockingSync)`.
+
+
+# Cooperative Kernels: grid.sync() Cost on B300
+
+`cudaLaunchAttributeCooperative=1` enables grid-wide synchronization via `cooperative_groups::this_grid().sync()`. Compares to a kernel re-launch (which provides equivalent semantics):
+
+For 4 phases of 1000 FFMA each:
+| Approach | Time | Per-phase overhead |
+|---|---:|---:|
+| persist_no_sync (single kernel, no syncs) | 0.017 ms | baseline |
+| coop_kernel + grid.sync() | 0.024 ms | **1.82 us** |
+| chain of 4 separate kernels | 0.025 ms | **2.11 us** |
+
+For 32 phases:
+| Approach | Time | Per-phase |
+|---|---:|---:|
+| persist_no_sync | 0.081 ms | baseline |
+| coop + grid.sync() | 0.193 ms | 3.51 us |
+| 32-kernel chain | 0.183 ms | 3.19 us |
+
+**Cooperative grid.sync() ≈ kernel re-launch in cost.** Cooperative wins for ≤8 syncs (lower overhead per sync), kernel chain wins for ≥16 syncs (better amortization). Cooperative requires all blocks to fit on GPU at once (148 blocks × 128 thr = 18,944 threads — easy).
+
+
+# Cluster Scheduling Policy
+
+`cudaLaunchAttributeClusterSchedulingPolicyPreference` chooses placement:
+- `Default` — driver chooses
+- `Spread` — spread cluster blocks across SMs (better load balance)
+- `LoadBalancing` — let HW balance
+
+For pure compute (148 blocks × 128 thr × 5000 iter):
+| Cluster | Default | Spread | LoadBalancing |
+|---:|---:|---:|---:|
+| 2 | 0.0644 | 0.0641 | 0.0640 |
+| 4 | 0.0642 | 0.0652 | 0.0639 |
+| 8 | 0.0641 | 0.0647 | 0.0665 |
+
+Within noise — for compute-only workloads, scheduling policy doesn't matter. Likely matters for cluster-shared (DSMEM) workloads where co-residency affects bandwidth.
+
+
+# B300 Architecture Probe (full property dump)
+
+```
+Name:                         NVIDIA B300 SXM6 AC
+Compute Capability:           10.3 (sm_103a)
+SMs:                          148
+Boost Clock:                  2032 MHz
+Memory Clock:                 3996 MHz × 2 = 7992 MT/s
+Memory Bus Width:             7680 bits (= 12 HBM3E stacks × 1024-bit minus margins)
+Total Global Mem:             267.7 GB (288 GB raw, ~20 GB ECC overhead)
+L2 Cache:                     132,644,864 bytes = 126.5 MB
+Max Persisting L2:            82,903,040 bytes = 79.1 MB
+Max Access Policy Window:     134,217,728 bytes = 128 MB
+Shared Mem per SM:            233,472 bytes = 228 KB
+Shared Mem per Block (def):   49,152 bytes = 48 KB
+Shared Mem per Block (opt-in):232,448 bytes = 227 KB (full SM minus reserved)
+Reserved Shared per Block:    1,024 bytes
+Registers per SM:             65,536
+Registers per Block:          65,536 (one block can use entire SM register file)
+Max Threads per Block:        1,024
+Max Threads per SM:           2,048 (= 64 warps)
+Max Blocks per SM:            32
+Warp Size:                    32
+Async Engines:                4 (concurrent H2D/D2H/peer copies)
+Concurrent Kernels (legacy):  1   ← misleading; true HW concurrent slot count = 128
+Stream Priorities:            6 levels (-5 to 0)
+Cluster Launch:               YES
+Cooperative Launch:           YES
+Mem Sync Domain Count:        4
+IPC Event Support:            YES
+Memory Pools (cudaMallocAsync): YES
+GPU Direct RDMA:              YES
+Compute Preemption:           YES
+ECC:                          enabled
+Single→Double Perf Ratio:     64 (FP32 is 64× FP64)
+Max Grid Dim X:               2,147,483,647 (2^31 - 1)
+Max Grid Dim Y, Z:            65,535
+Max Block Dim X, Y:           1,024
+Max Block Dim Z:              64
+```
+
+
+# Async Copy Engines (4 on B300)
+
+Despite 4 async engines, observed PCIe Gen5 x16 bandwidth caps the throughput.
+
+| N streams parallel | Total time | Aggregate BW |
+|---:|---:|---:|
+| 1 | 1.170 ms | 57.3 GB/s |
+| 2 | 1.176 ms | 57.1 GB/s |
+| 4 | 1.185 ms | 56.6 GB/s |
+| 8 | 1.196 ms | 56.1 GB/s |
+
+**Single direction maxes ~57 GB/s = 90% of PCIe Gen5 x16 theoretical (63 GB/s).** Multiple async engines DO enable bidirectional overlap:
+- H2D alone: 57.3 GB/s
+- D2H alone: 57.0 GB/s
+- H2D + half-D2H concurrent: saves 0.56 ms vs serial (overlap works)
+
+
+# Memory Pool: cudaMallocAsync Speed
+
+| API | us per call (4KB) | vs cudaMalloc |
+|---|---:|---:|
+| `cudaMallocAsync` | 0.42 | **160× faster** |
+| `cudaFreeAsync` | 0.21 | |
+| `cudaMalloc + cudaFree` (sync) | 68.2 | baseline (slow) |
+
+**Pool allocation is 160× faster than `cudaMalloc`.** Memory pools (default pool always available) should be used for all hot-path allocations. `cudaMalloc` should be reserved for one-time setup.
+
+
+# Multi-GPU NVLink Performance (2× B300, NVLink v7)
+
+Tested: GPU 0 ↔ GPU 1 via NVSwitch.
+
+### cudaMemcpyPeer Bandwidth
+| Transfer | Time | Bandwidth |
+|---:|---:|---:|
+| 1 KB | 0.008 ms | 0.1 GB/s (latency-bound) |
+| 64 KB | 0.008 ms | 7.7 GB/s |
+| 1 MB | 0.010 ms | 110 GB/s |
+| 16 MB | 0.031 ms | 536 GB/s |
+| 64 MB | 0.098 ms | 688 GB/s |
+| 256 MB | 0.355 ms | **757 GB/s** |
+
+### Bidirectional
+| Mode | Time | Aggregate BW |
+|---|---:|---:|
+| Unidirectional 256 MB | 0.355 ms | 757 GB/s |
+| Bidirectional 256 MB each way | 0.357 ms | **1503 GB/s (2.0×)** |
+
+**Perfect 2× scaling** — NVLink can do full-bandwidth in both directions simultaneously.
+
+### Kernel-Side P2P Access (vs DMA)
+| Operation | Bandwidth | Notes |
+|---|---:|---|
+| Local read (GPU 0 → GPU 0 HBM) | 1035 GB/s | DRAM-bound |
+| Remote read (GPU 0 reads GPU 1) | **286 GB/s** | NVLink, kernel LDG |
+| Remote write (GPU 0 writes GPU 1) | **346 GB/s** | NVLink, kernel STG |
+| Remote atomicAdd | **16.7 Gatomic/s** | Saturates NVLink atomic units |
+
+**Kernel-side P2P is ~38% of cudaMemcpyPeer bandwidth.** Use copy engines for bulk transfers; use kernel access for fine-grained sharing.
+
+### Latency
+- Min P2P transfer time: ~8 us (any size <64 KB)
+- This includes: launch + NVLink setup + DMA dispatch
+
+
+# Critical Memory Allocation Hierarchy (all measurements)
+
+| Operation | Cost | When to use |
+|---|---:|---|
+| `cudaMallocAsync` (pool) | **0.42 us** | hot path |
+| `cudaFreeAsync` | 0.21 us | hot path |
+| `cudaStreamCreate` | 14.9 us | startup |
+| `cudaStreamDestroy` | 4.5 us | shutdown |
+| `cudaEventCreate` | ~3 us | startup |
+| `cudaMalloc` | 20+ ms | startup ONLY |
+| `cudaFree` | 20+ ms | startup ONLY |
+| Graph capture (32 kernels) | 8.7 us | one-time |
+| Graph instantiate | 21.7 us | one-time |
+| Graph launch (after instantiate) | 0.3-0.5 us | hot path |
+
+
+# Conditional Graph Nodes (CUDA 12.3+)
+
+`cudaGraphNodeTypeConditional` = 13. B300 supports IF and WHILE conditional bodies.
+
+API changed in CUDA 13: `cudaGraphAddNode` now requires `cudaGraphEdgeData`. Use NVRTC or new typed APIs (cudaGraphAddKernelNode unchanged).
+
+Capability confirmed via header: `CU_GRAPH_NODE_TYPE_CONDITIONAL` exists.
+
