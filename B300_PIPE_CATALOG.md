@@ -16629,3 +16629,19 @@ FMA and ALU pipes run on separate back-ends but share the front-end warp schedul
 **CTA tree reduction** includes 3× __syncthreads (~84 cy) + smem operations + warp shuffle tail. The barrier overhead is ~23% of total cost.
 
 **Warp softmax** at 349 cy matches the earlier 229 cy/tile + global memory interaction overhead. The expf (~40 cy with range checks) and 10× shuffle operations dominate.
+
+
+# cp.async Pipeline Depth (LDGSTS.E, 4B per transfer)
+
+| Batch size | cy/cp.async | Speedup | Pipeline efficiency |
+|----------:|----------:|--------:|--------------------:|
+| 1 (serial) | 877 | 1.0× | Latency-bound |
+| 4 | 227 | 3.9× | 97% |
+| 8 | 120 | 7.3× | 91% |
+| **16** | **66** | **13.3×** | **83% (near-saturated)** |
+
+**cp.async pipeline depth ≥ 16.** Batching 16 `cp.async.ca.shared.global` operations before `cp.async.wait_all` gives 13.3× throughput vs serial execution.
+
+**Serial cp.async = 877 cy** (DRAM round-trip dominates). Pipelining amortizes the latency: at 16-deep, effective per-op cost is 66 cy — the LSU pipe issues one cp.async per ~4 cy but the memory system takes ~877 cy to complete each, so 877/66 ≈ 13 in-flight at steady state.
+
+**Practical**: For GEMM prologue tile loading, always batch ≥8 cp.async per mbarrier group (or use TMA bulk-copy which handles pipelining internally). Serial cp.async is 13× slower than pipelined.
