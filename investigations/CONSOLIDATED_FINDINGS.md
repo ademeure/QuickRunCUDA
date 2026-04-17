@@ -80,6 +80,15 @@ Clock context: B300 SXM6 AC defaults to 2032 MHz boost, but `nvidia-smi -lgc 203
 - Scope ordering has negligible effect on DRAM-bound throughput
 - "2.7× coalescing speedup" claim was actually L2 residency effect
 
+### L2 Peak Bandwidth (Agent 06) — RESOLVED
+- **L2 read peak: 17 TB/s chip-wide** (`.cg` L1-bypass, full occupancy)
+- With `.ca` hint at WS ≤ 4 MB: up to 20 TB/s (L1 contributes)
+- Per-SM rate: 113 GB/s/SM × 148 = 16.7 TB/s theoretical (= measured)
+- **L2 hit BW ≈ L2-as-conduit-to-DRAM BW** — same ~17 TB/s either way
+- TLP-critical: 128 thr/SM=4.7 TB/s → 1024 thr/SM=17.8 TB/s
+- ncu cross-check: 18.1 TB/s (with 5% ncu overhead)
+- Catalog's "22-26 TB/s" not reproducible; "30 TB/s" was L1-dominated (`.ca` @ 1 MB WS); "36 TB/s" was actually SHMEM
+
 ### DSMEM (Agent 04) — RESOLVED
 - **Local SMEM latency: 28 cy/load** (dependent chain, single warp)
 - **DSMEM latency: 201-224 cy/load** = **7-8× slower** than local SMEM
