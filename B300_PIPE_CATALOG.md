@@ -17941,3 +17941,26 @@ M=1 (decode), K=128 (head_dim), batched across heads:
 **L2 cliff at seq=4096**: KV cache (134 MB) exceeds L2 capacity (126 MB) → 34% bandwidth drop. **For long-context inference beyond 2048 tokens**: attention becomes bandwidth-limited by L2 overflow. Flash Attention mitigates this via tiled computation.
 
 **Llama-70B attention cost** (64 heads, ctx=1024): 7.2 µs/layer × 80 layers = 0.58 ms = **2.4% of decode time**. Attention is negligible at short contexts.
+
+
+# Decode Throughput vs Context Length (Llama-70B BF16, Batch=1)
+
+| Context | Attention | GEMV | Layer | tok/s | Attn % |
+|--------:|----------:|-----:|------:|------:|-------:|
+| 128 | 0.3 µs | 172 µs | 183 µs | **69** | 0.2% |
+| 1024 | 2.2 µs | 172 µs | 184 µs | 68 | 1.2% |
+| 4096 | 8.7 µs | 172 µs | 191 µs | 65 | 4.6% |
+| 16384 | 34.7 µs | 172 µs | 217 µs | 58 | 16% |
+| **32768** | **69 µs** | **172 µs** | **252 µs** | **50** | **28%** |
+| 65536 | 139 µs | 172 µs | 321 µs | 39 | 43% |
+| **131072** | **277 µs** | **172 µs** | **459 µs** | **27** | **60%** |
+
+**GEMV (weight loading) is constant at 172 µs.** Attention scales linearly with context length (KV cache read from HBM).
+
+**Context length scaling:**
+- **≤4K**: attention < 5% of decode → context is free
+- **4K-32K**: moderate degradation (6-28%) → GQA helps
+- **>32K**: attention dominates → Flash Attention critical
+- **128K**: throughput halved (27 vs 69 tok/s at ctx=128)
+
+**Attention crossover at ~80K tokens** — where KV cache read time equals weight loading time. Beyond this, the model transitions from GEMV-bound to attention-bound.
