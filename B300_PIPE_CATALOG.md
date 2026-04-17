@@ -17011,3 +17011,53 @@ Single warp, no pending stores (minimum fence overhead):
 **Theoretical crossover**: peak_FLOPS / peak_BW = 38 TFLOPS / 7 TB/s = **5.4 FLOP/byte** for an optimized kernel with full ILP. The higher practical crossover (~8-16) is from the serial dep chain limiting compute throughput.
 
 **Practical**: For LLM inference at batch=1, all GEMVs have AI < 1 → completely memory-bound. Only at batch ≥ 128 do GEMMs cross into compute-bound territory (AI ≈ 128 for large square GEMMs).
+
+
+# nvcc clock64 Disabled on This Cloud Host
+
+`clock64()` returns 0 in nvcc-compiled standalone binaries on this cloud B300. NVRTC-compiled kernels (via QuickRunCUDA's CUDA driver API path) have working clock counters. This is likely a **cloud provider isolation measure** — clock access may require specific driver context flags that NVRTC sets but standalone nvcc doesn't.
+
+**Workaround**: Use NVRTC or CUDA events for timing on cloud B300s. All measurements in this catalog use NVRTC-compiled kernels with working clock64.
+
+
+# Dynamic vs Static Shared Memory: Zero Difference (Architectural)
+
+Both static (`__shared__ float s[N]`) and dynamic (`extern __shared__ float d[]`) shared memory map to the **same physical L1/smem hardware**. The only difference:
+- **Static**: base address known at compile time → SASS uses absolute `STS/LDS` offsets
+- **Dynamic**: base pointer passed via launch config → SASS adds a register-held offset
+
+**The per-access cost is identical** (both are `ld.shared`/`st.shared` at 24 cy latency). Dynamic smem adds ~1 IADD for the base-pointer offset computation, which is co-issued with the load/store for free (different pipe). **No measurable performance difference.**
+
+
+# ═══ B300 OPTIMIZATION CHEAT SHEET ═══
+
+## The Single Most Important Number Per Category
+
+| What | Value | Why it matters |
+|------|------:|---------------|
+| FMA latency | **4 cy** | 2 chains saturates pipe |
+| MUFU (exp/log) latency | **24 cy** | 3 chains to saturate; all other pipes hide in MUFU shadow |
+| Shuffle latency | **26 cy** | 13 chains to saturate; deepest pipeline |
+| Smem load latency | **24 cy** | Same as MUFU; limits producer-consumer |
+| L2 load latency | **307 cy** | 8 warps/SM needed to hide |
+| DRAM load latency | **860 cy** | 32 warps/SM for 86% BW |
+| Kernel launch | **2.05 µs** | Graph launch = 1.4 µs |
+| cudaMalloc | **20 ms** | Use cudaMallocAsync (18 µs = 1100×) |
+| __syncthreads | **14+2W cy** | W = warps in CTA |
+| __threadfence_block | **~0 cy** | Free! |
+| __threadfence | **269 cy** | 24× vs block |
+| __threadfence_system | **3031 cy** | 268× vs block |
+
+## What to Use / What to Avoid
+
+| Do this | Not this | Speedup |
+|---------|----------|--------:|
+| `__reduce_max_sync` | shuffle butterfly max | **6.5×** |
+| `exp2f(x * 1.44)` | `expf(x)` | **1.17×** |
+| `cudaMallocAsync` | `cudaMalloc` | **1100×** |
+| `tile[32][33]` padding | `tile[32][32]` | **5.8×** (column) |
+| Stride-1 coalesced | Stride-32 scattered | **8.7×** |
+| FP16 conversion | BF16 conversion | **2.4×** |
+| HW reduce (23 cy) | smem tree (212 cy) | **9.2×** |
+| 8+ warps/SM | 1-2 warps/SM | **6× BW** |
+| CUDA graphs | per-kernel launch | **~50×** (for 100 tiny kernels) |
