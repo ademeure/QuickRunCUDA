@@ -17799,3 +17799,22 @@ Larger matrices have longer weight-loading time, but the compute per batch eleme
 **Launch cost = 2.05 µs regardless of grid size** — a 1-thread and 151K-thread kernel have identical dispatch overhead. The cost is purely CPU-side driver interaction.
 
 **Multi-stream dispatch saves 14%** — the driver overlaps CPU-side work across streams. For serving with many kernels, use 4 streams in round-robin for marginal speedup.
+
+
+# CUDA Stream Priority: NO Kernel Preemption
+
+B300 supports 6 priority levels (-5 highest to 0 lowest).
+
+| Scenario | Time | Analysis |
+|----------|-----:|---------|
+| High-prio alone (1 SM, 10% work) | 22 ms | Baseline |
+| **High-prio + low-prio background** | **488 ms** | **Waited for low-prio to finish!** |
+| Equal-prio (co-scheduled) | 28 ms | Small kernel fits on spare SM |
+
+**Stream priorities do NOT enable kernel preemption.** A high-priority kernel must wait for SMs to become available. If all 148 SMs are occupied by low-priority blocks with 1024 threads (filling all warp slots), the high-priority kernel waits for the ENTIRE low-priority kernel to complete.
+
+**For latency-sensitive serving:**
+- Don't rely on stream priorities for preemption
+- Use partial-SM kernels (leave some SMs free for urgent requests)
+- Use persistent kernels with cooperative work scheduling
+- Use CUDA MPS or green contexts for resource partitioning
