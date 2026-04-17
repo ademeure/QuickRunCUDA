@@ -19060,3 +19060,179 @@ Extrapolating to a real LLM (Llama 70B, 80 layers × 8 kernels = 640 kernels per
 - Savings = 640 × 2.4 us = **1.5 ms per token**
 - At 100 tok/s: 0.15 ms wasted per second per stream
 
+
+
+# B300 NVLink P2P Kernel Bandwidth: DEEP Investigation
+
+Original test reported only 286 GB/s — turns out that was thread-count limited. Full sweep reveals **kernel-side P2P matches DMA bandwidth (~755 GB/s)** with the right config.
+
+### Scalar LDG (4-byte) — blocks × threads sweep (GB/s)
+
+| blocks ↓ \ threads → | 32 | 64 | 128 | 256 | 512 | 1024 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 37 | 9 | 18 | 37 | 74 | 146 | 286 |
+| 74 | 18 | 37 | 74 | 146 | 286 | 551 |
+| 148 | 37 | 74 | 146 | **286** | 552 | **718** |
+| 296 | 74 | 146 | 286 | 553 | 719 | 747 |
+| 592 | 146 | 286 | 552 | 714 | 746 | 743 |
+| 1184 | 286 | 551 | 720 | 748 | 743 | **747** |
+
+**Original 148×256 = 286 GB/s was thread-limited.** Need ≥75K total threads to saturate.
+
+### float4 (LDG.128) — same sweep (GB/s)
+
+| blocks ↓ \ threads → | 32 | 64 | 128 | 256 | 512 | 1024 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 37 | 37 | 73 | 144 | 283 | 541 | 722 |
+| 74 | 73 | 144 | 283 | 542 | 729 | 748 |
+| 148 | 144 | 283 | 541 | 723 | 747 | 746 |
+| 296 | 283 | 543 | 727 | **749** | 744 | 752 |
+| 592 | 543 | 724 | 747 | 744 | 754 | 753 |
+| 1184 | 724 | 748 | 746 | 755 | 754 | **755** |
+
+**Vector loads saturate faster** (only need 75K threads). Each LDG.128 = 4× more bytes per request = 4× fewer requests for same throughput.
+
+### ILP4 (4 outstanding loads/thread)
+
+Doesn't help further over float4 — already at ceiling. With float4 + ILP1, NVLink request queue is already saturated.
+
+### Reference: Local HBM bandwidth (GPU 0 reads its own HBM)
+
+| Kernel | BW |
+|---|---:|
+| scalar local | 3432 GB/s |
+| float4 local | 5752 GB/s |
+| float4 ILP4 local | **5789 GB/s** (= 5.8 TB/s, ~75% of HBM3E peak) |
+
+**NVLink is ~13% of local HBM bandwidth** (755 vs 5789 GB/s).
+
+### Cache Hint Effect (296×512, scalar)
+
+| Hint | BW |
+|---|---:|
+| default (`ld.global` = `.ca`) | **718 GB/s** |
+| `.cg` (skip L1 cache) | **305 GB/s** ← 2.4× SLOWER |
+
+**`.cg` cache hint is COUNTERPRODUCTIVE on NVLink reads.** The L1/prefetch logic is what enables saturating NVLink BW. Use default `ld.global` (which is `.ca` = cache-all by default).
+
+### Recommendation
+
+**For NVLink P2P kernel access**:
+1. Use `float4` (LDG.128) when possible (4× fewer requests)
+2. Threads × blocks ≥ 75,000 (= 296 SMs × 256 thr or equivalent)
+3. NEVER use `.cg` cache hint — relies on L1 prefetch
+4. Each SM contributes ~5 GB/s — need many SMs to saturate
+
+Result: **kernel-side P2P matches cudaMemcpyPeer DMA at 755 GB/s**.
+
+
+# Driver-Reserved 1 KiB Shared Memory: Complete Analysis
+
+`reservedSharedMemPerBlock = 1024` bytes on B300.
+
+### Layout
+
+```
+Per-block shared memory address space:
+  [0x000 .. 0x3FF]   ← DRIVER RESERVED 1024 bytes
+  [0x400 .. user_end] ← user static __shared__ then dynamic shared
+```
+
+Confirmed via PTX address probe:
+```
+__shared__ int st_buf[64];   // address: 0x500 (= 0x400 + 0x100 nope, observed 0x400)
+extern __shared__ int dyn[]; // address: 0x500 (after st_buf)
+```
+**User shared memory starts at offset 1024.** The driver reserves the first 1024 bytes.
+
+### Per-Block, Not Per-SM
+
+Each block instance gets its own 1024 reserved bytes. With N blocks per SM:
+- Total shmem used = N × (user_per_block + 1024)
+- Available = `sharedMemPerMultiprocessor` = 233,472 bytes
+- Max blocks = 233472 / (user + 1024)
+
+### Occupancy Examples (256 thr/block, B300)
+
+| User dyn shmem | Per-block (incl. reserved) | Max blocks/SM (shmem-bound) | Actual (occupancy API) |
+|---:|---:|---:|---:|
+| 0 | 1024 | 228 | 8 (thread-bound: 2048/256) |
+| 1024 | 2048 | 114 | 8 |
+| 32768 | 33792 | 6 | 6 |
+| 49152 | 50176 | 4 | 4 |
+| 65536 | 66560 | 3 | 3 (after opt-in) |
+| 100000 | 101024 | 2 | 2 |
+| 232448 (max opt-in) | 233472 | 1 | 1 |
+
+### Contents at Kernel Start
+
+Dumped first 256 words (1 KiB) at kernel start: **ALL ZEROS** for both:
+- Simple kernel
+- Cluster (`__cluster_dims__(2,1,1)`) kernel
+
+The reserved space is **allocated but not always populated**. It's used opportunistically by:
+- `cluster.sync()` — cluster barrier state (mbarrier-based)
+- `cooperative_groups::memcpy_async()` — async copy descriptors
+- `mbarrier.init/arrive/wait` — mbarrier objects
+- TMA descriptors when copied into shmem
+- `griddepcontrol` operations (possibly)
+
+### Can User Code Reclaim It?
+
+**Officially**: NO. `__shared__` declarations always start at offset 1024.
+
+**Theoretically**: YES via raw PTX with hardcoded offsets. But:
+- Will conflict with any runtime operation that uses cluster/mbarrier/TMA
+- Compiler doesn't know about your data there
+- Compiler may insert async-copy / mbarrier code that overwrites it
+- NOT safe for production code
+
+**Effective wisdom**: treat the 1 KiB as gone. Design kernels assuming `sharedMemPerBlock - 0 = 49152` (default) or `sharedMemPerBlockOptin = 232448` is your usable limit.
+
+### Hardware Architecture View
+
+The 1 KiB serves as **HW-reserved shmem for runtime metadata**. Allocated at block dispatch time so the SM has a fixed location for its scratch. It's NOT optional and is part of the SM-side block resource provision — like register file allocation, it's reserved upfront whether used or not.
+
+### Comparison Across Architectures (memory)
+
+| Arch | Reserved per block | Per-SM total | Max user opt-in |
+|---|---:|---:|---:|
+| sm_70 (Volta V100) | 0 | 96 KB | 96 KB |
+| sm_80 (Ampere A100) | 0 | 164 KB | 163 KB |
+| sm_86 (Ampere RTX) | 0 | 100 KB | 99 KB |
+| sm_90 (Hopper H100) | 1024 | 228 KB | 227 KB |
+| **sm_103 (Blackwell B300)** | **1024** | **228 KB** | **227 KB** |
+
+Reservation introduced at sm_90 (Hopper) to support cluster/mbarrier/TMA features. Same reservation on Blackwell.
+
+
+
+# Can the Compiler Indirectly Reclaim the Reserved 1 KiB?
+
+**Answer: NO.** Tested all paths:
+
+| Mechanism | Result |
+|---|---|
+| ptxas with `__shared__ char buf[233472]` | **COMPILE FAIL**: `Entry function uses too much shared data (0x39000 bytes, 0x38c00 max)` |
+| `cudaFuncSetAttribute(MaxDynShmem, 233472)` | **`invalid argument`** |
+| `cudaFuncSetAttribute(MaxDynShmem, 232449)` | **`invalid argument`** |
+| Launch with `dyn = 233472` | **`invalid argument`** |
+| Launch with `dyn = 232448` | OK (= max user) |
+
+The **232,448-byte ceiling is HARD-CODED into ptxas** and CUDA runtime checks. ptxas does NOT analyze "this kernel doesn't use cluster/mbarrier/TMA, so the 1 KiB is unused, so I'll let user have it." The compiler enforces the limit unconditionally.
+
+### Why the strict limit?
+
+1. **Runtime can inject operations**: the driver may emit `griddepcontrol`/`mbarrier`/etc. operations even for kernels that don't explicitly use them (e.g., PDL launches, async copy promotion).
+2. **HW block resource accounting**: the SM allocates fixed-size scratch at block dispatch; cannot decide post-launch.
+3. **Forward compatibility**: future toolchain versions may need the space for new features without recompiling.
+
+### Practical implication
+
+If your kernel needs more than 232,448 bytes per block, you literally cannot have it. You must:
+- Split work across multiple blocks (cluster shared memory: DSMEM gives access to OTHER blocks' shmem)
+- Use global memory + L2 caching for large scratch
+- Restructure to fit
+
+DSMEM (cluster shared memory) effectively pools shmem across blocks in a cluster. With cluster=2, you have 2 × 232,448 = 464,896 user bytes addressable from one block (with constraints).
+
