@@ -16684,3 +16684,21 @@ FMA and ALU pipes run on separate back-ends but share the front-end warp schedul
 | `cudaStreamCreate` + `Destroy` | 3.77 µs |
 
 **For serving**: the critical API costs are kernel launch (2.05 µs) and stream sync (1.26 µs). Memory allocation must use async pools. Event-based timing adds 7.35 µs overhead per measurement point.
+
+
+# Multi-Pipe Co-Issue: Quantified (Single Warp)
+
+| Pipes active | cy/iter | vs FMA-only | Overhead |
+|-------------|--------:|------------:|---------:|
+| FMA×2 | 4.1 | 1.00× | baseline |
+| **FMA + ALU** | **4.1** | **1.00×** | **0 cy (FREE)** |
+| **FMA + ALU + LSU** | **4.8** | **1.17×** | **+0.7 cy** |
+| FMA + ALU + MUFU | 23.8 | 5.80× | MUFU dominates |
+| **FMA + ALU + MUFU + LSU** | **24.2** | **5.90×** | **+0.4 cy over MUFU** |
+
+**FMA, ALU, and smem-load co-issue essentially for free** — the warp scheduler dispatches to all 3 back-ends within 1-2 extra cycles. The total is limited by the LONGEST-latency operation:
+
+- **Without MUFU**: FMA latency (4 cy) determines the pace. ALU and LSU ride for free.
+- **With MUFU**: MUFU latency (24 cy) determines the pace. FMA, ALU, and LSU ALL hide in its shadow.
+
+**Practical**: For kernels with `expf`/`logf`/`rsqrt`, the MUFU ops are the critical path. All surrounding FMA, integer, and smem operations are essentially free. Optimize by minimizing MUFU count, not FMA/ALU count.
