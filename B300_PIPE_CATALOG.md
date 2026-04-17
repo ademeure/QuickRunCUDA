@@ -19537,3 +19537,91 @@ B300 architecture:
 - shmem_steal_negative.cu, shmem_steal_pdl_only.cu, shmem_steal_cluster.cu
 - nvtx_test.cu, dyn_par.cu, launch_latency.cu, tma_test.cu
 
+
+
+# Additional B300 Microbenchmarks (Session Continuation)
+
+### L1 Cache (single SM)
+
+| Working set | Default BW | `.ca` BW | `.cg` BW |
+|---:|---:|---:|---:|
+| 1-32 KB | 6.7-28.9 GB/s | same | 4-6 GB/s |
+| 64-128 KB | 30+ GB/s | same | 6 GB/s |
+| 256+ KB (DRAM) | 16→6 GB/s | same | 6 GB/s |
+
+**`.cg` cache hint always hits L2/DRAM** (skips L1) → 5-6 GB/s constant. **Default load uses L1 effectively** for working sets ≤32 KB.
+
+### Constant Memory
+
+| Access pattern | BW |
+|---|---:|
+| Uniform broadcast (1024 floats) | **25 TB/s aggregate** |
+| Divergent (each thread different) | 600 GB/s (40× slower) |
+
+**Total const mem: 64 KB.** Effective CMEM cache: ~4 KB. Beyond, falls to L1/L2.
+
+### Warp Scheduler / FFMA Latency
+
+| Threads/block | Warps | Cycles for 1000 FFMA | Cy/iter |
+|---:|---:|---:|---:|
+| 1 | 1 | 23,105 | 23.1 |
+| 32 | 1 | 23,560 | 23.6 |
+| 64 | 2 | 23,375 | 11.7 |
+| 128 | 4 | 23,389 | 5.85 |
+| 256 | 8 | 23,383 | 2.92 |
+| 512 | 16 | 24,504 | 1.53 |
+| 1024 | 32 | 35,858 | 1.12 |
+
+**B300 FFMA latency: ~23 cycles**. To fully hide, need ~8 warps per partition (= 32 warps per SM in chain). Beyond 16 warps/scheduler, FFMA pipe contention (1 inst/cy/scheduler peak).
+
+### Precision Throughput (latency-bound, ILP=1)
+
+| Type | TFLOPS |
+|---|---:|
+| FP32 FFMA | 3.06 |
+| FP64 DFMA | 1.01 (1/3 of FP32) |
+| FP16x2 HFMA | 6.65 (2× FP32) |
+| BF16x2 BFFMA | 6.65 (2× FP32) |
+| INT32 MAD | 3.32 (similar pipe) |
+
+### Peak FP32 (ILP=8, 8 warps/SM)
+
+| Config | TFLOPS |
+|---|---:|
+| ILP=8, 4 warps/SM | 26.4 |
+| ILP=8, 8 warps/SM | **52.2** (68% of theoretical 77) |
+
+To approach 77 TFLOPS theoretical, need higher ILP and full 32+ warps per SM.
+
+### Atomic Throughput
+
+| Pattern | Throughput |
+|---|---:|
+| Local (shmem) atomic, all-contend | **134 Gatomic/s** |
+| Global atomic, no contention | **273 Gatomic/s** |
+| Global atomic, ALL threads same addr | 49 Gatomic/s |
+| Global atomic, per-warp (32-way contend) | **14 Gatomic/s** (90% slowdown!) |
+
+### Bank Conflicts (single warp, 1000 iters with anti-hoist)
+
+| Pattern | Cycles per iter |
+|---|---:|
+| Broadcast (all read same word) | 40 |
+| No conflict (each thread own bank) | 46 |
+| 2-way conflict | 53 |
+| 32-way conflict | **117** (2.5× no conflict, +2.3 cy per extra serialized) |
+
+### Verified Clock Frequency (under FFMA load)
+
+`globaltimer / clock64` → **2032 MHz** (confirms reported), validated with 1M iter measurement.
+
+### Async Copy (cg::memcpy_async)
+
+| Per-block transfer | sync BW | async BW | speedup |
+|---:|---:|---:|---:|
+| 1 KB | 19.1 GB/s | 19.5 GB/s | 1.02× |
+| 4 KB | 69.8 GB/s | 70.7 GB/s | 1.01× |
+| 16 KB | 226.6 GB/s | **287 GB/s** | **1.27×** |
+
+Async copy wins for ≥16 KB/block transfers; small transfers are launch-overhead-bound.
+
