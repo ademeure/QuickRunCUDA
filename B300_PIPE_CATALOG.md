@@ -19625,3 +19625,80 @@ To approach 77 TFLOPS theoretical, need higher ILP and full 32+ warps per SM.
 
 Async copy wins for ≥16 KB/block transfers; small transfers are launch-overhead-bound.
 
+
+
+# ⚠️ CORRECTIONS / RE-MEASUREMENTS (post-audit)
+
+After auditing earlier session findings, several need correction or qualification. See `AUDIT_NOTES.md` for full reliability ratings.
+
+### SHMEM peak bandwidth — CORRECTED
+
+| Original | Re-measured (`tests/shmem_peak.cu`) |
+|---|---|
+| Local SMEM read 4500 GB/s aggregate | **19.85 TB/s aggregate, 134 GB/s/SM** (52% of theoretical 38.5 TB/s) |
+
+Earlier number was loop-overhead-dominated. New test does 8 reads/iter with register accumulators + unconditional write.
+
+Theoretical SHMEM peak = 32 banks × 4 bytes/cy × 2.032 GHz × 148 SMs = **38.5 TB/s**.
+
+### Tensor core mma.sync — RE-FRAMED
+
+| Original | Corrected |
+|---|---|
+| "Tensor cores work! 514 TFLOPS BF16" | "mma.sync m16n8k16 BF16 PEAK = 544 TFLOPS — this is the LEGACY tensor core path" |
+
+**This is NOT B300's full tensor capability.** B300 spec'd dense BF16 throughput is **~1980 TFLOPS via `tcgen05.mma`** (Blackwell-only path using TMEM). My mma.sync at 544 TFLOPS = ~28% of full B300 BF16 peak.
+
+To get peak BF16 throughput on B300, you need:
+- `tcgen05.mma` instructions (sm_100+/sm_103) with TMEM-resident matrices
+- OR Hopper-style `wgmma.mma_async` (sm_90+) with shared memory descriptors and mbarrier coordination
+- Both require complex setup (matrix descriptors, async coordination, TMEM allocation for tcgen05)
+
+### FP32 peak — UPDATED
+
+| Iteration | TFLOPS | % of theoretical |
+|---|---:|---:|
+| ILP=8, 8 warps/SM (`tests/peak_ilp.cu`) | 52.2 | 68% |
+| **ILP=16, 64 warps/SM (`tests/fp32_peak2.cu`)** | **58.6** | **76.2%** |
+| Theoretical (4×32×1×2 ops/SM × 148 × 2.032 GHz) | 76.96 | 100% |
+
+The 76% achievement at max occupancy is likely near practical FFMA peak for B300 (limited by register file bandwidth or scheduler).
+
+### L2 stride access — CORRECTED accounting
+
+The "fetched GB/s × 8 sectors" multiplier in `l2_cacheline.cu` was WRONG for coalesced 32-thread access:
+- 32 threads × 4 bytes = 128 bytes/access = exactly 1 cache line / 4 sectors  
+- No waste — fetched ≈ useful
+
+Real numbers:
+- stride=4: **1426 GB/s effective** (correct as-is, no multiplier needed)
+- For full L2 BW saturation, need parallel SMs all reading L2 simultaneously
+
+### 7.6 PB/s in early shmem_test — INVALID
+
+`tests/shmem_test.cu` reported impossible 7.6 PB/s for SHMEM at iters=100k. Compiler eliminated the loop body. **Disregard.**
+
+### NVTX "0 ns" — BELOW NOISE FLOOR
+
+The ~0 ns measurement for `nvtxMark` is below `std::chrono::nanoseconds` resolution. Treat as "negligible (<10 ns)". Conclusion ("essentially free without profiler") still HIGH-confidence.
+
+### Stream concurrency — USE streams3.cu
+
+`tests/streams_explore.cu` had broken event timing (events on default stream while kernels on other streams). Use `tests/streams3.cu` instead. Numbers in main catalog (88x at 128, 116x peak) are from streams3 — those are correct.
+
+### P2P kernel BW — CORRECTED earlier this session
+
+| Original | Corrected |
+|---|---|
+| 286 GB/s (148×256 thread-limited) | **755 GB/s with float4 + 75K threads** (matches DMA) |
+
+Both versions documented; corrected supersedes.
+
+### DSMEM bandwidth — UNDER-SATURATED but ratio robust
+
+`tests/dsmem_v2.cu`: 1000 GB/s remote, 4500 GB/s local. Both far below SHMEM theoretical peak (38.5 TB/s). Likely test under-utilizes load BW. **Relative ratio (4.7× slower for DSMEM) is robust** — but absolute numbers are not at hardware peak.
+
+### Concurrent kernel limit 128 — pre-session, NOT re-verified
+
+This claim from prior session catalog ("concurrent kernel limit = 128 HW slots, not 148 SMs") was cited but not re-tested in this session. Trust it on git-history basis (commit 579e4f0).
+
