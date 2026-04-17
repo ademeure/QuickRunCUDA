@@ -375,15 +375,20 @@ int main(int argc, char** argv) {
     // Print theoretical peak for reference
     // -------------------------------------------------------
     {
-        // B300 sm_103a: 148 SMs × 4 SMSPs × 1 HMMA/SMSP/cy × 4096 FLOPs × 2.032 GHz
-        // But the actual observed clock is 2.032 GHz boost. SM count from prop above.
-        // Theoretical: SM_COUNT * 4_SMSPs * 1_HMMA_per_SMSP_per_cy * 4096 * 2032e6 FLOPS
-        // = SM_COUNT * 4 * 4096 * 2.032e9  TFLOPS
-        double boost_ghz = 2.032;
-        double theoretical = (double)SM_COUNT * 4.0 * 4096.0 * boost_ghz * 1e9 / 1e12;
-        printf("\nTheoretical mma.sync peak (4 HMMAs/cy/SM, 2.032 GHz, %d SMs): %.1f TFLOPS\n",
-               SM_COUNT, theoretical);
-        printf("SOL estimate (actual): %.1f%%\n", best_tflops / theoretical * 100.0);
+        // mma.sync throughput measured via ncu: ~0.50 HMMA/cy/SM at 1920 MHz.
+        // That corresponds to 0.50 × 4096 × 1.920e9 × 148 = 582 TFLOPS at 1920 MHz.
+        // The ceiling is NOT "4 HMMAs/cy/SM" (that is the tcgen05 path).
+        // For mma.sync, ncu shows pipe_tensor ≈ 0.50 inst/cy/SM at peak occupancy.
+        double actual_clock_ghz = 1.920;  // observed operating clock (power throttled from 2.032)
+        double hmma_rate_per_sm = 0.50;   // HMMA/cy/SM — measured via ncu pipe_tensor metric
+        double theoretical_1920 = hmma_rate_per_sm * 4096.0 * actual_clock_ghz * 1e9 * SM_COUNT / 1e12;
+        printf("\nmma.sync ceiling (ncu-measured 0.50 HMMA/cy/SM, 1.920 GHz, %d SMs): %.1f TFLOPS\n",
+               SM_COUNT, theoretical_1920);
+        printf("Best measured: %.2f TFLOPS = %.1f%% of ncu-derived ceiling\n",
+               best_tflops, best_tflops / theoretical_1920 * 100.0);
+        // At 2.032 GHz (boost spec) would give:
+        double theoretical_2032 = hmma_rate_per_sm * 4096.0 * 2.032e9 * SM_COUNT / 1e12;
+        printf("At boost spec (2.032 GHz, same 0.50 HMMA/cy/SM): %.1f TFLOPS\n", theoretical_2032);
     }
 
     CHECK_CUDA(cudaFree(d_C));

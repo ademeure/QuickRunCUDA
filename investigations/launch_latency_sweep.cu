@@ -571,7 +571,7 @@ int main() {
     printf("Device: %s\n", prop.name);
     printf("SM count: %d\n", prop.multiProcessorCount);
     printf("Compute cap: %d.%d\n", prop.major, prop.minor);
-    printf("Clock rate: %.0f MHz\n", prop.clockRate / 1000.0f);
+    // clockRate removed in CUDA 13+ for sm_103 devices
     printf("\n");
 
     // Create a default stream
