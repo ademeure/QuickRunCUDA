@@ -17964,3 +17964,15 @@ M=1 (decode), K=128 (head_dim), batched across heads:
 - **128K**: throughput halved (27 vs 69 tok/s at ctx=128)
 
 **Attention crossover at ~80K tokens** — where KV cache read time equals weight loading time. Beyond this, the model transitions from GEMV-bound to attention-bound.
+
+
+# cuBLAS Workspace: Zero Effect on BF16 GEMM
+
+Tested 0 B to 256 MB workspace across 5 shapes (4096³, 8192³, GEMV, batch=128, MLP):
+
+**All shapes show <0.6% variation.** cuBLAS selects workspace-free algorithms for all tested BF16 GEMMs. Don't allocate workspace — save the GPU memory for weights and KV cache.
+
+**Updated peak BF16 TFLOPS** (per-GEMM, not sustained):
+- 4096³: 1830 TFLOPS (73% of 2500 peak)
+- **8192³: 2251 TFLOPS (90% of peak)**
+- **MLP 8192×8192×28672: 2243 TFLOPS (90%)** — rectangular = equally efficient
