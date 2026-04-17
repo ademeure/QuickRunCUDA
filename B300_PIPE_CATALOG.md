@@ -17479,3 +17479,29 @@ The M=1→2 algorithm switch explains the batch scaling discontinuity: batch=1 a
 **`__match_all_sync` is always cheap (5 cy)** — it only checks if ALL values are equal, which is a simple AND-reduction.
 
 **Design rule**: Use `__match_any_sync` only when the expected distinct value count is ≤4-8. For hash tables with high-diversity keys, use shared memory or ballot-based approaches instead.
+
+
+# Precision vs Throughput: Definitive Comparison (4096×4096 GEMM)
+
+| Precision | Input | Accumulate | Latency | TFLOPS | vs FP32 |
+|-----------|-------|-----------|--------:|-------:|--------:|
+| FP32 (PEDANTIC) | FP32 | FP32 | 2089 µs | 65.8 | 1.0× |
+| FP32 (DEFAULT/TF32) | FP32 | FP32 | 2089 µs | 65.8 | 1.0× |
+| **FP16** | FP16 | FP16 | **76.8 µs** | **1790** | **27.2×** |
+| **BF16** | BF16 | **FP32** | **76.1 µs** | **1806** | **27.5×** |
+| INT8 | INT8 | INT32 | 1862 µs | 73.8 | 1.1× |
+
+**Key findings:**
+
+1. **FP16 = BF16 for throughput** (1790 vs 1806 TFLOPS = identical within 1%). Choose based on numeric range, not speed. BF16's FP32 accumulator doesn't cost any performance.
+
+2. **27× speedup from FP32 → BF16/FP16** — the tensor core advantage. At 4096² shape, this translates to 2089→76 µs.
+
+3. **INT8 is deliberately throttled on B300** (73.8 TOPS ≈ same as FP32). B300 is NOT an INT8 accelerator — use FP8 (E4M3/E5M2) instead for quantized inference.
+
+4. **FP32 DEFAULT = FP32 PEDANTIC** at this shape — cuBLAS uses the same kernel for both on B300. TF32 tensor acceleration doesn't appear to provide additional speedup at 4096² (may activate at larger shapes).
+
+**Published B300 peaks for reference:**
+- BF16 tensor: 2,500 TFLOPS (we achieve 72% at 4096²)
+- FP8 tensor: 5,000 TFLOPS (not measured — requires cublasLt FP8 descriptors)
+- FP4 tensor: 10,000 TFLOPS (not measured)
