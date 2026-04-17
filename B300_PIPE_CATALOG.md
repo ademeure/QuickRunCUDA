@@ -16950,3 +16950,22 @@ Single warp, no pending stores (minimum fence overhead):
 **65.8 TFLOPS at N=4096** uses TF32 tensor cores (cuBLAS default math mode enables TF32 for FP32 inputs). Pure non-tensor FP32 peak is ~38 TFLOPS.
 
 **For LLM serving at batch=1**: the per-layer GEMMs are GEMV (M=1), not GEMM — entirely memory-bound, not compute-bound. This SGEMM table applies to prefill (M=seq_len) and batched decode (M=batch_size).
+
+
+# Warp Reduction: Head-to-Head Method Comparison (32→1, Dep Chain)
+
+| Method | cy/reduce | vs best | Recommendation |
+|--------|----------:|--------:|----------------|
+| **`__reduce_max_sync`** (HW) | **23** | **1.0×** | **Best for max/min** |
+| `__reduce_add_sync` (HW, INT32) | 47 | 2.0× | Best for int sum |
+| `__shfl_xor_sync` butterfly | 150 | 6.5× | **Best for FP32 sum** (no HW alt) |
+| `__shfl_down_sync` sequential | 150 | 6.5× | Same as butterfly |
+| **Shared memory tree** | **212** | **9.2×** | **NEVER use for warp-level** |
+
+**Rankings:**
+1. HW reduce intrinsics (23-47 cy) > shuffle (150 cy) > smem tree (212 cy)
+2. Butterfly and shfl_down produce **identical** SASS and timing
+3. Smem tree is 42% slower than shuffle due to STS+LDS+syncwarp overhead per step
+4. No HW FP32 sum exists — shuffle butterfly is the only option for float addition
+
+**Practical**: Replace all warp-level max/min with `__reduce_max/min_sync` for 6.5× speedup. For FP32 sum, stick with shuffle butterfly. Never use smem for warp-only reductions.
