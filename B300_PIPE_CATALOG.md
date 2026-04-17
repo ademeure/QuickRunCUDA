@@ -17020,13 +17020,14 @@ Single warp, no pending stores (minimum fence overhead):
 **Fix**: Always compile with `nvcc -arch=native` on B300. With correct arch, clock64 and all kernel features work normally. NVRTC (QuickRunCUDA) auto-detects the arch and is unaffected.
 
 
-# Dynamic vs Static Shared Memory: Zero Difference (Architectural)
+# Dynamic vs Static Shared Memory: Zero Difference (MEASURED)
 
-Both static (`__shared__ float s[N]`) and dynamic (`extern __shared__ float d[]`) shared memory map to the **same physical L1/smem hardware**. The only difference:
-- **Static**: base address known at compile time → SASS uses absolute `STS/LDS` offsets
-- **Dynamic**: base pointer passed via launch config → SASS adds a register-held offset
+| Allocation | cy/iter (STS+syncwarp+LDS+FADD) | Difference |
+|------------|--------------------------------:|----------:|
+| **Static** (`__shared__ float s[256]`) | **47.0** | baseline |
+| **Dynamic** (`extern __shared__ float d[]`) | **47.0** | **0.00%** |
 
-**The per-access cost is identical** (both are `ld.shared`/`st.shared` at 24 cy latency). Dynamic smem adds ~1 IADD for the base-pointer offset computation, which is co-issued with the load/store for free (different pipe). **No measurable performance difference.**
+**Measured with nvcc `-arch=native`, 100K iterations, clock64 timing.** Dynamic and static shared memory produce identical performance down to 1 cycle over 4.7M total. The hardware path is the same — only the base pointer computation differs (co-issued for free).
 
 
 # ═══ B300 OPTIMIZATION CHEAT SHEET ═══
@@ -17572,3 +17573,17 @@ The M=1→2 algorithm switch explains the batch scaling discontinuity: batch=1 a
 ## nvcc Compilation Note
 
 nvcc on this cloud B300 REQUIRES `-arch=native` (or `-arch=sm_100a`). Without explicit arch, nvcc targets a default SM that is incompatible with sm_103a — kernels silently fail with "unsupported toolchain" error and return zero output. NVRTC (QuickRunCUDA) auto-detects the correct arch.
+
+
+# CUDA Error Checking Overhead
+
+| Method | us/launch | Overhead |
+|--------|----------:|---------:|
+| No check (launch only) | 2.05 | baseline |
+| **`cudaGetLastError()`** | **2.05** | **+0.00 (FREE)** |
+| **`cudaPeekAtLastError()`** | **2.05** | **+0.00 (FREE)** |
+| `cudaDeviceSynchronize()` | 7.43 | +5.38 |
+
+**Error checking is free.** `cudaGetLastError` and `cudaPeekAtLastError` read a thread-local variable — no GPU interaction. Use them liberally in production code.
+
+**`cudaDeviceSynchronize` costs 5.38 µs** (GPU→CPU sync round-trip). Avoid in tight loops. In production, check errors asynchronously via `cudaGetLastError` after each launch, and only sync at pipeline boundaries.
