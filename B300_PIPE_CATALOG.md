@@ -16473,3 +16473,21 @@ Single warp, 65536 iterations with dependency chain:
 3. **SM saturates at ~1 HW reduce-min/cy** with 32 warps. The CREDUX pipe is the bottleneck.
 4. **No HW inclusive scan exists** — shuffle-based at 150 cy is unavoidable for prefix sums (critical path in online softmax).
 5. Per-warp latency is constant up to 16 warps. At 32 warps: +30-41% degradation from pipe saturation.
+
+
+# Online Softmax Cost Breakdown (Flash Attention Building Blocks)
+
+Per-tile cost for online softmax (single warp, 32 elements per tile, dep chain):
+
+| Step | cy/tile | Cumulative | Key ops |
+|------|--------:|-----------:|---------|
+| Max reduce only | 28 | 28 | CREDUX.MAX.F32 |
+| + rescale (`expf` + FMA) | 32 | 60 | MUFU.EX2 + FFMA |
+| + warp sum (shuffle tree) | **169** | **229** | 5× SHFL.XOR + FADD |
+| + normalize (div) | — | — | FMUL (by reciprocal) |
+
+**The shuffle-based warp sum is the dominant cost** — 74% of the total. No HW FP32 sum exists (`redux.sync.add` is INT32 only). The only HW FP32 reductions are min/max via `CREDUX.MIN/MAX.F32`.
+
+**Optimization**: for the max step, `__reduce_max_sync` with `__float_as_int` trick gives correct results for positive floats (28 cy). For negative floats, use `redux.sync.max.f32` via PTX asm.
+
+**Flash attention implication**: with 64-tile sequence at 229 cy/tile = ~15K cy per head, online softmax is significant but typically masked by Q×K^T HMMA overlap. The shuffle sum (150 cy) is the bottleneck that prevents full overlap — it serializes the dependency chain between tiles.
