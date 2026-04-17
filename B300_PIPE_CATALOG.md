@@ -17177,3 +17177,41 @@ The `__syncthreads()` cost at each smem stage depends on the **total CTA size** 
 - Smem v4 read: **37.7 TB/s** (5.4× HBM)
 - Global read: **7.0 TB/s** (HBM peak)
 - The 5.4× smem advantage is why tiled algorithms (GEMM, convolution) copy data to smem.
+
+
+# cuBLAS GEMV Latency for LLM Decode (Batch=1, 2032 MHz)
+
+## FP32 GEMV (cublasSgemv)
+
+| Shape (N×K) | Weight MB | Latency | Eff BW (TB/s) | % of 7 TB/s |
+|-------------|-------:|--------:|--------:|--------:|
+| 1024×4096 | 17 | 7.8 µs | 2.15 | 31% (launch-limited) |
+| 4096×4096 | 67 | 16.6 µs | 4.03 | 58% |
+| 8192×8192 | 268 | 61.5 µs | 4.36 | 62% |
+| 8192×28672 | 940 | 189 µs | 4.96 | 71% |
+
+## BF16 GEMV (cublasGemmEx, CUDA_R_16BF)
+
+| Shape (N×K) | Weight MB | Latency | Eff BW (TB/s) | % of 7 TB/s |
+|-------------|-------:|--------:|--------:|--------:|
+| 4096×4096 | 34 | 7.3 µs | 4.59 | 66% |
+| 4096×11008 | 90 | 13.2 µs | 6.81 | 97% |
+| **11008×4096** | **90** | **12.5 µs** | **7.21** | **103%** |
+| 8192×8192 | 134 | 22.6 µs | 5.94 | 85% |
+
+**BF16 GEMV reaches 100% of HBM peak** at the right shape (90 MB weights, fits in L2). FP32 tops out at 71%.
+
+**BF16 is 2.1× faster than FP32** for same shape — purely from halving weight data volume. Both are entirely memory-bound (AI < 0.01).
+
+## Llama-70B BF16 single-GPU decode estimate
+
+| Layer component | GEMV shape | µs | Count/layer |
+|----------------|-----------|----:|-----:|
+| Q/K/V/O projections | 8192×8192 | 22.6 | 4 |
+| Gate/Up | 8192×28672 | ~45 | 2 |
+| Down | 28672×8192 | ~45 | 1 |
+| **Per-layer total** | | **~225 µs** | |
+| **80 layers** | | **~18 ms** | |
+| **Decode throughput** | | **~56 tok/s** | |
+
+Includes only GEMV time. Real throughput ~40 tok/s (measured in catalog) due to attention, RMSNorm, and KV cache overhead (~30% of total).
