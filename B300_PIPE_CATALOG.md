@@ -17783,3 +17783,19 @@ Scope: 4 cy FMA → 7 TB/s HBM → 1806 TFLOPS → $0.36/Mtok
 - 469 MB weights (8192×28672): free up to batch=8-16
 
 Larger matrices have longer weight-loading time, but the compute per batch element also scales. The "free" range depends on AI = 2×M×N×K / (weight_bytes): compute is free when AI < HBM_BW / tensor_TFLOPS ≈ 7/1806 ≈ 0.004 FLOP/byte.
+
+
+# Kernel Launch Overhead: Detailed Breakdown
+
+| Configuration | us/launch | Notes |
+|--------------|----------:|-------|
+| Async launch (1×1) | **2.05** | CPU-side dispatch cost |
+| Async launch (148×1024) | **2.05** | **Grid size irrelevant** |
+| Async on non-default stream | 2.05 | Stream selection = free |
+| **4-stream round-robin** | **1.76** | **14% cheaper** (driver pipelines) |
+| Launch + cudaDeviceSync | 7.09 | +5.04 µs for GPU→CPU ack |
+| Launch + cudaEventSync | 7.35 | Slightly more than DeviceSync |
+
+**Launch cost = 2.05 µs regardless of grid size** — a 1-thread and 151K-thread kernel have identical dispatch overhead. The cost is purely CPU-side driver interaction.
+
+**Multi-stream dispatch saves 14%** — the driver overlaps CPU-side work across streams. For serving with many kernels, use 4 streams in round-robin for marginal speedup.
