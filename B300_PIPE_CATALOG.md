@@ -18197,3 +18197,19 @@ After hours of sustained benchmarking (hundreds of kernel launches, thermal cycl
 | Temperature | 41°C | 42°C | -1°C |
 
 **B300 delivers perfectly stable performance** over extended operation. No thermal drift, no driver fatigue, no degradation. Production deployments need zero concern about performance decay over time.
+
+
+# cudaMemset Throughput Curve (HBM Write Peak)
+
+| Size | Latency | GB/s | Regime |
+|-----:|--------:|-----:|--------|
+| 256 B | 1.4 µs | 0 | Overhead (1.4 µs floor) |
+| 64 KB | 2.1 µs | 32 | Overhead |
+| 1 MB | 2.6 µs | 402 | Overhead |
+| 4 MB | 4.1 µs | 1016 | Transitioning |
+| 64 MB | 12.6 µs | 5312 | Near-peak |
+| **1 GB** | **145.7 µs** | **7371** | **Peak: 7.37 TB/s** |
+
+**cudaMemset = 7.37 TB/s** — the true HBM write bandwidth (write-only, optimal write-combining). This is 5% higher than streaming read (7.0 TB/s) because memset has no read-modify-write overhead.
+
+**Dispatch floor = 1.4 µs** (lighter than cudaMemcpyAsync's 2.4 µs). Saturates at ~256 MB.
