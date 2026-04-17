@@ -48,6 +48,19 @@ Clock context: B300 SXM6 AC defaults to 2032 MHz boost, but `nvidia-smi -lgc 203
 - Real noop kernel runtime: 3-4 ns (inside event overhead)
 - "2.05 µs invariant" catalog claim was event-floor behavior only, not true across grid sizes
 
+### FP64 DFMA
+- **Peak: 1.20 TFLOPS at 2032 MHz** (Agent 14; FP32/64 ratio = 64, matches 76.96/64 = 1.203)
+- **Zero-pipelined per warp**: 64 cy spacing between DFMA issues, despite 16-cy FP64 pipe depth (25% util per warp)
+- **Need 4 warps/SM** to saturate (not more ILP — ILP doesn't help DFMA)
+- Each SMSP has 1 FP64 unit
+
+### Fence costs (Cycles per fence, single warp)
+- `fence.sc.cta`: **8 cy** (catalog's 14-29 was loop-mixed; isolated fence ~8)
+- `fence.sc.gpu`: **277 cy**
+- `fence.sc.sys`: **2883 cy**
+- `fence.acq_rel.cta`: 9 cy
+- `fence.acq_rel.gpu`: 271 cy (~sc.gpu)
+
 ### Atomic operations (cy per atomic, per-thread addresses, 2032 MHz)
 | Operation | smem.cta | smem.cluster | smem.gpu | smem.sys | gmem.cta | gmem.cluster | gmem.gpu | gmem.sys |
 |---|--:|--:|--:|--:|--:|--:|--:|--:|
