@@ -1,93 +1,80 @@
-// Math function throughput on B300 (MUFU and friends)
+// Math intrinsic throughput: rsqrt, sqrt, sin, cos, exp, log, ex2, lg2
 #include <cuda_runtime.h>
-#include <cmath>
 #include <cstdio>
-#include <chrono>
 
-#define ITERS 50000
-#define ILP 8
-
-#define BENCH_FUNC(NAME, FN) \
-extern "C" __global__ void k_##NAME(float *in, float *out) { \
-    float a[ILP]; \
-    for (int i = 0; i < ILP; i++) a[i] = in[i]; \
-    _Pragma("unroll 1") \
-    for (int i = 0; i < ITERS; i++) { \
-        _Pragma("unroll") \
-        for (int j = 0; j < ILP; j++) a[j] = FN(a[j]) + 0.5f; \
-    } \
-    if (threadIdx.x == 0) { \
-        float s = 0; \
-        for (int i = 0; i < ILP; i++) s += a[i]; \
-        out[blockIdx.x] = s; \
-    } \
+template<typename Op>
+__global__ void run_op(float *out, int iters, Op op) {
+    float a = 1.0f + threadIdx.x * 0.001f;
+    float b = 1.5f + threadIdx.x * 0.0001f;
+    float c = 2.0f + threadIdx.x * 0.0002f;
+    float d = 2.5f + threadIdx.x * 0.0003f;
+    for (int i = 0; i < iters; i++) {
+        a = op(a); b = op(b); c = op(c); d = op(d);
+    }
+    if (a + b + c + d < -1e30f) out[blockIdx.x*blockDim.x + threadIdx.x] = a+b+c+d;
 }
-
-BENCH_FUNC(sqrt, sqrtf)
-BENCH_FUNC(rsqrt, rsqrtf)
-BENCH_FUNC(rcp, __frcp_rn)
-BENCH_FUNC(sin, __sinf)
-BENCH_FUNC(cos, __cosf)
-BENCH_FUNC(tan, __tanf)
-BENCH_FUNC(exp, __expf)
-BENCH_FUNC(log, __logf)
-BENCH_FUNC(exp2, exp2f)
-BENCH_FUNC(log2, log2f)
 
 int main() {
     cudaSetDevice(0);
-    cudaDeviceProp prop; cudaGetDeviceProperties(&prop, 0);
-    int sm = prop.multiProcessorCount;
+    float *d_out; cudaMalloc(&d_out, 148*256*sizeof(float));
+    cudaEvent_t e0, e1; cudaEventCreate(&e0); cudaEventCreate(&e1);
 
-    float *d_in, *d_out;
-    cudaMalloc(&d_in, 16 * sizeof(float));
-    cudaMalloc(&d_out, sm * sizeof(float));
+    int iters = 100000;
+    int blocks = 148, threads = 128;
+    long total_ops = (long)blocks * threads * iters * 4;  // 4 chains
 
-    float h_in[16];
-    for (int i = 0; i < 16; i++) h_in[i] = 0.5f + i * 0.1f;
-    cudaMemcpy(d_in, h_in, 16 * sizeof(float), cudaMemcpyHostToDevice);
-
-    cudaStream_t s; cudaStreamCreate(&s);
-
-    auto bench = [&](auto fn, int trials=10) {
-        for (int i = 0; i < 2; i++) { fn(); cudaDeviceSynchronize(); }
+    auto bench = [&](auto launch, const char *name) {
+        for (int i = 0; i < 3; i++) launch();
+        cudaDeviceSynchronize();
         float best = 1e30f;
-        for (int i = 0; i < trials; i++) {
-            auto t0 = std::chrono::high_resolution_clock::now();
-            fn();
-            cudaDeviceSynchronize();
-            auto t1 = std::chrono::high_resolution_clock::now();
-            float ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
+        for (int i = 0; i < 3; i++) {
+            cudaEventRecord(e0);
+            launch();
+            cudaEventRecord(e1);
+            cudaEventSynchronize(e1);
+            float ms; cudaEventElapsedTime(&ms, e0, e1);
             if (ms < best) best = ms;
         }
-        return best;
+        double gops = total_ops / (best/1000.0) / 1e9;
+        printf("  %-15s %8.3f ms  %8.1f Gops/s  ratio_to_FMA=%.2fx\n",
+               name, best, gops, gops);
     };
 
-    auto run = [&](const char *name, void (*fn_ptr)(float*, float*)) {
-        float t = bench([&]{
-            fn_ptr<<<sm, 128, 0, s>>>(d_in, d_out);
-        });
-        long long ops = (long long)sm * 128 * ITERS * ILP;
-        double tops = (double)ops / (t/1e3) / 1e12;
-        printf("  %-12s : %.3f ms, %.2f Gops/s aggregate (%.2f Gops/s/SM)\n",
-               name, t, tops*1e3, tops*1e3/sm);
-    };
+    printf("# B300 math throughput (4 ILP chains, 128 thr/block, 148 blocks)\n");
+    printf("# All measurements: G float-ops per second\n\n");
 
-    printf("# B300 math function throughput\n");
-    printf("# 148 blocks × 128 threads × ILP=%d × %d iters\n\n", ILP, ITERS);
+    bench([&]{ run_op<<<blocks, threads>>>(d_out, iters,
+        [] __device__ (float x) { return x * 1.0001f + 0.0001f; }); }, "FMA(baseline)");
 
-    run("sqrtf", k_sqrt);
-    run("rsqrtf", k_rsqrt);
-    run("__frcp_rn", k_rcp);
-    run("__sinf", k_sin);
-    run("__cosf", k_cos);
-    run("__tanf", k_tan);
-    run("__expf", k_exp);
-    run("__logf", k_log);
-    run("exp2f", k_exp2);
-    run("log2f", k_log2);
+    bench([&]{ run_op<<<blocks, threads>>>(d_out, iters,
+        [] __device__ (float x) { return __frsqrt_rn(x); }); }, "rsqrt");
 
-    cudaStreamDestroy(s);
-    cudaFree(d_in); cudaFree(d_out);
+    bench([&]{ run_op<<<blocks, threads>>>(d_out, iters,
+        [] __device__ (float x) { return sqrtf(x); }); }, "sqrt");
+
+    bench([&]{ run_op<<<blocks, threads>>>(d_out, iters,
+        [] __device__ (float x) { return __sinf(x); }); }, "sin (intrin)");
+
+    bench([&]{ run_op<<<blocks, threads>>>(d_out, iters,
+        [] __device__ (float x) { return __cosf(x); }); }, "cos (intrin)");
+
+    bench([&]{ run_op<<<blocks, threads>>>(d_out, iters,
+        [] __device__ (float x) { return __expf(x); }); }, "exp (intrin)");
+
+    bench([&]{ run_op<<<blocks, threads>>>(d_out, iters,
+        [] __device__ (float x) { return __logf(x); }); }, "log (intrin)");
+
+    bench([&]{ run_op<<<blocks, threads>>>(d_out, iters,
+        [] __device__ (float x) { return exp2f(x); }); }, "exp2");
+
+    bench([&]{ run_op<<<blocks, threads>>>(d_out, iters,
+        [] __device__ (float x) { return log2f(x); }); }, "log2");
+
+    bench([&]{ run_op<<<blocks, threads>>>(d_out, iters,
+        [] __device__ (float x) { return tanhf(x); }); }, "tanhf");
+
+    bench([&]{ run_op<<<blocks, threads>>>(d_out, iters,
+        [] __device__ (float x) { return 1.0f / x; }); }, "div");
+
     return 0;
 }
