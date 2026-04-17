@@ -4,21 +4,25 @@
 //   B300_PIPE_CATALOG §30.H: "only 0.8% slower than local SMEM"
 //   AUDIT_NOTES / dsmem_v2.cu:  "4.7× slower"
 //
-// ROOT CAUSE OF CONTRADICTION:
-//   §30.H: The XOR-accumulator loop read from a FIXED address each iteration
-//   (remote_addr + threadIdx.x*4 — constant per thread).  The compiler could
-//   perform LICM: load once before the loop, then XOR in a tight constant loop.
-//   The measured ~23 cy/iter is the XOR + loop overhead, NOT the load latency.
-//   dsmem_v2: used wall-clock / bandwidth approach with a single-thread FADD
-//   accumulator, which serializes loads through an FP dependency chain, measuring
-//   latency not throughput.  But more critically, dsmem_v2.cu compiles its SMEM
-//   init at compile time (rank*1000+i is partially constant), enabling DCE.
+// ROOT CAUSE (confirmed in SASS):
+//   §30.H: bench_dsmem.cu loop body contains only XOR+counter+branch.
+//   The LDS R3,[R8+UR5] (DSMEM load) appears BEFORE the loop — ptxas hoisted it.
+//   So the measured ~23 cy/iter = loop overhead (XOR + branch), NOT load latency.
+//   Same LICM happened for the local SMEM variant. Both showed ~23 cy because
+//   both measured loop overhead.
 //
-// THIS TEST: constructs a dependent pointer chain where EACH load's result
-//   feeds the ADDRESS of the next load.  The compiler cannot hoist, reorder,
-//   or eliminate any load.  Verified in SASS: LDS R0,[R0] for local SMEM.
-//   DSMEM uses the exact PTX pattern from bench_dsmem.cu (which was validated
-//   correct in §30.H validation table) but with the dependent-chain structure.
+//   dsmem_v2: wall-clock, FADD chain → latency-bound, single-threaded, and
+//   init values were partially compile-time-computable → DCE risk.
+//
+// THIS TEST: dependent pointer chain where the load INDEX is derived from the
+//   previous load's result. The mapa is computed ONCE (peer_smem_base as uniform
+//   register), then each iteration: LDS cur, [cur*4 + peer_smem_base].
+//   Compiler cannot hoist the load because its result feeds the next address.
+//
+// SASS verification:
+//   lat_local:  LDS R0, [R0]  — R0 = next index * 4 + smem_base (compact)
+//   lat_dsmem2: LDS R0, [R0+UR5]  — R0 = offset, UR5 = peer_smem_base (mapa'd)
+//   This is the correct DSMEM instruction emitted by ptxas.
 //
 // Compile: nvcc -arch=sm_103a -O3 -o dsmem_definitive investigations/dsmem_definitive.cu
 // Prereq:  nvidia-smi -lgc 2032 -i 0
@@ -36,107 +40,186 @@
     } \
 } while(0)
 
-// ─── Configuration ────────────────────────────────────────────────────────────
-static const int SMEM_WORDS  = 512;    // 2 KB smem (512 × u32)
-static const int LAT_ITERS   = 1024;   // serial loads for latency
-static const int TP_ITERS    = 512;    // iterations per independent chain
-static const int ILP         = 8;      // parallel independent chains
+// ─── Config ──────────────────────────────────────────────────────────────────
+static const int SMEM_WORDS = 512;   // 2 KB smem (512 × u32)
+static const int LAT_ITERS  = 1024;  // loads in serial dependent chain
+static const int TP_ITERS   = 512;   // iterations per independent chain
+static const int ILP        = 8;     // parallel chains for throughput
+
+// Dynamic shared memory alias
+extern __shared__ unsigned smem_dyn[];
+
+// ─── Init helper ─────────────────────────────────────────────────────────────
+// Fill smem with runtime-computed "next pointer" values in [0, SMEM_WORDS).
+// seed is a runtime kernel arg → values cannot be computed at compile time.
+__device__ __forceinline__
+void init_smem(unsigned* smem, int tid, int seed, unsigned salt)
+{
+    if (tid < SMEM_WORDS) {
+        unsigned v  = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ salt;
+        // Store a BYTE OFFSET (multiple of 4) so "cur" is directly a byte offset
+        smem[tid] = ((v >> 5) & (unsigned)(SMEM_WORDS - 1u)) << 2;
+    }
+    __syncthreads();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LATENCY KERNELS — single warp (tid<32), dependent pointer chain
-// LAT: each load's result is the index for the next load.
-//   smem[i] = runtime-computed value in [0, SMEM_WORDS)
-//   cur = smem[cur & (SMEM_WORDS-1)]  →  address depends on previous value
-// DSMEM kernels: cluster.sync() BEFORE the clock start.
+//
+// KEY DESIGN:
+//   - `cur` is a BYTE OFFSET into smem (not a word index)
+//   - `smem[cur/4]` stores another byte offset in [0, SMEM_WORDS)*4
+//   - Local load:  LDS cur, [smem_base + cur]  → cur = *(smem_base + cur)
+//   - DSMEM load:  LDS cur, [cur + peer_base]  → cur = *(peer_base + cur)
+//     where peer_base = mapa(smem_base, target_cta) — hoisted to uniform reg
+//   - Each iteration cur (the byte offset) changes, so no LICM possible
+//
+// SASS expected for local:  LDS R0, [R0]   (R0 holds full addr = base+cur)
+// SASS expected for DSMEM:  LDS R0, [R0+UR5]  (R0=cur offset, UR5=peer base)
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── LOCAL SMEM latency (cluster=1) ───────────────────────────────────────────
-extern __shared__ unsigned smem_dyn[];
-
 __global__ void __cluster_dims__(1,1,1)
 lat_local(unsigned long long* out, int seed)
 {
-    // Use dynamic shared memory so init happens at runtime (defeats DCE)
     unsigned* smem = smem_dyn;
     int tid = threadIdx.x;
+    init_smem(smem, tid, seed, 0u);
+    if (tid >= 32) return;
 
-    // Init: runtime-derived next-pointers
-    // Value at slot i = (i * LCG ^ seed) & mask — not a compile-time constant
-    if (tid < SMEM_WORDS) {
-        unsigned v = (unsigned)tid * 2654435761u ^ (unsigned)seed;
-        smem[tid]  = (v >> 5) & (SMEM_WORDS - 1u);
-    }
-    __syncthreads();
-
-    if (tid >= 32) return;  // only warp 0 measures
-
-    unsigned smem_addr = (unsigned)__cvta_generic_to_shared(&smem[0]);
-    unsigned cur = (unsigned)(tid * 31 + seed) & (SMEM_WORDS - 1u);
+    // cur = initial byte offset
+    unsigned cur = ((unsigned)(tid * 31 + seed) & (unsigned)(SMEM_WORDS - 1u)) << 2;
+    unsigned base = (unsigned)__cvta_generic_to_shared(smem);
+    cur += base;  // cur = full smem address
 
     unsigned long long t0, t1;
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
 
-    // Dependent chain: each LDS address comes from previous LDS result
+    // Dependent chain: each load gives a new base+offset (smem address)
     #pragma unroll 1
     for (int i = 0; i < LAT_ITERS; i++) {
         asm volatile("ld.shared.u32 %0, [%1];"
                      : "=r"(cur)
-                     : "r"(smem_addr + cur * 4u)
+                     : "r"(cur)   // address IS cur; result is new smem-addr (base + next_offset)
+                     : "memory");
+        cur += base;  // smem slot stores offset, add base to get full address
+    }
+
+    asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
+
+    if (tid == 0) {
+        out[0] = t1 - t0;
+        out[1] = cur;  // anti-DCE
+    }
+}
+
+// Wait — there's a subtlety: if smem stores byte OFFSETS, then LDS returns an
+// offset, and we need to add the base again. This means each iteration has:
+//   LDS (read)  + IADD (add base) = 2 instructions in critical path.
+// That's fine — both versions (local and DSMEM) have the same extra IADD,
+// so the ratio is still meaningful.
+//
+// Actually for DSMEM the pattern is different: we want
+//   LDS cur, [cur + UR_peer_base]
+// So cur holds the OFFSET from peer smem base. The smem table stores offsets.
+// The init function stores ((v>>5) & (SMEM_WORDS-1)) << 2 which is a byte offset
+// from smem[0]. Local and peer use the same smem layout.
+//
+// For local: cur = offset from local smem base
+//   LDS cur, [cur + local_base]  → cur = new offset
+// For DSMEM: cur = offset from peer smem base
+//   LDS cur, [cur + peer_base]   → cur = new offset (next offset in peer smem)
+//
+// This way BOTH use LDS with a per-iteration cur (offset) + fixed base (uniform).
+// No LICM possible since cur changes each iteration.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── LOCAL SMEM latency v2 (correct dependent chain) ──────────────────────────
+__global__ void __cluster_dims__(1,1,1)
+lat_local2(unsigned long long* out, int seed)
+{
+    unsigned* smem = smem_dyn;
+    int tid = threadIdx.x;
+    // smem[i] stores a byte offset from smem[0] in [0, SMEM_WORDS*4)
+    if (tid < SMEM_WORDS) {
+        unsigned v  = (unsigned)tid * 2654435761u ^ (unsigned)seed;
+        smem[tid] = ((v >> 5) & (unsigned)(SMEM_WORDS - 1u)) * 4u;
+    }
+    __syncthreads();
+    if (tid >= 32) return;
+
+    unsigned base = (unsigned)__cvta_generic_to_shared(smem);
+    // cur = initial byte offset (from smem[0])
+    unsigned cur = ((unsigned)(tid * 31 + seed) & (unsigned)(SMEM_WORDS - 1u)) * 4u;
+
+    unsigned long long t0, t1;
+    asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
+
+    // Each iteration: load the value at smem[cur/4] (which is another byte offset)
+    // Address = base + cur.  Result = next byte offset (also from smem[0]).
+    #pragma unroll 1
+    for (int i = 0; i < LAT_ITERS; i++) {
+        asm volatile("ld.shared.u32 %0, [%1];"
+                     : "=r"(cur)
+                     : "r"(base + cur)
                      : "memory");
     }
 
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
 
     if (tid == 0) {
-        out[blockIdx.x * 2 + 0] = t1 - t0;
-        out[blockIdx.x * 2 + 1] = cur;   // anti-DCE: nonzero proves loop ran
+        out[0] = t1 - t0;
+        out[1] = cur;
     }
 }
 
 // ── DSMEM latency (cluster=2) ─────────────────────────────────────────────────
-// Uses the EXACT PTX pattern from bench_dsmem.cu (validated correct):
-//   mapa.shared::cluster.u32 remote_addr, local_addr, target_cta
-//   ld.shared::cluster.u32  result, [remote_addr]
-// But with dependent chain: remote_addr is recomputed each iteration from result.
+// mapa(smem_base, target=compile-time-const) → ptxas promotes to uniform reg UR
+// Then LDS uses [cur + UR] where cur changes each iteration → no LICM
 __global__ void __cluster_dims__(2,1,1)
 lat_dsmem2(unsigned long long* out, int seed)
 {
     unsigned* smem = smem_dyn;
     int tid = threadIdx.x;
 
-    unsigned my_cta_rank;
-    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_cta_rank));
+    unsigned my_rank;
+    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_rank));
 
-    // Init local smem with runtime values
     if (tid < SMEM_WORDS) {
-        unsigned v = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_cta_rank * 0xDEADBEEFu);
-        smem[tid]  = (v >> 5) & (SMEM_WORDS - 1u);
+        unsigned v  = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_rank * 0xDEADBEEFu);
+        smem[tid] = ((v >> 5) & (unsigned)(SMEM_WORDS - 1u)) * 4u;
     }
     __syncthreads();
 
-    // Cluster barrier: all blocks' smem populated before timing
+    // Cluster barrier BEFORE timing window
     asm volatile("barrier.cluster.arrive;" ::: "memory");
     asm volatile("barrier.cluster.wait;"  ::: "memory");
 
     if (tid >= 32) return;
 
-    unsigned target_cta = my_cta_rank ^ 1u;  // neighbor in cluster=2
-    unsigned smem_base  = (unsigned)__cvta_generic_to_shared(&smem[0]);
-    unsigned cur = (unsigned)(tid * 31 + seed + my_cta_rank) & (SMEM_WORDS - 1u);
+    unsigned local_base = (unsigned)__cvta_generic_to_shared(smem);
+    unsigned target_cta = my_rank ^ 1u;  // compile-time-knowable for cluster=2
+
+    // Obtain peer smem base via mapa — ptxas can hoist this to a uniform reg
+    unsigned peer_base;
+    asm volatile("mapa.shared::cluster.u32 %0, %1, %2;"
+                 : "=r"(peer_base)
+                 : "r"(local_base), "r"(target_cta));
+
+    // cur = initial byte offset into peer smem
+    unsigned cur = ((unsigned)(tid * 31 + seed + my_rank) & (unsigned)(SMEM_WORDS - 1u)) * 4u;
 
     unsigned long long t0, t1;
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
 
-    // Dependent DSMEM chain
+    // Dependent DSMEM chain: LDS cur, [peer_base + cur]
+    // peer_base is in a register (possibly uniform); cur changes each iteration.
+    // ptxas should emit: LDS R_cur, [R_peer_base + R_cur]  or  LDS R_cur, [UR_peer_base + R_cur]
     #pragma unroll 1
     for (int i = 0; i < LAT_ITERS; i++) {
-        unsigned remote_addr;
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;"
-                     : "=r"(remote_addr)
-                     : "r"(smem_base + cur * 4u), "r"(target_cta));
         asm volatile("ld.shared::cluster.u32 %0, [%1];"
                      : "=r"(cur)
-                     : "r"(remote_addr)
+                     : "r"(peer_base + cur)
                      : "memory");
     }
 
@@ -155,12 +238,12 @@ lat_dsmem4(unsigned long long* out, int seed)
     unsigned* smem = smem_dyn;
     int tid = threadIdx.x;
 
-    unsigned my_cta_rank;
-    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_cta_rank));
+    unsigned my_rank;
+    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_rank));
 
     if (tid < SMEM_WORDS) {
-        unsigned v = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_cta_rank * 0xDEADBEEFu);
-        smem[tid]  = (v >> 5) & (SMEM_WORDS - 1u);
+        unsigned v  = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_rank * 0xDEADBEEFu);
+        smem[tid] = ((v >> 5) & (unsigned)(SMEM_WORDS - 1u)) * 4u;
     }
     __syncthreads();
 
@@ -169,22 +252,24 @@ lat_dsmem4(unsigned long long* out, int seed)
 
     if (tid >= 32) return;
 
-    unsigned target_cta = (my_cta_rank + 1u) & 3u;
-    unsigned smem_base  = (unsigned)__cvta_generic_to_shared(&smem[0]);
-    unsigned cur = (unsigned)(tid * 31 + seed + my_cta_rank) & (SMEM_WORDS - 1u);
+    unsigned local_base = (unsigned)__cvta_generic_to_shared(smem);
+    unsigned target_cta = (my_rank + 1u) & 3u;
+
+    unsigned peer_base;
+    asm volatile("mapa.shared::cluster.u32 %0, %1, %2;"
+                 : "=r"(peer_base)
+                 : "r"(local_base), "r"(target_cta));
+
+    unsigned cur = ((unsigned)(tid * 31 + seed + my_rank) & (unsigned)(SMEM_WORDS - 1u)) * 4u;
 
     unsigned long long t0, t1;
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
 
     #pragma unroll 1
     for (int i = 0; i < LAT_ITERS; i++) {
-        unsigned remote_addr;
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;"
-                     : "=r"(remote_addr)
-                     : "r"(smem_base + cur * 4u), "r"(target_cta));
         asm volatile("ld.shared::cluster.u32 %0, [%1];"
                      : "=r"(cur)
-                     : "r"(remote_addr)
+                     : "r"(peer_base + cur)
                      : "memory");
     }
 
@@ -203,12 +288,12 @@ lat_dsmem8(unsigned long long* out, int seed)
     unsigned* smem = smem_dyn;
     int tid = threadIdx.x;
 
-    unsigned my_cta_rank;
-    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_cta_rank));
+    unsigned my_rank;
+    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_rank));
 
     if (tid < SMEM_WORDS) {
-        unsigned v = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_cta_rank * 0xDEADBEEFu);
-        smem[tid]  = (v >> 5) & (SMEM_WORDS - 1u);
+        unsigned v  = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_rank * 0xDEADBEEFu);
+        smem[tid] = ((v >> 5) & (unsigned)(SMEM_WORDS - 1u)) * 4u;
     }
     __syncthreads();
 
@@ -217,22 +302,24 @@ lat_dsmem8(unsigned long long* out, int seed)
 
     if (tid >= 32) return;
 
-    unsigned target_cta = (my_cta_rank + 1u) & 7u;
-    unsigned smem_base  = (unsigned)__cvta_generic_to_shared(&smem[0]);
-    unsigned cur = (unsigned)(tid * 31 + seed + my_cta_rank) & (SMEM_WORDS - 1u);
+    unsigned local_base = (unsigned)__cvta_generic_to_shared(smem);
+    unsigned target_cta = (my_rank + 1u) & 7u;
+
+    unsigned peer_base;
+    asm volatile("mapa.shared::cluster.u32 %0, %1, %2;"
+                 : "=r"(peer_base)
+                 : "r"(local_base), "r"(target_cta));
+
+    unsigned cur = ((unsigned)(tid * 31 + seed + my_rank) & (unsigned)(SMEM_WORDS - 1u)) * 4u;
 
     unsigned long long t0, t1;
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
 
     #pragma unroll 1
     for (int i = 0; i < LAT_ITERS; i++) {
-        unsigned remote_addr;
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;"
-                     : "=r"(remote_addr)
-                     : "r"(smem_base + cur * 4u), "r"(target_cta));
         asm volatile("ld.shared::cluster.u32 %0, [%1];"
                      : "=r"(cur)
-                     : "r"(remote_addr)
+                     : "r"(peer_base + cur)
                      : "memory");
     }
 
@@ -251,12 +338,12 @@ lat_dsmem16(unsigned long long* out, int seed)
     unsigned* smem = smem_dyn;
     int tid = threadIdx.x;
 
-    unsigned my_cta_rank;
-    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_cta_rank));
+    unsigned my_rank;
+    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_rank));
 
     if (tid < SMEM_WORDS) {
-        unsigned v = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_cta_rank * 0xDEADBEEFu);
-        smem[tid]  = (v >> 5) & (SMEM_WORDS - 1u);
+        unsigned v  = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_rank * 0xDEADBEEFu);
+        smem[tid] = ((v >> 5) & (unsigned)(SMEM_WORDS - 1u)) * 4u;
     }
     __syncthreads();
 
@@ -265,22 +352,24 @@ lat_dsmem16(unsigned long long* out, int seed)
 
     if (tid >= 32) return;
 
-    unsigned target_cta = (my_cta_rank + 1u) & 15u;
-    unsigned smem_base  = (unsigned)__cvta_generic_to_shared(&smem[0]);
-    unsigned cur = (unsigned)(tid * 31 + seed + my_cta_rank) & (SMEM_WORDS - 1u);
+    unsigned local_base = (unsigned)__cvta_generic_to_shared(smem);
+    unsigned target_cta = (my_rank + 1u) & 15u;
+
+    unsigned peer_base;
+    asm volatile("mapa.shared::cluster.u32 %0, %1, %2;"
+                 : "=r"(peer_base)
+                 : "r"(local_base), "r"(target_cta));
+
+    unsigned cur = ((unsigned)(tid * 31 + seed + my_rank) & (unsigned)(SMEM_WORDS - 1u)) * 4u;
 
     unsigned long long t0, t1;
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
 
     #pragma unroll 1
     for (int i = 0; i < LAT_ITERS; i++) {
-        unsigned remote_addr;
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;"
-                     : "=r"(remote_addr)
-                     : "r"(smem_base + cur * 4u), "r"(target_cta));
         asm volatile("ld.shared::cluster.u32 %0, [%1];"
                      : "=r"(cur)
-                     : "r"(remote_addr)
+                     : "r"(peer_base + cur)
                      : "memory");
     }
 
@@ -293,8 +382,8 @@ lat_dsmem16(unsigned long long* out, int seed)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// THROUGHPUT KERNELS — ILP=8 parallel chains, single warp (tid<32)
-// 8 independent accumulators; hardware can pipeline all 8 loads per iteration.
+// THROUGHPUT KERNELS — ILP=8 independent chains, single warp (tid<32)
+// All 8 loads are independent — hardware can issue all 8 before any completes.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── LOCAL SMEM throughput ─────────────────────────────────────────────────────
@@ -303,46 +392,43 @@ tp_local(unsigned long long* out, int seed)
 {
     unsigned* smem = smem_dyn;
     int tid = threadIdx.x;
-
     if (tid < SMEM_WORDS) {
-        unsigned v = (unsigned)tid * 2654435761u ^ (unsigned)seed;
-        smem[tid]  = (v >> 5) & (SMEM_WORDS - 1u);
+        unsigned v  = (unsigned)tid * 2654435761u ^ (unsigned)seed;
+        smem[tid] = ((v >> 5) & (unsigned)(SMEM_WORDS - 1u)) * 4u;
     }
     __syncthreads();
-
     if (tid >= 32) return;
 
-    unsigned base = (unsigned)__cvta_generic_to_shared(&smem[0]);
-    // 8 independent start positions
-    unsigned c0 = (unsigned)(tid*7+seed+0) & (SMEM_WORDS-1u);
-    unsigned c1 = (unsigned)(tid*7+seed+1) & (SMEM_WORDS-1u);
-    unsigned c2 = (unsigned)(tid*7+seed+2) & (SMEM_WORDS-1u);
-    unsigned c3 = (unsigned)(tid*7+seed+3) & (SMEM_WORDS-1u);
-    unsigned c4 = (unsigned)(tid*7+seed+4) & (SMEM_WORDS-1u);
-    unsigned c5 = (unsigned)(tid*7+seed+5) & (SMEM_WORDS-1u);
-    unsigned c6 = (unsigned)(tid*7+seed+6) & (SMEM_WORDS-1u);
-    unsigned c7 = (unsigned)(tid*7+seed+7) & (SMEM_WORDS-1u);
+    unsigned base = (unsigned)__cvta_generic_to_shared(smem);
+    unsigned c0 = ((unsigned)(tid*7+seed+0) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c1 = ((unsigned)(tid*7+seed+1) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c2 = ((unsigned)(tid*7+seed+2) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c3 = ((unsigned)(tid*7+seed+3) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c4 = ((unsigned)(tid*7+seed+4) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c5 = ((unsigned)(tid*7+seed+5) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c6 = ((unsigned)(tid*7+seed+6) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c7 = ((unsigned)(tid*7+seed+7) & (SMEM_WORDS-1u)) * 4u;
 
     unsigned long long t0, t1;
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
 
     #pragma unroll 1
     for (int i = 0; i < TP_ITERS; i++) {
-        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c0) : "r"(base+c0*4u) : "memory");
-        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c1) : "r"(base+c1*4u) : "memory");
-        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c2) : "r"(base+c2*4u) : "memory");
-        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c3) : "r"(base+c3*4u) : "memory");
-        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c4) : "r"(base+c4*4u) : "memory");
-        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c5) : "r"(base+c5*4u) : "memory");
-        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c6) : "r"(base+c6*4u) : "memory");
-        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c7) : "r"(base+c7*4u) : "memory");
+        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c0) : "r"(base+c0) : "memory");
+        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c1) : "r"(base+c1) : "memory");
+        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c2) : "r"(base+c2) : "memory");
+        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c3) : "r"(base+c3) : "memory");
+        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c4) : "r"(base+c4) : "memory");
+        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c5) : "r"(base+c5) : "memory");
+        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c6) : "r"(base+c6) : "memory");
+        asm volatile("ld.shared.u32 %0, [%1];" : "=r"(c7) : "r"(base+c7) : "memory");
     }
 
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
 
     if (tid == 0) {
-        out[blockIdx.x * 2 + 0] = t1 - t0;
-        out[blockIdx.x * 2 + 1] = c0^c1^c2^c3^c4^c5^c6^c7;
+        out[0] = t1 - t0;
+        out[1] = c0^c1^c2^c3^c4^c5^c6^c7;
     }
 }
 
@@ -353,12 +439,12 @@ tp_dsmem2(unsigned long long* out, int seed)
     unsigned* smem = smem_dyn;
     int tid = threadIdx.x;
 
-    unsigned my_cta_rank;
-    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_cta_rank));
+    unsigned my_rank;
+    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_rank));
 
     if (tid < SMEM_WORDS) {
-        unsigned v = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_cta_rank * 0xDEADBEEFu);
-        smem[tid]  = (v >> 5) & (SMEM_WORDS - 1u);
+        unsigned v  = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_rank * 0xDEADBEEFu);
+        smem[tid] = ((v >> 5) & (unsigned)(SMEM_WORDS - 1u)) * 4u;
     }
     __syncthreads();
 
@@ -367,39 +453,36 @@ tp_dsmem2(unsigned long long* out, int seed)
 
     if (tid >= 32) return;
 
-    unsigned target_cta = my_cta_rank ^ 1u;
-    unsigned base       = (unsigned)__cvta_generic_to_shared(&smem[0]);
-    unsigned c0 = (unsigned)(tid*7+seed+0) & (SMEM_WORDS-1u);
-    unsigned c1 = (unsigned)(tid*7+seed+1) & (SMEM_WORDS-1u);
-    unsigned c2 = (unsigned)(tid*7+seed+2) & (SMEM_WORDS-1u);
-    unsigned c3 = (unsigned)(tid*7+seed+3) & (SMEM_WORDS-1u);
-    unsigned c4 = (unsigned)(tid*7+seed+4) & (SMEM_WORDS-1u);
-    unsigned c5 = (unsigned)(tid*7+seed+5) & (SMEM_WORDS-1u);
-    unsigned c6 = (unsigned)(tid*7+seed+6) & (SMEM_WORDS-1u);
-    unsigned c7 = (unsigned)(tid*7+seed+7) & (SMEM_WORDS-1u);
+    unsigned local_base = (unsigned)__cvta_generic_to_shared(smem);
+    unsigned target_cta = my_rank ^ 1u;
+
+    unsigned peer_base;
+    asm volatile("mapa.shared::cluster.u32 %0, %1, %2;"
+                 : "=r"(peer_base)
+                 : "r"(local_base), "r"(target_cta));
+
+    unsigned c0 = ((unsigned)(tid*7+seed+0) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c1 = ((unsigned)(tid*7+seed+1) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c2 = ((unsigned)(tid*7+seed+2) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c3 = ((unsigned)(tid*7+seed+3) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c4 = ((unsigned)(tid*7+seed+4) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c5 = ((unsigned)(tid*7+seed+5) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c6 = ((unsigned)(tid*7+seed+6) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c7 = ((unsigned)(tid*7+seed+7) & (SMEM_WORDS-1u)) * 4u;
 
     unsigned long long t0, t1;
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
 
     #pragma unroll 1
     for (int i = 0; i < TP_ITERS; i++) {
-        unsigned pa0, pa1, pa2, pa3, pa4, pa5, pa6, pa7;
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa0) : "r"(base+c0*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa1) : "r"(base+c1*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa2) : "r"(base+c2*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa3) : "r"(base+c3*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa4) : "r"(base+c4*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa5) : "r"(base+c5*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa6) : "r"(base+c6*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa7) : "r"(base+c7*4u), "r"(target_cta));
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c0) : "r"(pa0) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c1) : "r"(pa1) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c2) : "r"(pa2) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c3) : "r"(pa3) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c4) : "r"(pa4) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c5) : "r"(pa5) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c6) : "r"(pa6) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c7) : "r"(pa7) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c0) : "r"(peer_base+c0) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c1) : "r"(peer_base+c1) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c2) : "r"(peer_base+c2) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c3) : "r"(peer_base+c3) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c4) : "r"(peer_base+c4) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c5) : "r"(peer_base+c5) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c6) : "r"(peer_base+c6) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c7) : "r"(peer_base+c7) : "memory");
     }
 
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
@@ -417,12 +500,12 @@ tp_dsmem4(unsigned long long* out, int seed)
     unsigned* smem = smem_dyn;
     int tid = threadIdx.x;
 
-    unsigned my_cta_rank;
-    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_cta_rank));
+    unsigned my_rank;
+    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_rank));
 
     if (tid < SMEM_WORDS) {
-        unsigned v = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_cta_rank * 0xDEADBEEFu);
-        smem[tid]  = (v >> 5) & (SMEM_WORDS - 1u);
+        unsigned v  = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_rank * 0xDEADBEEFu);
+        smem[tid] = ((v >> 5) & (unsigned)(SMEM_WORDS - 1u)) * 4u;
     }
     __syncthreads();
 
@@ -431,39 +514,36 @@ tp_dsmem4(unsigned long long* out, int seed)
 
     if (tid >= 32) return;
 
-    unsigned target_cta = (my_cta_rank + 1u) & 3u;
-    unsigned base       = (unsigned)__cvta_generic_to_shared(&smem[0]);
-    unsigned c0 = (unsigned)(tid*7+seed+0) & (SMEM_WORDS-1u);
-    unsigned c1 = (unsigned)(tid*7+seed+1) & (SMEM_WORDS-1u);
-    unsigned c2 = (unsigned)(tid*7+seed+2) & (SMEM_WORDS-1u);
-    unsigned c3 = (unsigned)(tid*7+seed+3) & (SMEM_WORDS-1u);
-    unsigned c4 = (unsigned)(tid*7+seed+4) & (SMEM_WORDS-1u);
-    unsigned c5 = (unsigned)(tid*7+seed+5) & (SMEM_WORDS-1u);
-    unsigned c6 = (unsigned)(tid*7+seed+6) & (SMEM_WORDS-1u);
-    unsigned c7 = (unsigned)(tid*7+seed+7) & (SMEM_WORDS-1u);
+    unsigned local_base = (unsigned)__cvta_generic_to_shared(smem);
+    unsigned target_cta = (my_rank + 1u) & 3u;
+
+    unsigned peer_base;
+    asm volatile("mapa.shared::cluster.u32 %0, %1, %2;"
+                 : "=r"(peer_base)
+                 : "r"(local_base), "r"(target_cta));
+
+    unsigned c0 = ((unsigned)(tid*7+seed+0) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c1 = ((unsigned)(tid*7+seed+1) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c2 = ((unsigned)(tid*7+seed+2) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c3 = ((unsigned)(tid*7+seed+3) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c4 = ((unsigned)(tid*7+seed+4) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c5 = ((unsigned)(tid*7+seed+5) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c6 = ((unsigned)(tid*7+seed+6) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c7 = ((unsigned)(tid*7+seed+7) & (SMEM_WORDS-1u)) * 4u;
 
     unsigned long long t0, t1;
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
 
     #pragma unroll 1
     for (int i = 0; i < TP_ITERS; i++) {
-        unsigned pa0, pa1, pa2, pa3, pa4, pa5, pa6, pa7;
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa0) : "r"(base+c0*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa1) : "r"(base+c1*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa2) : "r"(base+c2*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa3) : "r"(base+c3*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa4) : "r"(base+c4*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa5) : "r"(base+c5*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa6) : "r"(base+c6*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa7) : "r"(base+c7*4u), "r"(target_cta));
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c0) : "r"(pa0) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c1) : "r"(pa1) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c2) : "r"(pa2) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c3) : "r"(pa3) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c4) : "r"(pa4) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c5) : "r"(pa5) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c6) : "r"(pa6) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c7) : "r"(pa7) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c0) : "r"(peer_base+c0) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c1) : "r"(peer_base+c1) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c2) : "r"(peer_base+c2) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c3) : "r"(peer_base+c3) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c4) : "r"(peer_base+c4) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c5) : "r"(peer_base+c5) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c6) : "r"(peer_base+c6) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c7) : "r"(peer_base+c7) : "memory");
     }
 
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
@@ -481,12 +561,12 @@ tp_dsmem8(unsigned long long* out, int seed)
     unsigned* smem = smem_dyn;
     int tid = threadIdx.x;
 
-    unsigned my_cta_rank;
-    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_cta_rank));
+    unsigned my_rank;
+    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_rank));
 
     if (tid < SMEM_WORDS) {
-        unsigned v = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_cta_rank * 0xDEADBEEFu);
-        smem[tid]  = (v >> 5) & (SMEM_WORDS - 1u);
+        unsigned v  = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_rank * 0xDEADBEEFu);
+        smem[tid] = ((v >> 5) & (unsigned)(SMEM_WORDS - 1u)) * 4u;
     }
     __syncthreads();
 
@@ -495,39 +575,36 @@ tp_dsmem8(unsigned long long* out, int seed)
 
     if (tid >= 32) return;
 
-    unsigned target_cta = (my_cta_rank + 1u) & 7u;
-    unsigned base       = (unsigned)__cvta_generic_to_shared(&smem[0]);
-    unsigned c0 = (unsigned)(tid*7+seed+0) & (SMEM_WORDS-1u);
-    unsigned c1 = (unsigned)(tid*7+seed+1) & (SMEM_WORDS-1u);
-    unsigned c2 = (unsigned)(tid*7+seed+2) & (SMEM_WORDS-1u);
-    unsigned c3 = (unsigned)(tid*7+seed+3) & (SMEM_WORDS-1u);
-    unsigned c4 = (unsigned)(tid*7+seed+4) & (SMEM_WORDS-1u);
-    unsigned c5 = (unsigned)(tid*7+seed+5) & (SMEM_WORDS-1u);
-    unsigned c6 = (unsigned)(tid*7+seed+6) & (SMEM_WORDS-1u);
-    unsigned c7 = (unsigned)(tid*7+seed+7) & (SMEM_WORDS-1u);
+    unsigned local_base = (unsigned)__cvta_generic_to_shared(smem);
+    unsigned target_cta = (my_rank + 1u) & 7u;
+
+    unsigned peer_base;
+    asm volatile("mapa.shared::cluster.u32 %0, %1, %2;"
+                 : "=r"(peer_base)
+                 : "r"(local_base), "r"(target_cta));
+
+    unsigned c0 = ((unsigned)(tid*7+seed+0) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c1 = ((unsigned)(tid*7+seed+1) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c2 = ((unsigned)(tid*7+seed+2) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c3 = ((unsigned)(tid*7+seed+3) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c4 = ((unsigned)(tid*7+seed+4) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c5 = ((unsigned)(tid*7+seed+5) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c6 = ((unsigned)(tid*7+seed+6) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c7 = ((unsigned)(tid*7+seed+7) & (SMEM_WORDS-1u)) * 4u;
 
     unsigned long long t0, t1;
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
 
     #pragma unroll 1
     for (int i = 0; i < TP_ITERS; i++) {
-        unsigned pa0, pa1, pa2, pa3, pa4, pa5, pa6, pa7;
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa0) : "r"(base+c0*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa1) : "r"(base+c1*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa2) : "r"(base+c2*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa3) : "r"(base+c3*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa4) : "r"(base+c4*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa5) : "r"(base+c5*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa6) : "r"(base+c6*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa7) : "r"(base+c7*4u), "r"(target_cta));
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c0) : "r"(pa0) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c1) : "r"(pa1) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c2) : "r"(pa2) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c3) : "r"(pa3) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c4) : "r"(pa4) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c5) : "r"(pa5) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c6) : "r"(pa6) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c7) : "r"(pa7) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c0) : "r"(peer_base+c0) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c1) : "r"(peer_base+c1) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c2) : "r"(peer_base+c2) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c3) : "r"(peer_base+c3) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c4) : "r"(peer_base+c4) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c5) : "r"(peer_base+c5) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c6) : "r"(peer_base+c6) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c7) : "r"(peer_base+c7) : "memory");
     }
 
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
@@ -538,19 +615,19 @@ tp_dsmem8(unsigned long long* out, int seed)
     }
 }
 
-// ── DSMEM throughput (cluster=16) ─────────────────────────────────────────────
+// ── DSMEM throughput (cluster=16, non-portable) ───────────────────────────────
 __global__ void __cluster_dims__(16,1,1)
 tp_dsmem16(unsigned long long* out, int seed)
 {
     unsigned* smem = smem_dyn;
     int tid = threadIdx.x;
 
-    unsigned my_cta_rank;
-    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_cta_rank));
+    unsigned my_rank;
+    asm volatile("mov.u32 %0, %%cluster_ctaid.x;" : "=r"(my_rank));
 
     if (tid < SMEM_WORDS) {
-        unsigned v = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_cta_rank * 0xDEADBEEFu);
-        smem[tid]  = (v >> 5) & (SMEM_WORDS - 1u);
+        unsigned v  = (unsigned)tid * 2654435761u ^ (unsigned)seed ^ (my_rank * 0xDEADBEEFu);
+        smem[tid] = ((v >> 5) & (unsigned)(SMEM_WORDS - 1u)) * 4u;
     }
     __syncthreads();
 
@@ -559,39 +636,36 @@ tp_dsmem16(unsigned long long* out, int seed)
 
     if (tid >= 32) return;
 
-    unsigned target_cta = (my_cta_rank + 1u) & 15u;
-    unsigned base       = (unsigned)__cvta_generic_to_shared(&smem[0]);
-    unsigned c0 = (unsigned)(tid*7+seed+0) & (SMEM_WORDS-1u);
-    unsigned c1 = (unsigned)(tid*7+seed+1) & (SMEM_WORDS-1u);
-    unsigned c2 = (unsigned)(tid*7+seed+2) & (SMEM_WORDS-1u);
-    unsigned c3 = (unsigned)(tid*7+seed+3) & (SMEM_WORDS-1u);
-    unsigned c4 = (unsigned)(tid*7+seed+4) & (SMEM_WORDS-1u);
-    unsigned c5 = (unsigned)(tid*7+seed+5) & (SMEM_WORDS-1u);
-    unsigned c6 = (unsigned)(tid*7+seed+6) & (SMEM_WORDS-1u);
-    unsigned c7 = (unsigned)(tid*7+seed+7) & (SMEM_WORDS-1u);
+    unsigned local_base = (unsigned)__cvta_generic_to_shared(smem);
+    unsigned target_cta = (my_rank + 1u) & 15u;
+
+    unsigned peer_base;
+    asm volatile("mapa.shared::cluster.u32 %0, %1, %2;"
+                 : "=r"(peer_base)
+                 : "r"(local_base), "r"(target_cta));
+
+    unsigned c0 = ((unsigned)(tid*7+seed+0) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c1 = ((unsigned)(tid*7+seed+1) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c2 = ((unsigned)(tid*7+seed+2) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c3 = ((unsigned)(tid*7+seed+3) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c4 = ((unsigned)(tid*7+seed+4) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c5 = ((unsigned)(tid*7+seed+5) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c6 = ((unsigned)(tid*7+seed+6) & (SMEM_WORDS-1u)) * 4u;
+    unsigned c7 = ((unsigned)(tid*7+seed+7) & (SMEM_WORDS-1u)) * 4u;
 
     unsigned long long t0, t1;
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
 
     #pragma unroll 1
     for (int i = 0; i < TP_ITERS; i++) {
-        unsigned pa0, pa1, pa2, pa3, pa4, pa5, pa6, pa7;
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa0) : "r"(base+c0*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa1) : "r"(base+c1*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa2) : "r"(base+c2*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa3) : "r"(base+c3*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa4) : "r"(base+c4*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa5) : "r"(base+c5*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa6) : "r"(base+c6*4u), "r"(target_cta));
-        asm volatile("mapa.shared::cluster.u32 %0, %1, %2;" : "=r"(pa7) : "r"(base+c7*4u), "r"(target_cta));
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c0) : "r"(pa0) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c1) : "r"(pa1) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c2) : "r"(pa2) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c3) : "r"(pa3) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c4) : "r"(pa4) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c5) : "r"(pa5) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c6) : "r"(pa6) : "memory");
-        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c7) : "r"(pa7) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c0) : "r"(peer_base+c0) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c1) : "r"(peer_base+c1) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c2) : "r"(peer_base+c2) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c3) : "r"(peer_base+c3) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c4) : "r"(peer_base+c4) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c5) : "r"(peer_base+c5) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c6) : "r"(peer_base+c6) : "memory");
+        asm volatile("ld.shared::cluster.u32 %0, [%1];" : "=r"(c7) : "r"(peer_base+c7) : "memory");
     }
 
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
@@ -606,68 +680,49 @@ tp_dsmem16(unsigned long long* out, int seed)
 // Host runner
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct RunResult {
+struct RR {
     double median_cy;
     unsigned long long anti_dce;
 };
 
-static RunResult run_kernel(void* fn, int cluster_size, int nblocks,
-                            unsigned long long* d_out, int seed,
-                            bool non_portable)
+static RR run(void* fn, int csize, int nblk,
+              unsigned long long* d_out, int seed, bool nonport)
 {
-    int smem_bytes = SMEM_WORDS * sizeof(unsigned);  // 2 KB
-
-    CHECK(cudaFuncSetAttribute(fn,
-          cudaFuncAttributeMaxDynamicSharedMemorySize, smem_bytes));
-
-    if (non_portable) {
-        CHECK(cudaFuncSetAttribute(fn,
-              cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
-    }
+    int smem = SMEM_WORDS * 4;
+    CHECK(cudaFuncSetAttribute(fn, cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
+    if (nonport)
+        CHECK(cudaFuncSetAttribute(fn, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
 
     cudaLaunchAttribute attr;
     attr.id = cudaLaunchAttributeClusterDimension;
-    attr.val.clusterDim.x = cluster_size;
-    attr.val.clusterDim.y = 1;
-    attr.val.clusterDim.z = 1;
+    attr.val.clusterDim.x = csize; attr.val.clusterDim.y = 1; attr.val.clusterDim.z = 1;
 
     cudaLaunchConfig_t cfg;
     memset(&cfg, 0, sizeof(cfg));
-    cfg.gridDim          = dim3(nblocks);
-    cfg.blockDim         = dim3(256);  // 256 threads; only warp 0 (tid<32) measures
-    cfg.dynamicSmemBytes = smem_bytes;
-    cfg.stream           = nullptr;
-    cfg.attrs            = &attr;
-    cfg.numAttrs         = 1;
+    cfg.gridDim = nblk; cfg.blockDim = 256; cfg.dynamicSmemBytes = smem;
+    cfg.attrs = &attr; cfg.numAttrs = 1;
 
     void* args[] = { &d_out, &seed };
 
-    // Warmup
-    for (int i = 0; i < 3; i++) {
-        CHECK(cudaLaunchKernelExC(&cfg, fn, args));
-    }
+    for (int i = 0; i < 3; i++) CHECK(cudaLaunchKernelExC(&cfg, fn, args));
     CHECK(cudaDeviceSynchronize());
 
-    const int NTRIALS = 12;
-    static unsigned long long h_buf[512];
-    double trials[NTRIALS];
-    for (int r = 0; r < NTRIALS; r++) {
+    const int NT = 12;
+    static unsigned long long h[256];
+    double tr[NT];
+    for (int r = 0; r < NT; r++) {
         CHECK(cudaLaunchKernelExC(&cfg, fn, args));
         CHECK(cudaDeviceSynchronize());
-        CHECK(cudaMemcpy(h_buf, d_out,
-                         (size_t)nblocks * 2 * sizeof(unsigned long long),
+        CHECK(cudaMemcpy(h, d_out, (size_t)nblk * 2 * sizeof(unsigned long long),
                          cudaMemcpyDeviceToHost));
-        trials[r] = (double)h_buf[0];  // block 0 = first cluster's rank-0
+        tr[r] = (double)h[0];
     }
-
-    // Sort and take middle median
-    for (int i = 0; i < NTRIALS-1; i++)
-        for (int j = i+1; j < NTRIALS; j++)
-            if (trials[j] < trials[i]) { double t=trials[i]; trials[i]=trials[j]; trials[j]=t; }
-
-    RunResult r;
-    r.median_cy = (trials[NTRIALS/2 - 1] + trials[NTRIALS/2]) * 0.5;
-    r.anti_dce  = h_buf[1];  // nonzero = DCE did not happen
+    for (int i = 0; i < NT-1; i++)
+        for (int j = i+1; j < NT; j++)
+            if (tr[j] < tr[i]) { double t=tr[i]; tr[i]=tr[j]; tr[j]=t; }
+    RR r;
+    r.median_cy = (tr[NT/2-1]+tr[NT/2])*0.5;
+    r.anti_dce  = h[1];
     return r;
 }
 
@@ -676,130 +731,103 @@ int main()
     cudaDeviceProp prop;
     CHECK(cudaSetDevice(0));
     CHECK(cudaGetDeviceProperties(&prop, 0));
-    int sm_count = prop.multiProcessorCount;
+    int nsm = prop.multiProcessorCount;
 
-    int cur_clock = 0;
-    {
-        FILE* f = popen("nvidia-smi --query-gpu=clocks.current.sm --format=csv,noheader -i 0 2>/dev/null", "r");
-        if (f) { (void)fscanf(f, "%d", &cur_clock); pclose(f); }
-    }
+    int clk = 0;
+    { FILE* f=popen("nvidia-smi --query-gpu=clocks.current.sm --format=csv,noheader -i 0 2>/dev/null","r");
+      if(f){(void)fscanf(f,"%d",&clk);pclose(f);} }
 
-    printf("# GPU: %s  SMs: %d  current_SM_clock: %d MHz\n",
-           prop.name, sm_count, cur_clock);
+    printf("# GPU: %s  SMs: %d  SM_clock: %d MHz\n", prop.name, nsm, clk);
     printf("# SMEM_WORDS=%d  LAT_ITERS=%d  TP_ITERS=%d  ILP=%d\n",
            SMEM_WORDS, LAT_ITERS, TP_ITERS, ILP);
-    if (cur_clock < 2000)
-        printf("# WARNING: clock below 2032 MHz — run: nvidia-smi -lgc 2032 -i 0\n");
+    if (clk < 2000) printf("# WARNING: clock below 2032 — run: nvidia-smi -lgc 2032 -i 0\n");
 
-    unsigned long long* d_out;
-    CHECK(cudaMalloc(&d_out, (size_t)sm_count * 2 * sizeof(unsigned long long)));
-
+    unsigned long long* dout;
+    CHECK(cudaMalloc(&dout, (size_t)nsm*2*sizeof(unsigned long long)));
     int seed = 0x1234ABCD;
 
     // ── LATENCY ────────────────────────────────────────────────────────────────
-    printf("\n");
+    printf("\n=================================================================\n");
+    printf("LATENCY: dependent chain (%d serial loads), warp 0 only\n", LAT_ITERS);
     printf("=================================================================\n");
-    printf("LATENCY: dependent pointer chain (%d serial loads), warp 0 only\n", LAT_ITERS);
-    printf("=================================================================\n");
-    printf("%-30s %8s %10s %10s %8s\n",
-           "variant", "cy/load", "total_cy", "vs_local", "anti_dce");
+    printf("%-30s %8s %10s %10s %8s\n","variant","cy/load","total_cy","vs_local","anti_dce");
 
-    RunResult loc_lat = run_kernel((void*)lat_local,   1,  1, d_out, seed, false);
-    printf("%-30s %8.2f %10.0f %10.2fx %8llx\n",
-           "local SMEM (cluster=1)",
-           loc_lat.median_cy / LAT_ITERS, loc_lat.median_cy, 1.0, loc_lat.anti_dce);
+    RR ll  = run((void*)lat_local2,  1,  1, dout, seed, false);
+    printf("%-30s %8.2f %10.0f %10.2fx %8llx\n","local SMEM (cluster=1)",
+           ll.median_cy/LAT_ITERS, ll.median_cy, 1.0, ll.anti_dce);
 
-    RunResult d2_lat  = run_kernel((void*)lat_dsmem2,  2,  2, d_out, seed, false);
-    printf("%-30s %8.2f %10.0f %10.2fx %8llx\n",
-           "DSMEM cluster=2",
-           d2_lat.median_cy / LAT_ITERS, d2_lat.median_cy,
-           d2_lat.median_cy / loc_lat.median_cy, d2_lat.anti_dce);
+    RR d2l = run((void*)lat_dsmem2,  2,  2, dout, seed, false);
+    printf("%-30s %8.2f %10.0f %10.2fx %8llx\n","DSMEM cluster=2",
+           d2l.median_cy/LAT_ITERS, d2l.median_cy, d2l.median_cy/ll.median_cy, d2l.anti_dce);
 
-    RunResult d4_lat  = run_kernel((void*)lat_dsmem4,  4,  4, d_out, seed, false);
-    printf("%-30s %8.2f %10.0f %10.2fx %8llx\n",
-           "DSMEM cluster=4",
-           d4_lat.median_cy / LAT_ITERS, d4_lat.median_cy,
-           d4_lat.median_cy / loc_lat.median_cy, d4_lat.anti_dce);
+    RR d4l = run((void*)lat_dsmem4,  4,  4, dout, seed, false);
+    printf("%-30s %8.2f %10.0f %10.2fx %8llx\n","DSMEM cluster=4",
+           d4l.median_cy/LAT_ITERS, d4l.median_cy, d4l.median_cy/ll.median_cy, d4l.anti_dce);
 
-    RunResult d8_lat  = run_kernel((void*)lat_dsmem8,  8,  8, d_out, seed, false);
-    printf("%-30s %8.2f %10.0f %10.2fx %8llx\n",
-           "DSMEM cluster=8",
-           d8_lat.median_cy / LAT_ITERS, d8_lat.median_cy,
-           d8_lat.median_cy / loc_lat.median_cy, d8_lat.anti_dce);
+    RR d8l = run((void*)lat_dsmem8,  8,  8, dout, seed, false);
+    printf("%-30s %8.2f %10.0f %10.2fx %8llx\n","DSMEM cluster=8",
+           d8l.median_cy/LAT_ITERS, d8l.median_cy, d8l.median_cy/ll.median_cy, d8l.anti_dce);
 
-    RunResult d16_lat = run_kernel((void*)lat_dsmem16, 16, 16, d_out, seed, true);
-    printf("%-30s %8.2f %10.0f %10.2fx %8llx\n",
-           "DSMEM cluster=16 (non-port)",
-           d16_lat.median_cy / LAT_ITERS, d16_lat.median_cy,
-           d16_lat.median_cy / loc_lat.median_cy, d16_lat.anti_dce);
+    RR d16l= run((void*)lat_dsmem16, 16, 16, dout, seed, true);
+    printf("%-30s %8.2f %10.0f %10.2fx %8llx\n","DSMEM cluster=16 (non-port)",
+           d16l.median_cy/LAT_ITERS, d16l.median_cy, d16l.median_cy/ll.median_cy, d16l.anti_dce);
 
     // ── THROUGHPUT ─────────────────────────────────────────────────────────────
-    printf("\n");
+    printf("\n=================================================================\n");
+    printf("THROUGHPUT: ILP=%d chains × %d iters, warp 0 only\n", ILP, TP_ITERS);
     printf("=================================================================\n");
-    printf("THROUGHPUT: ILP=%d parallel chains × %d iters, warp 0 only\n", ILP, TP_ITERS);
-    printf("ld/cy = (%d × %d) / total_cycles\n", ILP, TP_ITERS);
-    printf("=================================================================\n");
-    printf("%-30s %10s %8s %12s %10s\n",
-           "variant", "cy/8loads", "ld/cy", "total_cy", "vs_local");
+    printf("%-30s %10s %8s %12s %10s\n","variant","cy/8lds","ld/cy","total_cy","vs_local");
 
-    auto tp_print = [&](const char* name, RunResult r, double local_cy) {
-        double total_loads  = (double)TP_ITERS * ILP;
-        double loads_per_cy = total_loads / r.median_cy;
-        double cy_per_8     = r.median_cy / TP_ITERS;
-        double ratio        = r.median_cy / local_cy;
+    auto tp_row = [&](const char* name, RR r, double lcy) {
+        double tl = (double)TP_ITERS*ILP;
         printf("%-30s %10.2f %8.3f %12.0f %10.2fx\n",
-               name, cy_per_8, loads_per_cy, r.median_cy, ratio);
+               name, r.median_cy/TP_ITERS, tl/r.median_cy, r.median_cy, r.median_cy/lcy);
     };
 
-    RunResult loc_tp = run_kernel((void*)tp_local,   1,  1, d_out, seed, false);
-    tp_print("local SMEM (cluster=1)", loc_tp, loc_tp.median_cy);
+    RR lt  = run((void*)tp_local,   1,  1, dout, seed, false);
+    tp_row("local SMEM (cluster=1)", lt, lt.median_cy);
 
-    RunResult d2_tp  = run_kernel((void*)tp_dsmem2,  2,  2, d_out, seed, false);
-    tp_print("DSMEM cluster=2", d2_tp, loc_tp.median_cy);
+    RR d2t = run((void*)tp_dsmem2,  2,  2, dout, seed, false);
+    tp_row("DSMEM cluster=2", d2t, lt.median_cy);
 
-    RunResult d4_tp  = run_kernel((void*)tp_dsmem4,  4,  4, d_out, seed, false);
-    tp_print("DSMEM cluster=4", d4_tp, loc_tp.median_cy);
+    RR d4t = run((void*)tp_dsmem4,  4,  4, dout, seed, false);
+    tp_row("DSMEM cluster=4", d4t, lt.median_cy);
 
-    RunResult d8_tp  = run_kernel((void*)tp_dsmem8,  8,  8, d_out, seed, false);
-    tp_print("DSMEM cluster=8", d8_tp, loc_tp.median_cy);
+    RR d8t = run((void*)tp_dsmem8,  8,  8, dout, seed, false);
+    tp_row("DSMEM cluster=8", d8t, lt.median_cy);
 
-    RunResult d16_tp = run_kernel((void*)tp_dsmem16, 16, 16, d_out, seed, true);
-    tp_print("DSMEM cluster=16 (non-port)", d16_tp, loc_tp.median_cy);
+    RR d16t= run((void*)tp_dsmem16, 16, 16, dout, seed, true);
+    tp_row("DSMEM cluster=16 (non-port)", d16t, lt.median_cy);
 
     // ── SUMMARY ────────────────────────────────────────────────────────────────
     const double MHZ = 2032.0;
-    printf("\n");
+    printf("\n=================================================================\n");
+    printf("SUMMARY  (target clock: %.0f MHz = %.3f ns/cy)\n", MHZ, 1000.0/MHZ);
     printf("=================================================================\n");
-    printf("SUMMARY  (clock target: %.0f MHz = %.3f ns/cy)\n", MHZ, 1000.0/MHZ);
-    printf("=================================================================\n");
-    printf("Local SMEM latency:          %6.2f cy  = %.2f ns/load\n",
-           loc_lat.median_cy/LAT_ITERS, (loc_lat.median_cy/LAT_ITERS)*1000.0/MHZ);
-    printf("DSMEM lat (cluster=2):       %6.2f cy  = %.2f ns/load  (%+.1f cy overhead)\n",
-           d2_lat.median_cy/LAT_ITERS,
-           (d2_lat.median_cy/LAT_ITERS)*1000.0/MHZ,
-           (d2_lat.median_cy - loc_lat.median_cy)/LAT_ITERS);
-    printf("DSMEM lat (cluster=4):       %6.2f cy  = %.2f ns/load  (%+.1f cy overhead)\n",
-           d4_lat.median_cy/LAT_ITERS,
-           (d4_lat.median_cy/LAT_ITERS)*1000.0/MHZ,
-           (d4_lat.median_cy - loc_lat.median_cy)/LAT_ITERS);
-    printf("DSMEM lat (cluster=8):       %6.2f cy  = %.2f ns/load  (%+.1f cy overhead)\n",
-           d8_lat.median_cy/LAT_ITERS,
-           (d8_lat.median_cy/LAT_ITERS)*1000.0/MHZ,
-           (d8_lat.median_cy - loc_lat.median_cy)/LAT_ITERS);
-    printf("DSMEM lat (cluster=16):      %6.2f cy  = %.2f ns/load  (%+.1f cy overhead)\n",
-           d16_lat.median_cy/LAT_ITERS,
-           (d16_lat.median_cy/LAT_ITERS)*1000.0/MHZ,
-           (d16_lat.median_cy - loc_lat.median_cy)/LAT_ITERS);
+    printf("Local SMEM lat:        %6.2f cy  = %.2f ns/load\n",
+           ll.median_cy/LAT_ITERS, (ll.median_cy/LAT_ITERS)*1000.0/MHZ);
+    printf("DSMEM lat clst=2:      %6.2f cy  = %.2f ns/load  (%+.1f cy overhead)\n",
+           d2l.median_cy/LAT_ITERS, (d2l.median_cy/LAT_ITERS)*1000.0/MHZ,
+           (d2l.median_cy-ll.median_cy)/LAT_ITERS);
+    printf("DSMEM lat clst=4:      %6.2f cy  = %.2f ns/load  (%+.1f cy overhead)\n",
+           d4l.median_cy/LAT_ITERS, (d4l.median_cy/LAT_ITERS)*1000.0/MHZ,
+           (d4l.median_cy-ll.median_cy)/LAT_ITERS);
+    printf("DSMEM lat clst=8:      %6.2f cy  = %.2f ns/load  (%+.1f cy overhead)\n",
+           d8l.median_cy/LAT_ITERS, (d8l.median_cy/LAT_ITERS)*1000.0/MHZ,
+           (d8l.median_cy-ll.median_cy)/LAT_ITERS);
+    printf("DSMEM lat clst=16:     %6.2f cy  = %.2f ns/load  (%+.1f cy overhead)\n",
+           d16l.median_cy/LAT_ITERS, (d16l.median_cy/LAT_ITERS)*1000.0/MHZ,
+           (d16l.median_cy-ll.median_cy)/LAT_ITERS);
     printf("\n");
-    printf("Local SMEM tp (ILP=8):            %.3f ld/cy\n",
-           (double)TP_ITERS*ILP/loc_tp.median_cy);
-    printf("DSMEM tp (cluster=2, ILP=8):      %.3f ld/cy  (%.2fx vs local)\n",
-           (double)TP_ITERS*ILP/d2_tp.median_cy, d2_tp.median_cy/loc_tp.median_cy);
-    printf("DSMEM tp (cluster=4, ILP=8):      %.3f ld/cy  (%.2fx vs local)\n",
-           (double)TP_ITERS*ILP/d4_tp.median_cy, d4_tp.median_cy/loc_tp.median_cy);
-    printf("DSMEM tp (cluster=8, ILP=8):      %.3f ld/cy  (%.2fx vs local)\n",
-           (double)TP_ITERS*ILP/d8_tp.median_cy, d8_tp.median_cy/loc_tp.median_cy);
+    printf("Local SMEM tp ILP=8:              %.3f ld/cy\n",
+           (double)TP_ITERS*ILP/lt.median_cy);
+    printf("DSMEM tp clst=2 ILP=8:            %.3f ld/cy  (%.2fx vs local)\n",
+           (double)TP_ITERS*ILP/d2t.median_cy, d2t.median_cy/lt.median_cy);
+    printf("DSMEM tp clst=4 ILP=8:            %.3f ld/cy  (%.2fx vs local)\n",
+           (double)TP_ITERS*ILP/d4t.median_cy, d4t.median_cy/lt.median_cy);
+    printf("DSMEM tp clst=8 ILP=8:            %.3f ld/cy  (%.2fx vs local)\n",
+           (double)TP_ITERS*ILP/d8t.median_cy, d8t.median_cy/lt.median_cy);
 
-    CHECK(cudaFree(d_out));
+    CHECK(cudaFree(dout));
     return 0;
 }
