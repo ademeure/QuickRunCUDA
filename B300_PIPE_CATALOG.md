@@ -16491,3 +16491,36 @@ Per-tile cost for online softmax (single warp, 32 elements per tile, dep chain):
 **Optimization**: for the max step, `__reduce_max_sync` with `__float_as_int` trick gives correct results for positive floats (28 cy). For negative floats, use `redux.sync.max.f32` via PTX asm.
 
 **Flash attention implication**: with 64-tile sequence at 229 cy/tile = ~15K cy per head, online softmax is significant but typically masked by Q×K^T HMMA overlap. The shuffle sum (150 cy) is the bottleneck that prevents full overlap — it serializes the dependency chain between tiles.
+
+
+# MUFU Pipeline: Latency vs Throughput (Pure SIN Chain, SASS-Clean)
+
+Using `sin.approx.f32` chains which compile to clean MUFU.SIN (no range-checking overhead):
+
+| ILP chains | cy/iter | cy/MUFU | Regime |
+|-----------:|--------:|--------:|--------|
+| 1 | 24.0 | **24.0** | **Latency-bound** |
+| 2 | 25.1 | 12.5 | Partial ILP |
+| 4 | 33.6 | **8.4** | **Throughput-bound** |
+| 8 | 67.8 | 8.5 | Saturated |
+| 16 | 135.2 | 8.4 | Saturated (ncu: 8.48 cy/MUFU) |
+
+**MUFU latency = 24 cycles.** This is the register-to-register time for one MUFU op.
+**MUFU throughput = 8.4 cy per instruction** (pipe issues one MUFU every 8.4 cy per warp slot).
+**Pipeline depth = 24/8.4 ≈ 3** — need 3 independent chains to saturate.
+
+**The catalog's "8 cy" in the summary table is the THROUGHPUT interval, not latency.** With a single dependent chain, the per-op cost is 24 cy (3× worse than the throughput number suggests).
+
+### `ex2.approx.f32` overhead
+
+The compiler inserts denormal range-checking code around `ex2`:
+
+```
+FSETP.GEU.AND P0, R, -126, PT    // check range
+@!P0 FMUL R, R, 0.5              // pre-scale
+MUFU.EX2 R, R                    // actual EX2
+@!P0 FMUL R, R, R                // post-scale
+FMUL R, R, <user_constant>       // user rescale
+```
+
+5 SASS instructions vs 1 for SIN. The range-checking adds ~16 cy overhead per `expf()` call. **For softmax/GELU, this overhead is unavoidable** — `__expf()` always generates range checks. Use `ex2.approx.ftz.f32` via PTX asm to skip range checks when input is known-bounded (saves 40%).
