@@ -16566,3 +16566,35 @@ SASS confirms UIADD3 (UR registers) interleaved with FFMA (R registers) in the l
 FMA and ALU pipes run on separate back-ends but share the front-end warp scheduler (1 inst/cy). Each additional instruction adds ~1 issue cycle regardless of pipe. The 63% overlap comes from latency hiding: while one pipe's result propagates, the other pipe can be issued.
 
 **Practical for FP4/FP6 decode**: LOP3 (byte extraction) and HFMA2 (packed compute) run on different pipes. A kernel doing both can achieve ~60% utilization of BOTH pipes simultaneously if properly interleaved.
+
+
+# __syncthreads() Barrier Cost Scaling with CTA Size
+
+| Threads | Warps | cy/barrier | Model (14 + 2×W) |
+|--------:|------:|----------:|-----------------:|
+| 32 | 1 | 15.7 | 16 |
+| 64 | 2 | 17.4 | 18 |
+| 128 | 4 | 20.7 | 22 |
+| 256 | 8 | 28.1 | 30 |
+| 512 | 16 | 44.1 | 46 |
+| 1024 | 32 | 76.1 | 78 |
+
+**Barrier cost scales linearly: ~14 + 2 × warps cycles.** A 1024-thread CTA pays 5× more per barrier than a 32-thread CTA.
+
+**Zero inter-CTA interference**: 28.1 cy at 256 threads whether 1 or 148 CTAs are running. Each SM's barrier unit is fully independent.
+
+**Practical**: For barrier-heavy kernels (tiled reductions), prefer smaller CTAs (128-256 threads) over large ones (1024). The 2 cy/warp scaling means each additional warp adds non-trivial overhead to every `__syncthreads()`.
+
+
+# Format Conversion Latency (Round-Trip, Dep Chain)
+
+| Conversion | cy/round-trip | SASS | Per-direction |
+|-----------|-------------:|------|-------------:|
+| F32↔F16 | **10** | 1× `F2FP.F16.F32.PACK_AB` | **5 cy** |
+| F32↔BF16 | 24 | `F2F.BF16.F32` + `SHF.L.U32` | 12 cy |
+| F32↔I32 | 24 | `F2I` + `I2F` | 12 cy |
+| F32→F32 round | 12 | `F2F.F32.F32` (rni) | 12 cy |
+
+**FP16 conversion is 2.4× faster than BF16.** The compiler fuses F32→F16→F32 into a single `F2FP.PACK_AB` instruction (5 cy each direction). BF16 requires separate `F2F.BF16.F32` + `SHF` (shift to reconstruct F32 from truncated mantissa).
+
+**Practical for mixed-precision**: When choosing between FP16 and BF16 as intermediate format, FP16 has cheaper conversion (5 vs 12 cy). BF16's advantage is range (same exponent as FP32), but if your values fit in FP16 range, prefer FP16 for the 2.4× conversion speedup.
