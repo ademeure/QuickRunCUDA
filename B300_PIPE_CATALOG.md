@@ -17921,3 +17921,23 @@ Tested 12 cublasLt configurations (E4M3/E5M2 × BF16/FP32/E4M3 output × 2 compu
 **PagedAttention has only 10% overhead** at scalar width — the L2 randomized hash and DRAM bank parallelism handle random page access efficiently. With v4 reads, paged access reaches **full HBM bandwidth** because each page is read contiguously once selected.
 
 **Practical for vLLM/TensorRT-LLM**: the block table (page indices) fits in L1 cache (~4 KB). KV data reads go directly to HBM at peak bandwidth. Paging overhead is negligible — use PagedAttention without performance concern on B300.
+
+
+# Batched GEMM: Attention Q×K^T Pattern (FP32, M=1 decode)
+
+M=1 (decode), K=128 (head_dim), batched across heads:
+
+| seq_len | heads | KV cache | Latency | Eff BW | % HBM |
+|--------:|------:|---------:|--------:|-------:|------:|
+| 256 | 64 | 8 MB | 6.2 µs | 1.34 TB/s | 19% |
+| 512 | 64 | 17 MB | 6.2 µs | 2.71 TB/s | 39% |
+| 1024 | 64 | 34 MB | 7.2 µs | 4.65 TB/s | 66% |
+| **2048** | **64** | **67 MB** | **10.4 µs** | **6.47 TB/s** | **92%** |
+| 4096 | 64 | 134 MB | 31.3 µs | 4.29 TB/s | 61% |
+| 1024 | 128 | 67 MB | 10.6 µs | 6.35 TB/s | 91% |
+
+**Peak attention BW at seq=2048 (67 MB KV): 6.47 TB/s** (92% of HBM). Batched GEMM efficiently reads KV cache at near-peak bandwidth.
+
+**L2 cliff at seq=4096**: KV cache (134 MB) exceeds L2 capacity (126 MB) → 34% bandwidth drop. **For long-context inference beyond 2048 tokens**: attention becomes bandwidth-limited by L2 overflow. Flash Attention mitigates this via tiled computation.
+
+**Llama-70B attention cost** (64 heads, ctx=1024): 7.2 µs/layer × 80 layers = 0.58 ms = **2.4% of decode time**. Attention is negligible at short contexts.
