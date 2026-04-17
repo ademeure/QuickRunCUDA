@@ -18167,3 +18167,18 @@ Each kernel uses 1 SM (1 block × 256 threads), launched on separate streams:
 **L1 cache is unaffected up to 8 warps/SM** (24 KB per warp). Beyond 8 warps, inter-warp cache thrashing increases latency by 5-20%.
 
 **For cache-sensitive kernels** (GEMM tiling, stencils, tree traversal): limit to ≤8 warps/SM. For streaming/memory-bound kernels (no reuse): maximize occupancy regardless — L1 isn't needed.
+
+
+# cudaLaunchHostFunc (Host Callback) Cost
+
+| Method | Latency | vs polling |
+|--------|--------:|-----------:|
+| `cudaStreamQuery` polling | 0.12 µs | **1×** |
+| Bare callback scheduling | 1.6 µs | 13× |
+| Kernel + sync (no callback) | 7.4 µs | 62× |
+| **Kernel + callback + sync** | **19.2 µs** | **160×** |
+| Callback overhead alone | +11.8 µs | — |
+
+**Callbacks add 11.8 µs** — the worker thread wakeup + callback dispatch dominates. For latency-sensitive serving: **always poll, never use callbacks in the hot path.**
+
+Callbacks are useful for non-latency-critical work (logging, metrics, memory cleanup) where the 11.8 µs overhead is acceptable.
