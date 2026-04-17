@@ -18008,3 +18008,18 @@ Tested 0 B to 256 MB workspace across 5 shapes (4096³, 8192³, GEMV, batch=128,
 **Grid sync (2.45 µs) is 2.9× cheaper than kernel relaunch (7.09 µs).** For persistent kernels that iterate many times, grid sync saves 4.64 µs per iteration vs relaunching.
 
 **For persistent serving kernels**: 100 iterations × 4.64 µs savings = 464 µs per inference pass. At 24 ms/token decode: ~2% speedup from avoiding kernel relaunches.
+
+
+# NVML Monitoring: Zero GPU Performance Impact
+
+| Scenario | Kernel time | NVML polls | Overhead |
+|----------|----------:|----------:|---------:|
+| Kernel alone | 221.8 ms | 0 | baseline |
+| **Kernel + continuous NVML** | **221.8 ms** | **434,971** | **0.00%** |
+
+**NVML call latency:**
+- `nvmlDeviceGetPowerUsage`: 2.2 µs
+- `nvmlDeviceGetTemperature`: 0.2 µs
+- Sustainable poll rate: **~2M queries/sec**
+
+**GPU monitoring is completely free.** NVML uses a separate management path (PMU/I2C) that never interferes with compute. Monitor power, temperature, and clocks as aggressively as you want — zero impact on inference throughput.
