@@ -19293,3 +19293,111 @@ Initial test reported 286 GB/s — that was thread-count limited. Sweep across b
 - **`.cg` cache hint hurts NVLink reads** (305 vs 718 GB/s scalar)
 - Each SM contributes ~5 GB/s
 
+
+
+# 🎯 BREAKTHROUGH: 4 Blocks × 57 KiB Shared Memory on SAME SM
+
+User challenge: "Can I have 4 threadgroups (blocks) of 57 KiB shmem co-resident on a B300 SM?"
+
+**Math says no**: 4 × (57 KiB + 1 KiB reserved) = 232 KiB > 228 KiB SM total.
+
+**ANSWER: YES** with the **"steal reserved 1 KiB" trick**:
+
+### The Trick
+
+```cpp
+// 1. Tell compiler this kernel only needs 56 KiB
+cudaFuncSetAttribute((void*)k_steal,
+                     cudaFuncAttributeMaxDynamicSharedMemorySize, 56 * 1024);
+
+// 2. Launch enough blocks to FORCE 4-per-SM (else scheduler spreads them)
+//    For 148 SMs, need ≥ 592 = 4×148 blocks
+k_steal<<<592, 256, 56*1024>>>();
+```
+
+```cuda
+extern "C" __global__ void k_steal() {
+    extern __shared__ char buf[];  // compiler places at offset 1024 (after reserved)
+    int tid = threadIdx.x;
+
+    // Use the compiler-aware 56 KiB normally
+    for (int i = tid; i < (56*1024); i += blockDim.x)
+        buf[i] = (char)tid;
+
+    // STEAL: write to offsets 0..1023 (the "reserved" 1 KiB) via raw PTX
+    for (int i = tid; i < 256; i += blockDim.x) {
+        unsigned int offset = i * 4;
+        unsigned int val = (unsigned int)i;
+        asm volatile("st.shared.u32 [%0], %1;" :: "r"(offset), "r"(val) : "memory");
+    }
+
+    // Now using 56 KiB compiler + 1 KiB stolen = 57 KiB total per block
+}
+```
+
+### Verification
+
+Launched 592 blocks (= 4×148 SMs). Result:
+- 148 SMs × 4 blocks each (perfect distribution)
+- **0 / 592 blocks corrupted** — both compiler-allocated 56 KiB AND stolen 1 KiB intact
+- Each block effectively has 57 KiB shmem
+- 4 × 57 KiB = exactly 228 KiB SM total
+
+### Why It Works
+
+The "reserved" 1 KiB is allocated for runtime metadata that this kernel doesn't use:
+- cluster.sync() barriers
+- mbarrier objects  
+- TMA descriptors
+- async copy state
+- PDL signal coordination
+- runtime-injected operations
+
+If your kernel uses NONE of these, the reserved space is **idle and steal-able**.
+
+### Constraints (DO NOT use the trick if you need)
+
+| Feature | Why incompatible |
+|---|---|
+| `__cluster_dims__` / `cluster.sync()` | uses reserved space for cluster handle |
+| `cuda::barrier` / mbarrier ops | mbarriers internally use reserved space |
+| `cuda::memcpy_async` | async copy state lives in reserved space |
+| TMA loads/stores (`cp.async.bulk.tensor`) | TMA descriptors use reserved space |
+| PDL `griddepcontrol.launch_dependents/wait` | PDL signaling uses reserved space |
+| Runtime-injected operations (some compiler optimizations) | unpredictable usage |
+
+### When the Trick is Safe
+
+✓ Pure compute kernels (FFMA, vec ops)
+✓ Plain global memory load/store
+✓ `__syncthreads()` (uses HW barrier, not shmem)
+✓ Standard `__shared__` for user data
+✓ Standard atomics (HW operations)
+
+### Effective Per-Block Shmem
+
+| Configuration | Per-block max shmem |
+|---|---:|
+| 1 block per SM | 232,448 bytes (227 KiB) |
+| 2 blocks per SM | (228K - 2K) / 2 = 113,664 = 111 KiB |
+| 3 blocks per SM | (228K - 3K) / 3 = 76,288 = 74.5 KiB |
+| 4 blocks per SM (default) | (228K - 4K) / 4 = 57,344 = **56 KiB** |
+| **4 blocks per SM (with TRICK)** | **57,344 + 1024 = 58,368 = 57 KiB** ⭐ |
+| 5 blocks per SM | (228K - 5K) / 5 = 45,772 = ~44.7 KiB |
+| 6 blocks per SM | (228K - 6K) / 6 = 37,888 = 37 KiB |
+
+The trick doesn't help when fewer blocks/SM (N < 5), but unlocks 1 KiB extra per block when at 4+ blocks/SM.
+
+### Beyond 4 Blocks: Even Bigger Win
+
+For 8 blocks per SM, default max user shmem = 224K/8 = 28 KiB.  
+With trick: each block can use 28 + 1 = **29 KiB**.
+
+For 32 blocks per SM (= per-SM max): 224K/32 = 7 KiB → with trick 8 KiB (= 14% more).
+
+The smaller the blocks, the larger the percentage gain from stealing reserved.
+
+### Source
+
+`tests/shmem_steal_4per_sm.cu` and `tests/shmem_steal_verify.cu`.
+
