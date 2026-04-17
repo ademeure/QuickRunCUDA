@@ -16843,3 +16843,17 @@ ld.global.cg.f32  →  CCTL.IVALL (invalidate L1) + LDG.E (load from L2)
 **No special-value penalty on B300.** NaN propagation, Inf arithmetic, denormal handling, and zero computation all run at full FMA throughput. Even lane-heterogeneous patterns (half NaN) have zero cost.
 
 This differs from x86 CPUs where denormals can be 10-100× slower. NVIDIA's FMA unit handles all IEEE 754 special cases in hardware at full speed.
+
+
+# Shared Memory Padding: 5.8× Speedup for Column Access
+
+32×32 float tile, 128 threads (4 warps), 8192 iterations:
+
+| Access pattern | PAD=0 `[32][32]` | PAD=1 `[32][33]` | Speedup |
+|---------------|------------------:|------------------:|--------:|
+| Row-major (conflict-free) | 185 cy | 181 cy | 1.0× |
+| **Column-major** | **1024 cy** | **176 cy** | **5.8×** |
+
+**One padding element transforms column-major from 32-way bank conflict (5.5× slower) to conflict-free (slightly FASTER than row-major).** The stride changes from 32 (all threads hit same bank) to 33 (coprime with 32 → all banks used).
+
+**Always use `tile[N][N+1]`** for shared memory tiles that will be accessed in both row and column directions (matrix transpose, GEMM accumulator, attention score matrix). The 1-element padding wastes <4% smem but gives 5.8× column-access speedup.
