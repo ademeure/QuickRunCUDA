@@ -16887,3 +16887,24 @@ Single warp, no pending stores (minimum fence overhead):
 **CTA-scope fence is essentially free** (same cost as FMA baseline). GPU-scope costs ~270 cy for L2/NoC coherence. System-scope = 3031 cy (~1.5 µs) for PCIe/NVLink fabric acknowledgment.
 
 **With pending stores**: costs increase proportionally to store buffer depth. The numbers above are the MINIMUM — the fence instruction's own overhead without waiting for stores to drain.
+
+
+# Unified Pipeline Depth Comparison (All Functional Units)
+
+| Unit | Latency | Throughput | Depth (chains) | Pipe |
+|------|--------:|-----------:|--------------:|------|
+| **FFMA** | **4 cy** | **2.0 cy** | **2** | fma h+l |
+| HFMA2 (FP16×2) | 4 cy | 2.0 cy | 2 | fma h+l |
+| LOP3 / SHF / BFI / PRMT | 4 cy | 2.0 cy | 2 | alu |
+| **MUFU** (sin/cos/ex2/lg2) | **24 cy** | **8.4 cy** | **3** | xu |
+| **SHFL** (warp shuffle) | **26 cy** | **2.0 cy** | **13** | shuffle |
+| ld.shared (smem) | 24 cy | — | — | lsu |
+| ld.global (L1 hit) | 39 cy | 0.56 cy (8 ld) | ~70 | lsu |
+| ld.global (L2 hit) | 307 cy | — | — | lsu |
+| ld.global (DRAM) | 860 cy | — | — | lsu |
+
+**Shuffle is the deepest single-instruction pipeline** at 13 chains to saturate. This is why warp-level reductions (5 sequential shuffles) are expensive — each shuffle waits the full 26 cy latency since shuffles in a reduction tree are dependent.
+
+**MUFU is 3-deep** — only 3 independent exp/log/rsqrt chains needed to reach full throughput. For softmax (which uses 1 expf per element), the 24 cy latency is fully exposed.
+
+**FMA and ALU are only 2-deep** — dual-issue (fma_heavy + fma_lite) saturates with just 2 independent chains.
