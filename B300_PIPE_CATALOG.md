@@ -18149,3 +18149,21 @@ Each kernel uses 1 SM (1 block × 256 threads), launched on separate streams:
 **Busy polling is 9× faster than completed query** (0.12 vs 1.22 µs). When the GPU is still working, the query returns `cudaErrorNotReady` immediately in 0.12 µs. The "completed" path is slower (1.2 µs) because it involves driver state transition.
 
 **For async serving**: use tight poll loops with `cudaStreamQuery` — at 7M polls/sec, the CPU overhead is negligible. Prefer polling over `cudaStreamSynchronize` (1.26 µs blocking) for latency-sensitive request completion detection.
+
+
+# L1 Cache Effectiveness vs Occupancy
+
+192 KB working set pointer chase, varying warps per SM:
+
+| Warps/SM | L1 per warp | cy/chase | Degradation |
+|---------:|------------:|---------:|------------:|
+| 1 | 192 KB | 38.9 | 0% |
+| 2 | 96 KB | 38.9 | 0% |
+| 4 | 48 KB | 38.9 | 0% |
+| **8** | **24 KB** | **38.9** | **0% (sweet spot)** |
+| 16 | 12 KB | 40.9 | **5%** |
+| 32 | 6 KB | 46.6 | **20%** |
+
+**L1 cache is unaffected up to 8 warps/SM** (24 KB per warp). Beyond 8 warps, inter-warp cache thrashing increases latency by 5-20%.
+
+**For cache-sensitive kernels** (GEMM tiling, stencils, tree traversal): limit to ≤8 warps/SM. For streaming/memory-bound kernels (no reuse): maximize occupancy regardless — L1 isn't needed.
