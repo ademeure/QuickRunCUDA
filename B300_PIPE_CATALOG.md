@@ -17587,3 +17587,30 @@ nvcc on this cloud B300 REQUIRES `-arch=native` (or `-arch=sm_100a`). Without ex
 **Error checking is free.** `cudaGetLastError` and `cudaPeekAtLastError` read a thread-local variable — no GPU interaction. Use them liberally in production code.
 
 **`cudaDeviceSynchronize` costs 5.38 µs** (GPU→CPU sync round-trip). Avoid in tight loops. In production, check errors asynchronously via `cudaGetLastError` after each launch, and only sync at pipeline boundaries.
+
+
+# CUDA Cold Start Breakdown (Serverless Inference)
+
+| Phase | Time | Cumulative |
+|-------|-----:|-----------:|
+| **`cudaSetDevice(0)`** | **2116 ms** | 2116 ms |
+| First `cudaMalloc(4KB)` | 18 ms | 2134 ms |
+| Second `cudaMalloc` | 0.002 ms | — |
+| First kernel launch+sync | 0.08 ms | 2134 ms |
+| Second kernel (warmed) | 0.008 ms | — |
+| `cudaMalloc(1GB)` | 11 ms | — |
+| `cudaFree(1GB)` | 17 ms | — |
+| `cudaDeviceReset()` | 1400 ms | — |
+| **Full re-init after reset** | **1672 ms** | 1672 ms |
+
+## Serverless startup tiers
+
+| Tier | Time | What's preserved |
+|------|-----:|-----------------|
+| **Cold start** | **2116 ms** | Nothing (fresh process) |
+| **Warm start** | **18 ms** | CUDA context alive, need allocation |
+| **Hot start** | **0.008 ms** | Context + kernel cached |
+
+**`cudaSetDevice` = 2.1 seconds** — driver init, firmware load, context creation. This single call accounts for 99% of cold start. Keep containers warm to avoid it.
+
+**For serverless**: the 2.1s cold start is unavoidable on first invocation. Pre-warming the CUDA context reduces it to 18 ms (117× faster). Pre-caching compiled kernels reduces to 0.008 ms (>250,000× faster).
