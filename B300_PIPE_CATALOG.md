@@ -17529,3 +17529,25 @@ The M=1→2 algorithm switch explains the batch scaling discontinuity: batch=1 a
 **The model validates across 3 sizes to 96-97% accuracy.** The same building blocks (HBM BW=7.0 TB/s, kernel launch=2.05 µs, overhead=1.15×) predict decode throughput for 1B through 70B models.
 
 **Batch=64 reduces cost by 64×** — from $23/Mtok to $0.36/Mtok for Llama-70B. This is the fundamental economics of GPU LLM serving.
+
+
+# cudaMemcpyAsync D2D Throughput Curve
+
+| Size | Latency | BW (TB/s) | Regime |
+|-----:|--------:|----------:|--------|
+| 256 B | 2.5 µs | 0.00 | Overhead (2.4 µs floor) |
+| 64 KB | 2.4 µs | 0.03 | Overhead |
+| 1 MB | 3.2 µs | 0.33 | Overhead |
+| 4 MB | 4.2 µs | 1.01 | Transitioning |
+| **16 MB** | **6.2 µs** | **2.71** | **BW-limited starts** |
+| 64 MB | 25.1 µs | 2.67 | BW-limited |
+| 256 MB | 84.6 µs | 3.17 | Near-peak |
+| **1 GB** | **330.5 µs** | **3.25** | **Peak (93% of R+W HBM)** |
+
+**D2D copy dispatch = 2.4 µs** (same as kernel launch). Peak = 3.25 TB/s = 93% of HBM read+write bandwidth (copy reads AND writes, so effective HBM = 6.5 TB/s).
+
+**Weight prefetching implications:**
+- Llama-70B layer (137 MB BF16): ~43 µs to prefetch
+- Layer compute at batch=1: ~22 µs → **prefetch NOT hideable** (2× compute)
+- Layer compute at batch=8: ~22 µs → **prefetch fully hidden** (compute > copy)
+- **Minimum batch for free weight prefetching: ~4**
