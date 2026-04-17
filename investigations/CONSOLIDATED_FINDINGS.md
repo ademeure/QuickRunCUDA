@@ -299,3 +299,26 @@ No register spills up to 134 regs/thread.
 - 1-128 streams: 3.65 ms (1 wave)
 - 130+ streams: 7.34 ms (2 waves)
 - Sharp cliff exactly at 128
+
+### Branch Divergence Cost (1 warp, cy/iter)
+| Divergence | Cy/iter | Overhead |
+|---|---:|---:|
+| None | 4.0 | 1.00× |
+| 2-way if/else | 5.3 | 1.3× (compiler PREDICATES — nearly free) |
+| 4-way switch | 99.8 | 25× (real divergence) |
+| 32-way (lane-unique) | 1157 | 289× (fully serial) |
+
+**Key**: 2-way branches are basically free (compiler uses SELP). 4+ way requires real serialization.
+
+### Local Memory (Spill) Cost
+- **~20 cy per LMEM op** (1024 bytes/thread, runtime-indexed)
+- LMEM served from L1 cache
+- 20× slower than register access
+
+### Bit Manipulation Throughput (1 warp, cy/iter)
+| Op | Cy/iter |
+|---|---:|
+| LOP3.b32 | 4.16 |
+| PRMT.b32 | 4.03 |
+| BFE.u32 | 8.08 |
+- `__brev`, `__clz`, `__ffs` intrinsics: DCE'd in my test (compiler eliminated)
