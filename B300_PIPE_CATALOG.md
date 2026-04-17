@@ -17215,3 +17215,25 @@ The `__syncthreads()` cost at each smem stage depends on the **total CTA size** 
 | **Decode throughput** | | **~56 tok/s** | |
 
 Includes only GEMV time. Real throughput ~40 tok/s (measured in catalog) due to attention, RMSNorm, and KV cache overhead (~30% of total).
+
+
+# Batch Scaling: Memory→Compute Crossover (8192×8192 FP32 SGEMM)
+
+| Batch (M) | Latency | TFLOPS | Arith Intensity | Regime |
+|----------:|--------:|-------:|----------------:|--------|
+| 1 | 62 µs | 2.2 | 0.5 | **Memory-bound** |
+| 4 | 128 µs | 4.2 | 2.0 | Memory-bound |
+| 8 | 146 µs | 7.4 | 4.0 | Memory-bound |
+| **16** | **135 µs** | **15.9** | **8.0** | **Crossover** |
+| 32 | 181 µs | 23.7 | 15.9 | Compute-bound |
+| 64 | 176 µs | **48.7** | 31.5 | Near-peak |
+| 128 | 311 µs | 55.2 | 62.1 | Peak |
+| 512 | 1151 µs | **59.7** | 227.6 | **Peak (TF32)** |
+
+**The memory→compute crossover is at batch=16** (AI=8.0). Below batch=16, the GPU is mostly idle — 96% of compute is wasted on batch=1 decode. Above batch=64, the GPU reaches >80% of peak TFLOPS.
+
+**For LLM serving:**
+- **Batch=1 decode**: 2.2 TFLOPS (3.7% of peak) — entirely memory-bound
+- **Batch=16**: 15.9 TFLOPS — the minimum batch to efficiently use the GPU
+- **Batch=64+**: 48-60 TFLOPS — target this for prefill or batched decode
+- **Continuous batching with ≥16 concurrent requests** transforms the GPU from 4% → 27% → 80%+ efficiency
