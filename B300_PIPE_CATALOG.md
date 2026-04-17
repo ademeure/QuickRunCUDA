@@ -18104,3 +18104,17 @@ BF16 tensor sustained (962-971 W, 2196 TFLOPS):
 - CUDA context: 2.1 s
 - cuBLAS warmup: 1 s
 - **Total: ~89 s** (86 s disk + 3 s GPU setup)
+
+
+# DFMA (FP64) Pipeline: Zero Pipelining (Complete 1-8 Chain Sweep)
+
+| Chains | cy/iter | cy/DFMA | Scaling |
+|-------:|--------:|--------:|--------:|
+| 1 | 92.0 | 92.0 | 1.00× linear |
+| 2 | 183.0 | 91.5 | 1.00× linear |
+| 4 | 369.4 | 92.4 | 1.00× linear |
+| 8 | 739.0 | 92.4 | 1.00× linear |
+
+**DFMA scales perfectly linearly — ZERO pipelining.** Each chain adds exactly 92 cy. The FP64 unit executes one DFMA at a time, never overlapping. ILP gives zero benefit (and slightly hurts from scheduling overhead).
+
+**DFMA latency = 92 cy.** For FP64: use warp-level TLP (more warps), not ILP.
