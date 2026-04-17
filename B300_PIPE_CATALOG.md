@@ -17061,3 +17061,32 @@ Both static (`__shared__ float s[N]`) and dynamic (`extern __shared__ float d[]`
 | HW reduce (23 cy) | smem tree (212 cy) | **9.2×** |
 | 8+ warps/SM | 1-2 warps/SM | **6× BW** |
 | CUDA graphs | per-kernel launch | **~50×** (for 100 tiny kernels) |
+
+
+# Power Draw per Workload Type (148 SMs × 1024 Threads, NVML Sampled)
+
+| Workload | Peak power | Above idle (~200 W) | Relative |
+|----------|----------:|---------:|---------:|
+| **Heavy FMA** (4 chains) | **~390 W** | **190 W** | **1.0×** |
+| Heavy ALU (LOP3) | ~320 W | 120 W | 0.63× |
+| Heavy MUFU (sin) | ~260 W | 60 W | 0.32× |
+| Streaming DRAM read | ~210 W | 10 W | 0.05× |
+| Idle baseline | 200 W | 0 W | — |
+
+**FMA draws 3× more incremental power than MUFU.** The FMA unit's 32-wide vector multiplier-adder switches more transistors per clock than MUFU's lookup-table implementation.
+
+**Memory-bound workloads are power-efficient** (~210 W = barely above idle). Compute-bound FMA kernels at ~390 W are well below the 1100 W TDP — full-chip tensor core workloads (788 W measured for BF16 sustained) draw the most.
+
+**Power efficiency**: FMA throughput (38 TFLOPS) at 390 W = **97 GFLOPS/W**. BF16 tensor (1844 TFLOPS) at 788 W = **2340 GFLOPS/W** — tensor cores are 24× more power-efficient per FLOP.
+
+
+# Integer Multiply Width Scaling
+
+| Operation | cy (dep chain) | Pipe | Notes |
+|-----------|---------------:|------|-------|
+| IMAD s32 (`mad.lo.s32`) | **4.1** | fma | Same as FFMA |
+| IMAD.WIDE (`mad.wide.s32`, 32→64) | 2.1 | fma | Dual-issue or fast path |
+| IMAD s16 (`mad.lo.s16`) | 10.1 | alu+fma | Sign-extend + truncate overhead |
+| IMAD s64 (`mad.lo.s64`) | **11.4** | alu+fma | **2.8× slower than s32** (multi-op emulation) |
+
+**32-bit integer multiply is native** at FFMA speed (4 cy). 64-bit and 16-bit multiplies are emulated with multiple 32-bit operations — 2.5-2.8× overhead. Use 32-bit integers whenever possible.
