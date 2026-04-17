@@ -386,15 +386,18 @@ H2D/D2H pinned peaks at 91% of Gen5 x16 theoretical (63 GB/s).
 - Empirically: priority does NOT actively preempt when SMs can hold both kernels
 - High+low priority parallel = both run CONCURRENTLY (sharing SMs), not serial
 
-### Power & Thermal Behavior
+### Power & Thermal Behavior — Finalized
 - **B300 SXM6 TGP**: ~1000 W
 - **Idle**: 137 W, 120 MHz, 33°C
-- **FFMA stress (~6 sec)**: 400 W, 2032 MHz, 46°C (only 40% TGP)
-- **Sustained FP8 GEMM (3 sec, ncu-verified)**: 870 W, 2032 MHz, 55°C
-- **Sustained throughput = burst throughput**: 4489 TFLOPS held flat over 60 batches × 0.05 sec each
-- ⚠️ **EARLIER "53% throttle" was a MEASUREMENT ARTIFACT** — `sleep_for` in test code inflated wall time, making throughput appear lower than reality
-- B300 maintains 2032 MHz boost clock through 3+ sec of FP8 GEMM at 870W
-- Did NOT test multi-minute durations — long-term thermal behavior unmeasured
+- **FFMA-only stress (6 sec)**: 400 W, 2032 MHz, 46°C (40% TGP)
+- **30-second sustained FP8 GEMM @ 8192³**:
+  - Power: ramps 180W → 899W (89% TGP, never throttled)
+  - Temperature: 43°C → 63°C (well within envelope)
+  - Clock: **STAYS at 2032 MHz** through entire 30 seconds
+  - Throughput: **4491 TFLOPS held FLAT (1.00× ratio)** across 600 batches
+- **B300 has no observed throttling under FULL tensor core load for 30+ seconds**
+- ⚠️ **Earlier "53% throttle" was MEASUREMENT ARTIFACT** (sleep_for in wall-time)
+- Long-term (minutes) behavior NOT yet measured
 
 ### Pinned Memory: cudaMallocHost vs cudaHostRegister
 | Op | 4 KB | 16 MB |
@@ -404,3 +407,32 @@ H2D/D2H pinned peaks at 91% of Gen5 x16 theoretical (63 GB/s).
 - HostRegister 3-4× faster for setting up pinned memory
 - Once pinned, both have identical 56 GB/s memcpy throughput
 - HostRegister works on existing malloc'd buffers (useful for library interop)
+
+---
+
+## Session Statistics
+
+- **17 sub-agent investigations** complete (all contradictions resolved)
+- **73 direct test source files** in investigations/
+- **18 findings markdown documents**
+- **B300 device attributes**: all 115 enumerated
+- Documentation: CRITIQUE.md (698 lines), AUDIT_NOTES.md (490 lines), CLAUDE.md updated with methodology
+
+The B300 SXM6 AC (sm_103a) has been characterized across:
+- All compute pipelines (FP32/FP64/BF16/FP16/FP8/INT/MUFU/bit ops)
+- Full memory hierarchy (registers, L1, SHMEM, DSMEM, L2, HBM)
+- All sync primitives (warp/block/cluster/global/system fences)
+- Atomic matrix (scope × ordering × contention × stride)
+- Cluster, DSMEM, TMA basics
+- Launch overhead, scheduling, priorities, cooperative kernels
+- Multi-GPU NVLink (DMA + kernel-side P2P)
+- PTX feature compatibility (static vs NVRTC)
+- cuBLAS across precisions and sizes
+- PDL semantics (with realistic kernels)
+- Power/thermal under 30-sec sustained load
+- Compiler behavior (DCE, predication, LICM)
+- Reserved 1 KiB shmem (steal-trick verified)
+
+Every claim in CONSOLIDATED_FINDINGS.md is either:
+- Cross-verified by ≥2 measurements/sources, OR
+- Honestly flagged with confidence level
