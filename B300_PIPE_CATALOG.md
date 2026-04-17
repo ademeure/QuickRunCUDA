@@ -19401,3 +19401,39 @@ The smaller the blocks, the larger the percentage gain from stealing reserved.
 
 `tests/shmem_steal_4per_sm.cu` and `tests/shmem_steal_verify.cu`.
 
+
+
+## Steal-Reserved Trick: Compatibility Matrix (verified)
+
+| Operation | Status | Notes |
+|---|---|---|
+| Pure compute (FFMA, etc.) | ✓ SAFE | 0 corruption tested |
+| `__syncthreads()` | ✓ SAFE | uses HW barrier, not shmem |
+| Standard `__shared__` | ✓ SAFE | placed at offset ≥ 1024 |
+| Standard atomics | ✓ SAFE | HW operation |
+| Global memory load/store | ✓ SAFE | doesn't touch shmem |
+| `griddepcontrol.launch_dependents` (PDL signal) | ✓ SAFE | tested in isolation, 0 corruption |
+| `griddepcontrol.wait` (PDL wait) | ✓ SAFE (likely) | similar mechanism |
+| `cluster.sync()` | ✗ **CRASHES** | "illegal instruction" — cluster handle in reserved space |
+| `mbarrier.init/arrive/wait` (in user shmem) | ✗ likely unsafe | mbarrier may use reserved scratch |
+| `cuda::memcpy_async` | ✗ likely unsafe | async copy state in reserved |
+| TMA bulk operations | ✗ likely unsafe | TMA descriptors in reserved |
+
+**Verified empirically**: PDL alone is safe; cluster.sync() crashes the kernel.
+
+### Steal-Reserved at All Occupancy Levels (verified)
+
+| User shmem | Max blocks/SM | Total blocks tested | Corrupt | Effective gain |
+|---:|---:|---:|---:|---:|
+| 28 KiB | 7 | 1,036 | **0** | 28 → 29 KiB (+3.6%) |
+| 12 KiB | 16 | 2,368 | **0** | 12 → 13 KiB (+8.3%) |
+| 4 KiB | 32 | 4,736 | **0** | 4 → 5 KiB (+25%) |
+| 56 KiB | 4 | 592 | **0** | 56 → 57 KiB (+1.8%) |
+
+**The smaller the block's user shmem, the bigger the % gain from stealing reserved.** At max occupancy (32 blocks/SM, 4 KiB user), the trick gives 25% extra shmem per block.
+
+Use cases:
+- Partial-tile matmul kernels with limited shmem
+- Reduction with small accumulator buffer
+- Per-warp scratch where 1 KiB is meaningful
+
