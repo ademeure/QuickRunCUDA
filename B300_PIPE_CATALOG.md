@@ -17443,3 +17443,21 @@ The M=1→2 algorithm switch explains the batch scaling discontinuity: batch=1 a
 | Heavy batch | 256 | 31.5 | ~9900 | 0.006× |
 
 **At batch=64: 63× more tokens per second for 0× more latency.** This is the fundamental reason GPU serving is economical only with batching.
+
+
+# Gather/Scatter Throughput (Non-Contiguous Access Patterns)
+
+148 blocks × 256 threads, 512 MB table, 256 iterations:
+
+| Access pattern | BW (TB/s) | % of HBM peak | Use case |
+|---------------|----------:|--------------:|----------|
+| Coalesced sequential (v1) | 1.74 | 25% | Baseline streaming |
+| **Strided (1 CL apart)** | **0.27** | **4%** | Worst case (stride-32) |
+| Random gather (index array) | 2.72 | 39% | Hash tables, sparse ops |
+| **Embedding lookup (v4 rows)** | **1.14** | **16%** | KV cache, embeddings |
+
+**Random gather achieves 39% of HBM** — better than sequential (25%) because random addresses spread across L2/DRAM banks for better parallelism. Sequential access concentrates traffic on fewer banks.
+
+**KV cache / embedding pattern (v4 row reads)** at 1.14 TB/s = 16% of HBM. This is the bandwidth limit for paged attention with non-contiguous KV blocks. Each warp reads from 32 different rows, creating 32-way address divergence.
+
+**Practical for attention**: with head_dim=128 (512B per KV vector) and seq_len=2048, the KV cache read per head = 2048 × 512B = 1 MB. At 1.14 TB/s: 1 MB / 1.14 TB/s ≈ 0.9 µs per head. For 64 heads: ~56 µs — comparable to the GEMV weight loading.
