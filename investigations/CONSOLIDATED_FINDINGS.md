@@ -199,3 +199,103 @@ Clock context: B300 SXM6 AC defaults to 2032 MHz boost, but `nvidia-smi -lgc 203
 - Agent 12: L1 size at all carveouts
 - Agent 13: Atomic peak 137 vs 372 G/s
 - Agent 14: DFMA zero-pipelining claim
+
+ALL 17 AGENTS NOW COMPLETE (as of 2026-04-17).
+
+---
+
+## Additional Direct Measurements (post-agents)
+
+### Math Function Throughput (Gops/s per SM, 2032 MHz)
+| Function | Gops/s/SM |
+|---|---:|
+| `exp2f` (MUFU.EX2) | **34.9** |
+| `__expf` | 30.6 |
+| `sqrtf`, `rsqrtf`, `__logf`, `log2f` | 22.5 |
+| `__sinf`, `__cosf` | 20.6 |
+| `__tanf` | 8.7 |
+| `__frcp_rn` (precise) | **3.8** |
+
+### Integer Arithmetic (ILP=8, 4 warps/SM)
+| Op | Gops/s/SM |
+|---|---:|
+| `int add`, `shl` | 84 |
+| `int mad.lo`, `mul`, `xor` | 75 |
+| `__popc` | 24 |
+
+### Warp Primitives (cycles)
+| Op | Cycles |
+|---|---:|
+| `__ballot_sync` | 2.28 |
+| `__syncwarp` | 2.86 |
+| `__popc` | 9.7 |
+| `__shfl_xor/down/up_sync` | 24 |
+| `__shfl_sync` (indexed) | 26 |
+
+### Sync / Fence Costs (cycles)
+| Primitive | Cycles |
+|---|---:|
+| `__syncwarp` | 2.86 |
+| `fence.sc.cta` | 8 |
+| `membar.cta` | 9 |
+| `__syncthreads` (128 thr) | 20 |
+| `fence.acq_rel.cta` | 9.3 |
+| `fence.acq_rel.gpu` | 271 |
+| `membar.gl` | 272 |
+| `fence.sc.gpu` | 277 |
+| `cluster.sync` (c=2..8) | 353-381 |
+| `membar.sys` | 1683 |
+| `fence.sc.sys` | 2883 |
+
+### Memory API Costs (per call, warm)
+| API | Time | Notes |
+|---|---:|---|
+| `cudaMallocAsync + Free` | **0.31 µs** | Constant (any size) |
+| `cudaMemset 1 MB` | 1.86 µs | Likely uses async engine |
+| `cudaMemcpyAsync 4 KB + sync` | 7.1 µs | |
+| `cudaMemcpy 4 KB H2D` | 7.7 µs | |
+| `cudaMemcpy 4 KB D2H` | 9.0 µs | |
+| `cudaMalloc+Free ≤16 MB` | 68 µs | Size-independent for small |
+| `cudaMalloc+Free 256 MB` | 217 µs | |
+| `cudaMallocHost+Free 4 KB` | **415 µs** | Pinned — 6× SLOWER than cudaMalloc |
+| `cudaMallocHost+Free 16 MB` | **2907 µs** | |
+
+### mbarrier Primitives (cycles, single warp)
+| Op | Cycles |
+|---|---:|
+| `mbarrier.init` | 6.4 |
+| `mbarrier.arrive` | 14 |
+| `mbarrier.test_wait` (passed) | 63 |
+| `mbarrier.try_wait` (passed) | 35 |
+
+### SHMEM Atomics (cycles per atomic, single warp)
+| Pattern | Cycles |
+|---|---:|
+| `atomicAdd` uncontended (per-thread) | 4.6 |
+| `atomicAdd` warp-contended (HW reduction) | 8.0 |
+| `atomicCAS` | 6.1 |
+
+### Register Pressure (ILP=N independent FFMA chains, 148×128)
+| Chains (regs/thread) | Peak TFLOPS (chip) |
+|---:|---:|
+| 4 (12 regs) | 6.7 (under-saturated) |
+| 16 (21 regs) | 35.5 |
+| 64 (70 regs) | 57.6 |
+| **96 (102 regs)** | **61.4 (peak)** |
+| 128 (134 regs) | 56.3 (occupancy drops) |
+No register spills up to 134 regs/thread.
+
+### PTX Static Support (sm_103a, CUDA 13.2 ptxas)
+- ✓ mbarrier, cp.async.bulk (TMA), atom.acq_rel.sys, ld.global.nc
+- ✗ wgmma, tcgen05.alloc, tcgen05.fence, atom.seq_cst, barrier.cluster.sync
+- tcgen05 DOES work via NVRTC (Agent 03 + my verification)
+
+### TMA cp.async.bulk (GMEM → SHMEM)
+- Aggregate: 1633 GB/s (likely under-peaked due to mbarrier wait overhead)
+
+### Cooperative launch overhead: +32 ns vs plain launch (essentially free)
+
+### 128 concurrent kernel slot limit (verified)
+- 1-128 streams: 3.65 ms (1 wave)
+- 130+ streams: 7.34 ms (2 waves)
+- Sharp cliff exactly at 128
