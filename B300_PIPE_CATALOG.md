@@ -17839,3 +17839,34 @@ B300 supports 6 priority levels (-5 highest to 0 lowest).
 **For Llama-70B serving**: 8 kernels/layer × 80 layers = 640 kernels. Graph saves 640 × 2 µs = **1.3 ms/token** (~5% of 24 ms decode time).
 
 **Rule**: always use CUDA graphs for repeated kernel sequences. Even 1 kernel gives 1.5×. Breakeven is immediate — no minimum kernel count.
+
+
+# Llama-70B BF16 Decode: Per-Layer Time Breakdown
+
+Single B300, 2032 MHz, batch=1, context=1024:
+
+| Component | µs | % | Bottleneck |
+|-----------|---:|--:|-----------|
+| **Gate projection** | **67.1** | **25.4%** | HBM (470 MB weight) |
+| **Up projection** | **67.1** | **25.4%** | HBM (470 MB weight) |
+| **Down projection** | **67.1** | **25.4%** | HBM (470 MB weight) |
+| QKV projection | 24.0 | 9.1% | HBM (168 MB weight) |
+| O projection | 19.2 | 7.3% | HBM (134 MB weight) |
+| Graph launch (10 kernels) | 10.7 | 4.1% | CPU dispatch |
+| RMSNorm (×3) | 6.0 | 2.3% | Elementwise |
+| SiLU + RoPE | 2.0 | 0.8% | Elementwise |
+| **Attention (fused)** | **0.6** | **0.2%** | KV cache (4 MB) |
+| **TOTAL per layer** | **263.8** | **100%** | |
+
+## Category breakdown
+
+| Category | µs | % of layer |
+|----------|---:|----------:|
+| **GEMV (weight loading)** | **244.5** | **92.7%** |
+| Launch overhead | 10.7 | 4.1% |
+| Elementwise | 8.0 | 3.0% |
+| Attention | 0.6 | 0.2% |
+
+**92.7% of decode time is loading weights from HBM.** The GPU's 1806 TFLOPS BF16 tensor capacity is 99.8% idle at batch=1. Only batching (≥16 requests) or weight compression (FP8/FP4) can improve this.
+
+**MLP dominates**: Gate + Up + Down = 76.3% of layer time (201 µs). These three GEMVs load 1.4 GB of weights per layer — the primary optimization target for decode throughput.
