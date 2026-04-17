@@ -16381,3 +16381,16 @@ Single-thread pointer chase through pre-built linked list (data-dependent loads,
 **Practical**: For pointer-heavy data structures (linked lists, trees, hash tables), pad node sizes to multiples of 2 KB to keep L2 partition locality. This gives a free 19% latency reduction.
 
 **vs. random chase at 128 MB (existing measurement: 14351 cy)**: the 16× difference is almost entirely TLB miss overhead. The stride-chase pattern keeps the TLB warm (sequential page access). True random access pays both DRAM + TLB walk = ~7 µs.
+
+
+# Hardware Memory Compression: NOT Active on B300
+
+| Data pattern | v4 read (TB/s) | v8 read (TB/s) | v4 write (TB/s) |
+|-------------|---------------:|---------------:|----------------:|
+| **All-zero** | 7.16 | 7.03 | 7.18 |
+| **Random** | 7.13 | 7.01 | 7.14 |
+| **Ratio** | **1.004** | **1.003** | **1.005** |
+
+**No hardware memory compression visible.** Zero and random data produce identical DRAM bandwidth within 0.5% noise. B300 transfers full-width cache lines regardless of data content. NVIDIA's DCC (Delta Color Compression) either isn't active for compute workloads or doesn't affect measured bandwidth at the DRAM interface.
+
+**Practical**: Don't count on zeros being "free" in memory traffic. Weight sparsity saves compute (via structured sparsity / FP4) but not memory bandwidth.
