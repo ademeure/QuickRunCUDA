@@ -71,6 +71,18 @@ Clock context: B300 SXM6 AC defaults to 2032 MHz boost, but `nvidia-smi -lgc 203
 - DRAM-bound = only 10-14 Gops/s
 - "2.7× coalescing speedup" claim was actually L2 residency effect
 
+### L1 Cache Structure (Agent 12)
+- **L1 + SHMEM = 256 KB unified pool** per SM (confirmed at every carveout)
+- L1 hit latency: **42-45 cy** at 2032 MHz (confirmed via ca vs cg: ca=40, cg=552 at 8 KB WS)
+- L1 sizes by carveout:
+  - co=0 (max L1): 228 KB L1, 28 KB SHMEM
+  - co=25: 192 KB L1, 64 KB SHMEM
+  - co=50: 128 KB L1, 128 KB SHMEM
+  - co=75: 52-56 KB L1, 200 KB SHMEM
+  - co=100 (max SHMEM): 20-22 KB L1, 234 KB SHMEM
+- **Default carveout = high-SHMEM / minimal-L1** (kernels need explicit setattr(co=0) for full L1)
+- Earlier catalog claims "L1=32/128/192 KB" all correct at different carveouts
+
 ### FP64 DFMA
 - **Peak: 1.20 TFLOPS at 2032 MHz** (Agent 14; FP32/64 ratio = 64, matches 76.96/64 = 1.203)
 - **Zero-pipelined per warp**: 64 cy spacing between DFMA issues, despite 16-cy FP64 pipe depth (25% util per warp)
