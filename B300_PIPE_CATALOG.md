@@ -17708,3 +17708,52 @@ Linear scaling. No batching benefit — each alloc is independently O(1).
 | **Warm → cold ratio** | **650×** | **Keep containers warm!** |
 
 **For serverless**: the 650× warm/cold ratio means keeping GPU containers pre-warmed is 650× more responsive. Weight loading dominates cold start — invest in faster storage (NVMe Gen5, RDMA) to reduce it.
+
+
+# ═══════════════════════════════════════════════════════
+# B300 QUICK REFERENCE CARD
+# ═══════════════════════════════════════════════════════
+
+## Hardware
+148 SMs × 4 SMSPs, 2032 MHz boost, 288 GB HBM3E, 12 HBM stacks, 18 NVLink v7
+
+## The 20 Numbers Every GPU Programmer Needs
+
+| # | What | Value |
+|---|------|------:|
+| 1 | FMA latency | **4 cy** |
+| 2 | MUFU (exp/sin) latency | **24 cy** |
+| 3 | Shuffle latency | **26 cy** |
+| 4 | Smem latency | **24 cy** |
+| 5 | L2 latency | **307 cy** |
+| 6 | HBM latency | **860 cy** |
+| 7 | HBM bandwidth | **7.0 TB/s** |
+| 8 | Smem bandwidth (v4) | **37.7 TB/s** |
+| 9 | BF16 tensor peak | **1806 TFLOPS** |
+| 10 | FP32 peak (TF32) | **65.8 TFLOPS** |
+| 11 | Kernel launch | **2.05 µs** |
+| 12 | Pool alloc | **0.31 µs** |
+| 13 | Barrier (256 thr) | **30 cy** |
+| 14 | Batch crossover | **16** (mem→compute) |
+| 15 | Min warps for BW | **8/SM** (60% HBM) |
+| 16 | Min load width | **float2** (v1 wastes 57%) |
+| 17 | Cold start | **2.1 s** (cudaSetDevice) |
+| 18 | cuBLAS JIT warmup | **36-74 ms** (per shape) |
+| 19 | Power (FMA) | **386 W** |
+| 20 | Llama-70B decode | **42 tok/s** (batch=1) |
+
+## The 5 Biggest Wins
+
+| Optimization | Speedup |
+|-------------|--------:|
+| Use memory pool, not cudaMalloc | **64,500×** |
+| Use `__reduce_max_sync`, not shuffle tree | **9.2×** |
+| Coalesce (stride-1 vs stride-32) | **8.7×** |
+| Pad smem `[32][33]` for column access | **5.8×** |
+| Batch ≥16 for compute efficiency | **16× TFLOPS** |
+
+## This Catalog
+
+17,700+ lines | 150+ commits | 349 sections | 7,200+ table rows
+Validated: 96-97% accuracy across 3 LLM model sizes
+Scope: 4 cy FMA → 7 TB/s HBM → 1806 TFLOPS → $0.36/Mtok
