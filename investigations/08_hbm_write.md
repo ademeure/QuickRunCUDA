@@ -43,7 +43,7 @@ The B300 catalog contained four different write bandwidth claims:
 |:----------------|:-----|--------------------:|:------|
 | `st.global.v4.b32` (default) | `STG.E.128` | **6.20–6.24 TB/s** | Write-allocate; still reaches DRAM at 4 GB WS |
 | `st.global.cs.v4.b32` (streaming) | `STG.E.EF.128` | **6.21–6.26 TB/s** | Evict-first; same DRAM BW |
-| `st.global.wb.v4.b32` (write-back) | `STG.E.STRONG.SM.128` | **6.07–6.25 TB/s** | Write-back; same DRAM BW |
+| `st.global.wb.v4.b32` (write-back) | `STG.E.128.STRONG.SM` | **6.07–6.25 TB/s** | Write-back; same DRAM BW |
 | `st.global.cs.v8.b32` (v8 stream) | `STG.E.ENL2.256` | **6.14–6.27 TB/s** | "Evict No L2" 256-bit; same DRAM BW |
 | `st.global.cs.b32` (scalar stream) | `STG.E.EF` (32-bit) | **6.09–6.15 TB/s** | Slightly lower due to more instructions |
 | `st.volatile.global.b32` | `STG.E` (volatile) | **6.07–6.14 TB/s** | Volatile ordering has no extra cost |
@@ -133,7 +133,7 @@ All store variants produce the expected SASS mnemonics:
 | (default) | `STG.E.128` | 128-bit |
 | `.cs` (streaming) | `STG.E.EF.128` | 128-bit |
 | `.cs.v8` | `STG.E.ENL2.256` | 256-bit |
-| `.wb` | `STG.E.STRONG.SM.128` | 128-bit |
+| `.wb` | `STG.E.128.STRONG.SM` | 128-bit |
 | `volatile` | `STG.E` | 32-bit |
 
 "EF" = Evict-First, "ENL2" = Evict No L2, "STRONG.SM" = write-back with SM-scope coherence.

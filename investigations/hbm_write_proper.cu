@@ -24,7 +24,7 @@
 //   3 = st.global.cs.b32     (scalar + streaming hint)   -> STG.E.EF
 //   4 = st.global.cs.v4.b32  (v4 + streaming hint)       -> STG.E.EF.128
 //   5 = st.global.wb.b32     (scalar + write-back hint)  -> STG.E.STRONG.SM
-//   6 = st.global.wb.v4.b32  (v4 + write-back hint)      -> STG.E.STRONG.SM.128
+//   6 = st.global.wb.v4.b32  (v4 + write-back hint)      -> STG.E.128.STRONG.SM
 //   7 = st.volatile.global.b32 (volatile scalar)         -> STG.E (volatile)
 //   8 = st.global.cg.v4.b32  (v4 + cache-global hint)   -> STG.E.128 (L1 bypass)
 //
