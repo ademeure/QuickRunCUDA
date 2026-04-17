@@ -4,6 +4,9 @@
 //   B300_PIPE_CATALOG §30.H: "only 0.8% slower than local SMEM"
 //   AUDIT_NOTES / dsmem_v2.cu:  "4.7× slower"
 //
+// ANSWER: DSMEM is ~8× slower in latency and ~9× slower in throughput (ILP=4).
+//         See investigations/04_dsmem_overhead.md for full analysis.
+//
 // ROOT CAUSE (confirmed in SASS):
 //   §30.H: bench_dsmem.cu loop body contains only XOR+counter+branch.
 //   The LDS R3,[R8+UR5] (DSMEM load) appears BEFORE the loop — ptxas hoisted it.
@@ -11,18 +14,30 @@
 //   Same LICM happened for the local SMEM variant. Both showed ~23 cy because
 //   both measured loop overhead.
 //
-//   dsmem_v2: wall-clock, FADD chain → latency-bound, single-threaded, and
-//   init values were partially compile-time-computable → DCE risk.
+//   dsmem_v2: wall-clock, FADD chain → latency-bound, single-threaded.
+//   Ratio was 4.7×, but the true latency ratio is ~8×.
 //
-// THIS TEST: dependent pointer chain where the load INDEX is derived from the
-//   previous load's result. The mapa is computed ONCE (peer_smem_base as uniform
-//   register), then each iteration: LDS cur, [cur*4 + peer_smem_base].
-//   Compiler cannot hoist the load because its result feeds the next address.
+// SASS MECHANISM (B300):
+//   ld.shared::cluster.u32 with scalar-register address compiles to LD.E (global
+//   load via shared-memory window), NOT LDS. The mapa result is combined with
+//   SR_SWINHI via PRMT+IMAD to form a 64-bit global window address, then LD.E
+//   issues a global load into the peer SM's shared memory. This is correct — the
+//   hardware maps peer smem into global address space. The cost is L2/interconnect
+//   latency (~224 cy) vs local shared memory crossbar latency (~28 cy).
 //
-// SASS verification:
-//   lat_local:  LDS R0, [R0]  — R0 = next index * 4 + smem_base (compact)
-//   lat_dsmem2: LDS R0, [R0+UR5]  — R0 = offset, UR5 = peer_smem_base (mapa'd)
-//   This is the correct DSMEM instruction emitted by ptxas.
+// CRASH NOTE:
+//   Dependent DSMEM chains crash non-deterministically. Crash rate ~50% for
+//   cluster=2 at ≥50 iterations; cluster=4 at ≥10 iterations. When successful,
+//   results are extremely consistent. Use small iteration counts per launch.
+//   See /tmp/dsmem_isolate for the standalone reliable test binary.
+//
+// MEASURED RESULTS (B300, 1920 MHz):
+//   local SMEM latency:  28.0 cy/load  (5000-iter chain, SASS: LDS R0,[R0+UR5])
+//   DSMEM latency:      224 cy/load  (50-iter chain, cluster=2)
+//   DSMEM latency:      201 cy/load  (5-iter chain, cluster=4 and cluster=8)
+//   local SMEM tp ILP4:   7.0 cy/load
+//   DSMEM tp ILP4:       63.5 cy/load
+//   Latency ratio: ~8×   Throughput ratio: ~9×
 //
 // Compile: nvcc -arch=sm_103a -O3 -o dsmem_definitive investigations/dsmem_definitive.cu
 // Prereq:  nvidia-smi -lgc 2032 -i 0

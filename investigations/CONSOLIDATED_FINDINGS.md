@@ -80,6 +80,17 @@ Clock context: B300 SXM6 AC defaults to 2032 MHz boost, but `nvidia-smi -lgc 203
 - Scope ordering has negligible effect on DRAM-bound throughput
 - "2.7× coalescing speedup" claim was actually L2 residency effect
 
+### DSMEM (Agent 04) — RESOLVED
+- **Local SMEM latency: 28 cy/load** (dependent chain, single warp)
+- **DSMEM latency: 201-224 cy/load** = **7-8× slower** than local SMEM
+- **Throughput ratio (ILP=4)**: DSMEM 63.5 cy/load vs local 7 cy = **9× slower**
+- Cluster size (2/4/8) minimally affects DSMEM latency (~201-224 cy)
+- SASS: `ld.shared::cluster` compiles to **LD.E (global-scope load)** via PRMT+IMAD address construction
+- DSMEM traverses L2/interconnect — hence higher latency than local SMEM crossbar
+- Catalog's "0.8% slower" claim was LICM artifact (ptxas hoisted load out of loop, confirmed via SASS)
+- Catalog's "4.7× slower" was latency measured via FADD-serialized accumulator (real latency is ~8×)
+- **Non-deterministic crashes** observed on DSMEM dependent chains (~50% at cluster=2 w/ 50+ iters)
+
 ### L1 Cache Structure (Agent 12)
 - **L1 + SHMEM = 256 KB unified pool** per SM (confirmed at every carveout)
 - L1 hit latency: **42-45 cy** at 2032 MHz (confirmed via ca vs cg: ca=40, cg=552 at 8 KB WS)
