@@ -19437,3 +19437,37 @@ Use cases:
 - Reduction with small accumulator buffer
 - Per-warp scratch where 1 KiB is meaningful
 
+
+
+## Steal-Reserved: Performance Caveat
+
+The trick adds 1 KiB of usable shmem per block. But ACCESSING the stolen region requires raw PTX (`ld.shared/st.shared` with an explicit offset), which the compiler cannot inline alongside normal `__shared__` array indexing.
+
+For a hot loop that accesses BOTH compiler-managed and stolen regions, the branch overhead can offset the gain from more blocks/SM:
+
+Test (256 threads/block, ITERS=5000, 57 KiB target):
+| Mode | Blocks | Per-block time | Total throughput |
+|---|---:|---:|---:|
+| 57 KiB declared, 3 blocks/SM (no trick) | 444 | 0.277 us | 4621 Mops/ms |
+| 56 KiB compiler + 1 KiB stolen (trick), 4 blocks/SM | 592 | 0.372 us | 3441 Mops/ms (**0.74×**) |
+
+In this synthetic test, the trick loses 26% throughput because the inner loop branches between compiler buf and stolen region.
+
+### Use the trick for SETUP/COLD data only:
+- Constants/lookup tables initialized once
+- Atomic counters (rarely contended)
+- Per-warp scratch space
+- Initialization metadata
+- Result accumulators (written at end)
+
+### DON'T use for hot data:
+- Tile data accessed every iteration
+- High-traffic shared accumulators
+- Anywhere a tight loop reads/writes
+
+When the trick wins:
+- Kernel ABSOLUTELY needs 57 KiB (correctness)
+- Without trick → 3 blocks/SM (lose 25% parallelism)
+- With trick → 4 blocks/SM but accept some slowdown
+- Net depends on your specific access pattern
+
