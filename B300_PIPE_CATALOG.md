@@ -17013,11 +17013,11 @@ Single warp, no pending stores (minimum fence overhead):
 **Practical**: For LLM inference at batch=1, all GEMVs have AI < 1 → completely memory-bound. Only at batch ≥ 128 do GEMMs cross into compute-bound territory (AI ≈ 128 for large square GEMMs).
 
 
-# nvcc clock64 Disabled on This Cloud Host
+# nvcc on B300: `-arch=native` Required
 
-`clock64()` returns 0 in nvcc-compiled standalone binaries on this cloud B300. NVRTC-compiled kernels (via QuickRunCUDA's CUDA driver API path) have working clock counters. This is likely a **cloud provider isolation measure** — clock access may require specific driver context flags that NVRTC sets but standalone nvcc doesn't.
+**CORRECTION**: Earlier "clock64 disabled" finding was caused by **nvcc arch mismatch**, not a cloud restriction. Without `-arch=native` (or `-arch=sm_100a`), nvcc targets a default SM incompatible with sm_103a. Kernels silently fail with "unsupported toolchain" error — returning zero output and zero clock values.
 
-**Workaround**: Use NVRTC or CUDA events for timing on cloud B300s. All measurements in this catalog use NVRTC-compiled kernels with working clock64.
+**Fix**: Always compile with `nvcc -arch=native` on B300. With correct arch, clock64 and all kernel features work normally. NVRTC (QuickRunCUDA) auto-detects the arch and is unaffected.
 
 
 # Dynamic vs Static Shared Memory: Zero Difference (Architectural)
@@ -17066,19 +17066,20 @@ Both static (`__shared__ float s[N]`) and dynamic (`extern __shared__ float d[]`
 | 256-thread CTA | 1024-thread CTA | **2× faster reduce** |
 
 
-# Power Draw per Workload Type (148 SMs × 1024 Threads, NVML Sampled)
+# Power Draw per Workload Type (Sustained, Correctly Compiled)
 
-| Workload | Peak power | Above idle (~200 W) | Relative |
-|----------|----------:|---------:|---------:|
-| **Heavy FMA** (4 chains) | **~390 W** | **190 W** | **1.0×** |
-| Heavy ALU (LOP3) | ~320 W | 120 W | 0.63× |
-| Heavy MUFU (sin) | ~260 W | 60 W | 0.32× |
-| Streaming DRAM read | ~210 W | 10 W | 0.05× |
-| Idle baseline | 200 W | 0 W | — |
+| Workload | Sustained power | Above idle (196 W) |
+|----------|----------:|---------:|
+| **Heavy FMA** (4-chain, 148×1024) | **386 W** | **190 W** |
+| **Streaming DRAM read** (148×256) | **369 W** | **173 W** |
+| Idle baseline | 196 W | 0 W |
+| BF16 tensor (from earlier) | 788 W | 592 W |
 
-**FMA draws 3× more incremental power than MUFU.** The FMA unit's 32-wide vector multiplier-adder switches more transistors per clock than MUFU's lookup-table implementation.
+**CORRECTION**: Earlier power measurements for ALU/MUFU/memory were invalid (nvcc arch mismatch → kernels didn't execute). Corrected with `-arch=native`.
 
-**Memory-bound workloads are power-efficient** (~210 W = barely above idle). Compute-bound FMA kernels at ~390 W are well below the 1100 W TDP — full-chip tensor core workloads (788 W measured for BF16 sustained) draw the most.
+**Memory workloads draw nearly as much power as compute** (369 vs 386 W). HBM3E's 12 stacks with 7 TB/s I/O bandwidth consume ~173 W of PHY/controller power. The 17 W gap between FMA and memory shows compute adds only ~10% incremental power above the HBM I/O baseline.
+
+**Power efficiency**: FMA (38 TFLOPS) at 386 W = **98 GFLOPS/W**. BF16 tensor (1844 TFLOPS) at 788 W = **2340 GFLOPS/W** — tensor cores are **24× more power-efficient per FLOP**.
 
 **Power efficiency**: FMA throughput (38 TFLOPS) at 390 W = **97 GFLOPS/W**. BF16 tensor (1844 TFLOPS) at 788 W = **2340 GFLOPS/W** — tensor cores are 24× more power-efficient per FLOP.
 
