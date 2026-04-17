@@ -436,3 +436,34 @@ After corrections, here's the trust ranking:
 - 128 concurrent kernel slot limit
 - Most pre-session findings (B300 catalog ~16K lines that existed before)
 
+
+
+## L1 Cache Size — Re-measured properly
+
+### Old
+- "L1 effective ~32 KB based on bandwidth saturation curve"
+
+### New (`tests/l1_proper.cu` — pointer chase latency)
+| Working set | ns/load | Tier |
+|---:|---:|---|
+| 1 KB | 19.6 | L1 hit |
+| 32 KB | 20.3 | L1 mostly |
+| 64 KB | 20.9 | L1 |
+| 128 KB | 22.2 | L1 mostly |
+| **256 KB** | **152** | **L2 only — sharp jump** |
+| 4 MB | 153 | L2 (still cached) |
+
+**Key transitions on B300**:
+- L1 hit latency: ~20 ns (~40 cy at 2 GHz)
+- L2 hit latency: ~152 ns (~310 cy)
+- L1 effective size (single-warp pattern): **up to ~128 KB before sharp transition**
+
+This is different from "32 KB" — earlier number was based on bandwidth saturation (less precise). Pointer chase with dependent loads cleanly exposes the cache hierarchy.
+
+NOTE: The 128 KB L1 effective size is single-warp; multi-warp may differ due to L1 sharing across warps in a partition. Also, with cudaFuncAttributePreferredSharedMemoryCarveout configured for max SHMEM (carveout=100), L1 size shrinks (and vice versa).
+
+### Reliability
+- **L1 ~20 ns latency: HIGH**
+- **L1 effective up to ~128 KB: HIGH** (clean transition to L2 at 256 KB)
+- **L2 latency ~152 ns: HIGH**
+
