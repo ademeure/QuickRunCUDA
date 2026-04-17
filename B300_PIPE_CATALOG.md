@@ -17404,3 +17404,42 @@ The micro-architectural measurements in this catalog, when composed, correctly p
 The M=1→2 algorithm switch explains the batch scaling discontinuity: batch=1 at 62 µs (algo 13, bandwidth-optimal) vs batch=2 at 128 µs (algo 76, less efficient for M=2 but scales better to large M).
 
 **3-stage pipeline** = triple-buffered cp.async/TMA loads through shared memory. This matches our cp.async pipeline depth finding (~16 operations in flight).
+
+
+# BF16 Batch Scaling: THE Most Important Serving Finding
+
+## cuBLAS BF16 GEMM (8192×8192, BF16 weights + FP32 accumulate)
+
+| Batch | Latency | TFLOPS | Eff BW (TB/s) | Regime |
+|------:|--------:|-------:|--------:|--------|
+| **1** | **22.6 µs** | 5.9 | 5.93 | Memory-bound |
+| 2 | 22.4 µs | 12.0 | 6.00 | Amortized |
+| 4 | 21.7 µs | 24.7 | 6.19 | Amortized |
+| 8 | 21.1 µs | 50.8 | 6.37 | Near-free |
+| 16 | 21.3 µs | 100.6 | 6.33 | **FREE** |
+| 32 | 21.7 µs | 197.5 | 6.24 | **FREE** |
+| **64** | **22.2 µs** | **387** | 6.19 | **FREE (66× compute)** |
+| 128 | 27.1 µs | 634 | 5.18 | Compute starting |
+| 256 | 31.5 µs | 1089 | 4.65 | Compute-bound |
+| **512** | **39.9 µs** | **1723** | 4.00 | **1.7 PFLOPS** |
+
+## The Key Insight
+
+**Batch 1 through 64 have IDENTICAL latency (~22 µs).** The weight matrix load (134 MB at ~6 TB/s) takes 22 µs regardless of batch size. The tensor cores process all batch elements for FREE while weights are streaming from HBM.
+
+**This means continuous batching up to 64 requests costs ZERO additional latency:**
+- 1 request: 22 µs, 5.9 TFLOPS
+- 64 requests: 22 µs, 387 TFLOPS (**66× more compute, same wall time**)
+
+**Contrast with FP32:** FP32 crossover at batch=16, peak 60 TFLOPS. BF16 crossover at batch=128, peak 1723 TFLOPS — **28× higher peak**.
+
+## Serving economics from this data
+
+| Scenario | Batch | Per-layer µs | Llama-70B tok/s | $/tok (relative) |
+|----------|------:|------------:|----------------:|----------------:|
+| Single user | 1 | 22.6 | ~55 | 1.00× |
+| **Light batch** | **8** | **21.1** | **~440** | **0.13×** |
+| **Sweet spot** | **64** | **22.2** | **~3500** | **0.016×** |
+| Heavy batch | 256 | 31.5 | ~9900 | 0.006× |
+
+**At batch=64: 63× more tokens per second for 0× more latency.** This is the fundamental reason GPU serving is economical only with batching.
