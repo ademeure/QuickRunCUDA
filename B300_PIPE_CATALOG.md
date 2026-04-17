@@ -16908,3 +16908,45 @@ Single warp, no pending stores (minimum fence overhead):
 **MUFU is 3-deep** — only 3 independent exp/log/rsqrt chains needed to reach full throughput. For softmax (which uses 1 expf per element), the 24 cy latency is fully exposed.
 
 **FMA and ALU are only 2-deep** — dual-issue (fma_heavy + fma_lite) saturates with just 2 independent chains.
+
+
+# Atomic Contention Scaling (148 blocks × 256 threads, INT32 atomicAdd)
+
+| Threads/addr | Unique addrs | Gatomic/s | vs no-contention |
+|-------------:|----------:|----------:|-----------------:|
+| **1** (none) | 37888 | **557** | **1.0×** |
+| 2 | 18944 | 382 | 0.69× |
+| 4 | 9472 | 232 | 0.42× |
+| 8 | 4736 | 97 | 0.17× |
+| 16 | 2368 | 50 | 0.09× |
+| **32** (full warp) | 1184 | **14** | **0.025× (40× slower)** |
+
+**Contention scales approximately as 1/N.** Each doubling of contending threads halves throughput. The 16→32 transition is worst (0.28× instead of 0.5×) because full-warp serialization has extra overhead.
+
+**Design rules for histograms/counters:**
+- ≥38K unique addresses: **no contention penalty** (557 Gatomic/s)
+- 2-5K addresses: moderate contention (50-100 Gatomic/s, acceptable)
+- <1K addresses: **use smem-based histogram** (global atomics < 50 Gatomic/s)
+- Single address: 14 Gatomic/s = the L2 atomic unit's serialization limit per cache line
+
+
+# cuBLAS SGEMM Latency vs Size (FP32, Square, Warmed)
+
+| N×N | Latency | GFLOPS | Regime |
+|----:|--------:|-------:|--------|
+| 8 | 6.1 µs | 0.2 | **Pure dispatch overhead** |
+| 16 | 4.0 µs | 2.1 | Dispatch floor |
+| 32 | 4.1 µs | 16 | Dispatch-dominated |
+| 64 | 5.1 µs | 102 | Mixed |
+| 128 | 6.2 µs | 672 | Compute emerging |
+| **256** | **8.2 µs** | **4075** | **Crossover: overhead ≈ compute** |
+| 512 | 12.7 µs | 21220 | Compute-dominated |
+| 1024 | 66.6 µs | 32225 | Near-peak |
+| 2048 | 354.5 µs | 48460 | Peak region |
+| **4096** | **2.09 ms** | **65840** | **Peak (TF32 tensor cores)** |
+
+**Dispatch floor = 4 µs** for any GEMM regardless of size. Below N=64, the kernel finishes before the host returns. The crossover where compute time equals overhead is at **N ≈ 256**.
+
+**65.8 TFLOPS at N=4096** uses TF32 tensor cores (cuBLAS default math mode enables TF32 for FP32 inputs). Pure non-tensor FP32 peak is ~38 TFLOPS.
+
+**For LLM serving at batch=1**: the per-layer GEMMs are GEMV (M=1), not GEMM — entirely memory-bound, not compute-bound. This SGEMM table applies to prefill (M=seq_len) and batched decode (M=batch_size).
