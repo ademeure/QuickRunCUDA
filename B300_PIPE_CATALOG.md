@@ -16702,3 +16702,23 @@ FMA and ALU pipes run on separate back-ends but share the front-end warp schedul
 - **With MUFU**: MUFU latency (24 cy) determines the pace. FMA, ALU, and LSU ALL hide in its shadow.
 
 **Practical**: For kernels with `expf`/`logf`/`rsqrt`, the MUFU ops are the critical path. All surrounding FMA, integer, and smem operations are essentially free. Optimize by minimizing MUFU count, not FMA/ALU count.
+
+
+# Occupancy → HBM Bandwidth Curve (512 MB streaming .cg v4 reads)
+
+| Warps/SM | Total warps | HBM BW (TB/s) | % of 7 TB/s peak |
+|---------:|----------:|---------:|---------:|
+| <1 | 16 | 0.07 | 1% |
+| <1 | 64 | 0.26 | 4% |
+| 1 | 148 | 0.61 | **9%** |
+| 2 | 296 | 1.20 | 17% |
+| **4** | 592 | **2.40** | **34%** |
+| **8** | 1184 | **4.17** | **60%** |
+| 16 | 2368 | 4.03 | 58% |
+| **32** | 4736 | **6.00** | **86%** |
+
+**Knee at 8 warps/SM (60% of peak).** Below 4 warps/SM, HBM is severely underutilized (<34%). At 32 warps/SM, bandwidth reaches 86% — the remaining 14% requires even higher occupancy or vectorized loads wider than v4.
+
+**Design rule**: For memory-bound kernels, target ≥8 warps/SM as the minimum occupancy. Going from 8→32 warps/SM gives another 1.4× bandwidth. Below 4 warps/SM, more than half of HBM bandwidth is wasted on latency gaps.
+
+**Thread config doesn't matter** — only total warp count. 256×148 (8 warps/SM) ≈ 512×74 (same warps/SM) within 5%.
