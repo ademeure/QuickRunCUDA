@@ -1,5 +1,14 @@
 // hbm_write_proper.cu
 // TRUE HBM write bandwidth characterization for B300 SXM6
+// See: investigations/08_hbm_write.md for full analysis
+//
+// RESULT SUMMARY (ncu-verified, 2026-04-17):
+//   True HBM write peak: 6.1-6.3 TB/s (all variants)
+//   True HBM read  peak: 6.85-6.88 TB/s (for comparison)
+//   Write is ~9% slower than read (HBM3E asymmetry)
+//
+// WARNING: Using QuickRunCUDA's warmup loop gives ~12 TB/s "fire-and-forget" artifact.
+//   Use standalone binary + ncu dram__bytes_write.sum.per_second for ground truth.
 //
 // Strategy:
 //   - Working set >= 4 GB (well past L2 capacity of ~126 MB) to guarantee DRAM-bound
@@ -9,15 +18,21 @@
 //   - Separate OP codes selectable via -H "#define OP N"
 //
 // OP codes:
-//   0 = st.global.b32        (scalar, 4 B/thread/iter)
-//   1 = st.global.v4.b32     (v4, 16 B/thread/iter)
-//   2 = st.global.v8.b32     (v8, 32 B/thread/iter)
-//   3 = st.global.cs.b32     (scalar + streaming hint)
-//   4 = st.global.cs.v4.b32  (v4 + streaming hint)
-//   5 = st.global.wb.b32     (scalar + write-back hint)
-//   6 = st.global.wb.v4.b32  (v4 + write-back hint)
-//   7 = st.volatile.global.b32 (volatile scalar)
-//   8 = st.global.cg.v4.b32  (v4 + cache-global hint, L1 bypass)
+//   0 = st.global.b32        (scalar, 4 B/thread/iter)   -> STG.E
+//   1 = st.global.v4.b32     (v4, 16 B/thread/iter)      -> STG.E.128
+//   2 = st.global.v8.b32     (v8, 32 B/thread/iter)      -> STG.E.ENL2.256
+//   3 = st.global.cs.b32     (scalar + streaming hint)   -> STG.E.EF
+//   4 = st.global.cs.v4.b32  (v4 + streaming hint)       -> STG.E.EF.128
+//   5 = st.global.wb.b32     (scalar + write-back hint)  -> STG.E.STRONG.SM
+//   6 = st.global.wb.v4.b32  (v4 + write-back hint)      -> STG.E.STRONG.SM.128
+//   7 = st.volatile.global.b32 (volatile scalar)         -> STG.E (volatile)
+//   8 = st.global.cg.v4.b32  (v4 + cache-global hint)   -> STG.E.128 (L1 bypass)
+//
+// Run with (recommended: ncu for ground truth, not QuickRunCUDA timing):
+//   # 4 GB buffer, 2 CTAs/SM x 256 threads = 75776 threads
+//   # OP 0,3,5,7 (4B): ITERS=14168; OP 1,4,6,8 (16B): ITERS=3536; OP 2 (32B): ITERS=1768
+//   ./QuickRunCUDA investigations/hbm_write_proper.cu \
+//     -H "#define OP 4" -p -t 256 -b 2 -T 7 -B 1073741824 -0 3536
 
 #ifndef BLOCK_SIZE
 #define BLOCK_SIZE 256
