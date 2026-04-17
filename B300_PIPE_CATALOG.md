@@ -18082,3 +18082,25 @@ BF16 tensor sustained (962-971 W, 2196 TFLOPS):
 - **Power ramp**: idle→full in <2 seconds
 
 **For serving**: no thermal-related performance degradation during sustained inference. The GPU delivers consistent 2196 TFLOPS regardless of how long it runs.
+
+
+# Disk → GPU Weight Loading (This Cloud Instance)
+
+1 GB test file, page cache dropped, 1 MB transfer chunks:
+
+| Method | GB/s | Llama-70B (137 GB) |
+|--------|-----:|---------:|
+| mmap + single cudaMemcpy | 0.7 | 196 s |
+| Pageable read + cudaMemcpy | 0.9 | 152 s |
+| **Pinned read + cudaMemcpyAsync** | **1.6** | **86 s** |
+| PCIe alone (no disk, pinned) | 57.5 | 2.4 s |
+
+**The bottleneck is disk I/O (1.6 GB/s), not PCIe (57.5 GB/s).** This cloud instance's storage is 36× slower than the PCIe bus. With local NVMe Gen4 (~6 GB/s) or Gen5 (~12 GB/s), loading would be 4-8× faster.
+
+**Optimization: pinned + async is 1.8× faster** than pageable — DMA transfer overlaps with disk reads. Always use `cudaMallocHost` + `cudaMemcpyAsync` in chunks for model loading.
+
+**Practical cold start** for Llama-70B on this cloud B300:
+- Disk load: 86 s (dominant)
+- CUDA context: 2.1 s
+- cuBLAS warmup: 1 s
+- **Total: ~89 s** (86 s disk + 3 s GPU setup)
