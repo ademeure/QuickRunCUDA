@@ -18244,3 +18244,45 @@ All other occupancy APIs are sub-microsecond and safe to call per-kernel.
 **`cudaDeviceGetLimit` = 2.1 ms** — surprisingly expensive (driver round-trip). Cache the result; don't call in hot paths.
 
 All `Set` APIs are sub-microsecond and safe to call per-kernel.
+
+
+# ═══ COMPLETE CUDA API LATENCY REFERENCE ═══
+
+Every CUDA API call measured in this catalog, sorted by cost:
+
+| API call | Latency | Category |
+|----------|--------:|----------|
+| `cudaGetLastError` | **0.00 µs** | Error (free!) |
+| `cudaDeviceGetAttribute` | 0.01 µs | Query |
+| `cudaPointerGetAttributes` | 0.04 µs | Query |
+| `cudaDeviceSetLimit` | 0.06 µs | Config |
+| `cudaOccupancyMaxActiveBlocksPerSM` | 0.07 µs | Query |
+| `cudaFuncSetSharedMemConfig` | 0.09 µs | Config |
+| `cudaStreamQuery` (busy) | **0.12 µs** | **Polling** |
+| `cudaFuncGetAttributes` | 0.15 µs | Query |
+| `cudaFuncSetCacheConfig` | 0.22 µs | Config |
+| `cudaMallocAsync` + `FreeAsync` | **0.31 µs** | **Memory (pool)** |
+| `cudaStreamSynchronize` (idle) | 1.26 µs | Sync |
+| `cudaMemsetAsync` dispatch | 1.4 µs | Memory |
+| `cudaStreamQuery` (completed) | 1.22 µs | Polling |
+| Kernel launch (any grid size) | **2.05 µs** | **Launch** |
+| `cudaStreamWaitEvent` | 2.24 µs | Sync |
+| `cudaMemcpyAsync` dispatch | 2.4 µs | Memory |
+| `cudaStreamCreate` + `Destroy` | 3.77 µs | Stream |
+| `cudaDeviceSynchronize` | **7.4 µs** | **Sync** |
+| `cudaEventRecord` + `Sync` | 7.35 µs | Event |
+| `cudaLaunchHostFunc` callback | **11.8 µs** | **Callback** |
+| `cudaOccupancyMaxPotentialBlockSize` | 15.3 µs | Query |
+| `cudaGetDeviceProperties` | **512 µs** | **Query (cache!)** |
+| `cudaDeviceGetLimit` | **2121 µs** | **Query (cache!)** |
+| `cudaMalloc` + `cudaFree` (4KB) | **20 ms** | **Memory (avoid!)** |
+| cuBLAS first-call JIT | 36-74 ms | GEMM warmup |
+| `cudaDeviceReset` | 1400 ms | Reset |
+| `cudaSetDevice` (cold) | **2116 ms** | **Init** |
+
+**Three tiers:**
+1. **Free** (<1 µs): error check, attribute queries, pool alloc, config set
+2. **Cheap** (1-10 µs): launch, sync, memcpy dispatch, stream ops
+3. **Expensive** (>10 µs): callbacks, property queries, malloc, cold start
+
+**Cache** `GetDeviceProperties` and `GetDeviceLimit`. **Never** use `cudaMalloc` in hot paths.
