@@ -16645,3 +16645,42 @@ FMA and ALU pipes run on separate back-ends but share the front-end warp schedul
 **Serial cp.async = 877 cy** (DRAM round-trip dominates). Pipelining amortizes the latency: at 16-deep, effective per-op cost is 66 cy — the LSU pipe issues one cp.async per ~4 cy but the memory system takes ~877 cy to complete each, so 877/66 ≈ 13 in-flight at steady state.
 
 **Practical**: For GEMM prologue tile loading, always batch ≥8 cp.async per mbarrier group (or use TMA bulk-copy which handles pipelining internally). Serial cp.async is 13× slower than pipelined.
+
+
+# CUDA API Latency Comprehensive (B300, warmed, host-side timer)
+
+## Memory Management
+
+| Operation | Latency | Notes |
+|-----------|--------:|-------|
+| `cudaMalloc` + `cudaFree` 4KB | **19.8 ms** | Driver VM overhead |
+| `cudaMalloc` + `cudaFree` 1MB | 19.4 ms | Same (size-independent) |
+| `cudaMalloc` + `cudaFree` 256MB | 28.9 ms | +45% for large alloc |
+| **`cudaMallocAsync` + `cudaFreeAsync` 4KB** | **18 µs** | **1100× faster** (pool) |
+| `cudaMallocAsync` + `cudaFreeAsync` 256MB | 157 µs | Pool + bookkeeping |
+| `cudaFree` 4KB (alone) | 10.8 µs | Sub-allocator fast path |
+| `cudaFree` 1MB (alone) | 5976 µs | Page table teardown |
+
+**`cudaMalloc` is 1100× slower than `cudaMallocAsync`** — 20 ms vs 18 µs. Never use `cudaMalloc/cudaFree` in a hot loop. Stream-ordered allocation (`cudaMallocAsync`) uses a memory pool that avoids driver virtual-memory setup.
+
+**`cudaFree` cost scales with allocation size**: 10 µs for 4KB, 6 ms for 1MB. The driver performs page table cleanup proportional to the mapped region size.
+
+## Synchronization
+
+| Operation | Latency |
+|-----------|--------:|
+| `cudaDeviceSynchronize` (idle) | 1.31 µs |
+| `cudaStreamSynchronize` (idle) | 1.26 µs |
+| `cudaEventRecord` + `cudaEventSynchronize` | 7.35 µs |
+| `cudaEventQuery` (completed) | 1.21 µs |
+| `cudaPointerGetAttributes` | 0.04 µs |
+
+## Other Operations
+
+| Operation | Latency |
+|-----------|--------:|
+| `cudaMemset` 4KB + sync | 6.48 µs |
+| `cudaMemset` 1MB + sync | 7.76 µs |
+| `cudaStreamCreate` + `Destroy` | 3.77 µs |
+
+**For serving**: the critical API costs are kernel launch (2.05 µs) and stream sync (1.26 µs). Memory allocation must use async pools. Event-based timing adds 7.35 µs overhead per measurement point.
