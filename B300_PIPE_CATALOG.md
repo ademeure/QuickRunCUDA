@@ -75,7 +75,7 @@ Note: Smem read peak is ~36 TB/s chip at 128 B/clk/SM — true HW peak, confirme
 5. **For 4 KiB tiles, batch ≥24 per mbarrier** to amortize the 175 cy consumer overhead. Below 8 KiB you're TMA-issue-rate-bound (48 cy/inst); above 8 KiB the engine caps at 241 GB/s/SM.
 6. **Smem cap is ~200 KB per CTA** without `cudaFuncSetAttribute(MaxDynamicSharedMemorySize)` opt-in. Exceeding silently fails launches or clobbers TMA writes. 228 KB is the hardware max per-SM.
 7. **Match-any-sync costs 375 cy** (20× other warp ops) — avoid.
-8. **9-way `switch` divergence costs 123× uniform** — use ternaries/predication for multi-way selection.
+8. **N-way warp divergence scales linearly: N paths ≈ N× cost.** 32-way with tiny body = 123× (dominated by BSSY + jump-table overhead, not the FMA work). With larger per-path work, ratio → N×. Use predication (if/else ≤6/7 SASS insns) when possible.
 9. **Per-warp atomic hotspot is 5× SLOWER than single-address** chip-wide atomic. Go fully coalesced or fully concentrated (into smem).
 10. **INT8 IMMA is 45× slower than FP8 mma.sync** — B300 deliberately deprecates INT8. Prefer FP8 / FP4 for quantized inference.
 11. **FP64 is 300× slower than FP16 tensor** — B300 is not an HPC FP64 machine.
@@ -1388,11 +1388,39 @@ Split-phase `bar.arrive + bar.sync` only helps if the arrive-wait span contains 
 | pattern                                      | ms      | vs uniform |
 |----------------------------------------------|--------:|-----------:|
 | uniform branch (thread-independent cond)     |  0.0076 | 1.00× |
-| 2-way divergent (tid-based cond)             |  0.0085 | 1.13× (cheap) |
-| 9-way `switch(tid)` divergence               |  0.934  | **123×** (jump-table + serialize) |
+| 2-way divergent (tid-based cond)             |  0.0085 | 1.13× (cheap — predicated) |
 | predicated select (`cond ? a : b`)           |  0.0079 | 1.04× (free) |
 
-Two-path divergence is nearly free on B300 — the warp scheduler handles both halves quickly. **Switch statements with many cases serialize all paths AND add jump-table overhead.** If you need multi-way selection, replace with ternary/predicated math when possible.
+### N-way divergence scaling (single warp, if/else chain, clock64-measured)
+
+**Work-dominated regime (32 FMAs per path, NFMA=16):**
+
+| N-ways | Cycles    | Ratio  | Per-path cy |
+|--------|-----------|--------|-------------|
+| 1      | 893770    | 1.00×  | 218         |
+| 2      | 1671943   | 1.87×  | 204         |
+| 3      | 2515465   | 2.81×  | 205         |
+| 4      | 3363707   | 3.76×  | 205         |
+| 8      | 6451992   | 7.22×  | 197         |
+| 16     | 12735799  | 14.25× | 194         |
+| 32     | 25244684  | 28.25× | 193         |
+
+**Overhead-dominated regime (2 FMAs per path, NFMA=1):**
+
+| N-ways | Cycles    | Ratio   |
+|--------|-----------|---------|
+| 1      | 434415    | 1.00×   |
+| 2      | 553170    | 1.27×   |
+| 4      | 1139042   | 2.62×   |
+| 8      | 2003223   | 4.61×   |
+| 32     | 7020816   | 16.16×  |
+
+**Key findings:**
+1. **Divergence scales linearly with N** — N paths costs ~N× uniform. Not N², not exponential, just N×.
+2. **Per-path cost is slightly LESS than uniform** (~193 cy vs 218 at NFMA=16) because BSSY/BSYNC reconvergence overhead is amortized across paths and active-lane-count doesn't affect per-instruction timing.
+3. **At small per-path work, ratio << N** because 2-way gets predicated (1.27×), and the fixed BSSY/BSYNC overhead (~35-40 cy) is comparable to the per-path work.
+4. **Switch jump-table adds ~35 cy/path overhead** vs if/else chains. With tiny per-path work (1 FMA = 6 cy), this inflates the ratio enormously: a 32-way switch with 1 FMA/case = 123× due to jump-table + BSSY dominating. Earlier "9-way = 123×" was actually 32-way per-lane divergence (switch on threadIdx.x, not tid%9).
+5. **Predication threshold** (from earlier branch deep-dive): if ≤6 / else ≤7 SASS instructions → predicated (~free). Above → BSSY → pay N× serialization.
 
 ### Local memory (LDL / STL, register spill path)
 
@@ -16304,3 +16332,52 @@ When a thread block finishes and its SM becomes available:
 - Intra-kernel block scheduling (0.2 µs) is 23× faster than inter-kernel launch (4.6 µs)
 - Persistent kernels with block queues have negligible scheduling overhead
 
+
+
+# SMSP Work Partitioning (Warp → Sub-Partition Assignment)
+
+1 CTA on 1 SM, varying warp workload imbalance. Each warp does a serial 2-FMA chain.
+
+| Config | Warp 0 iters | Warp 0 cy | Others cy | Per-iter (cy) |
+|--------|-------------|-----------|-----------|---------------|
+| 4 warps, all equal (1×) | 65536 | 561,355 | 561,355 | 8.56 |
+| 4 warps, warp 0 = 8× | 524288 | 4,489,402 | 561,334 | 8.56 |
+| 4 warps, warp 0 only | 524288 | 4,489,380 | idle | 8.56 |
+| 8 warps, all equal | 65536 | 565,418 | 565,418 | 8.63 |
+| 16 warps, all equal | 65536 | 602,461 | ~600K | 9.19 |
+
+**Warps are STATICALLY assigned to SMSPs.** No inter-SMSP work migration exists:
+- Warp 0 runs at identical 8.56 cy/iter whether 3 other SMSPs are idle or busy — **zero benefit from having idle neighbors**.
+- Each of 4 SMSPs independently schedules its own warp set. An imbalanced CTA wastes 3/4 of SM capacity if only 1 warp has work.
+- **More warps per SMSP = slightly slower per-warp** (8.56 → 9.19 cy/iter at 4→16 warps) due to round-robin scheduling overhead.
+- Design implication: for warp-specialized kernels (e.g., producer/consumer), balance work across all 4 SMSP warp slots. An SM with 1 overloaded SMSP and 3 idle ones performs identically to having 3/4 of the SM powered off.
+
+
+# DRAM Access Latency vs Stride (True Pointer Chase, 1 GB Buffer, TLB-Warm)
+
+Single-thread pointer chase through pre-built linked list (data-dependent loads, no pipelining). 1 GB buffer exceeds 126 MB L2 — every access is a DRAM miss.
+
+| Stride | cy/hop | ns | Category |
+|-------:|-------:|---:|----------|
+| 128B | 865 | 426 | Baseline DRAM |
+| 256B | 859 | 423 | Baseline |
+| 512B | 859 | 423 | Baseline |
+| 1024B | 803 | 395 | Mild benefit |
+| **2048B** | **693** | **341** | **Optimal — 19% faster** |
+| 3072B | 804 | 395 | Odd multiple of 1K |
+| **4096B** | **702** | **346** | Near-optimal |
+| 5120B | 806 | 397 | Medium |
+| **6144B** | **697** | **343** | Near-optimal (×3 of 2K) |
+| 8192B | 769 | 378 | Rising |
+| **10240B** | **693** | **341** | Optimal (×5 of 2K) |
+| 16384B | 828 | 407 | Near baseline |
+| **20480B** | **696** | **343** | Optimal (×10 of 2K) |
+| 32768B | 845 | 416 | Back to baseline |
+
+**Pattern: stride = multiple of 2048B is 19% faster.** Other strides cluster near 850 cy baseline.
+
+**Explanation**: B300's L2 address hash distributes cache lines across 2 partitions at ~2 KB granularity. When stride = 2K multiple, consecutive chase hops land on the SAME L2 partition (near-side), avoiding cross-bar traversal. Non-2K-aligned strides cause alternating near/far partition accesses, adding ~160 cy of cross-bar round-trip.
+
+**Practical**: For pointer-heavy data structures (linked lists, trees, hash tables), pad node sizes to multiples of 2 KB to keep L2 partition locality. This gives a free 19% latency reduction.
+
+**vs. random chase at 128 MB (existing measurement: 14351 cy)**: the 16× difference is almost entirely TLB miss overhead. The stride-chase pattern keeps the TLB warm (sequential page access). True random access pays both DRAM + TLB walk = ~7 µs.
