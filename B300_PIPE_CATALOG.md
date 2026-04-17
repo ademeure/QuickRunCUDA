@@ -18978,3 +18978,85 @@ API changed in CUDA 13: `cudaGraphAddNode` now requires `cudaGraphEdgeData`. Use
 
 Capability confirmed via header: `CU_GRAPH_NODE_TYPE_CONDITIONAL` exists.
 
+
+
+# Detailed Sync Primitive Costs (B300, idle GPU)
+
+| API | Cost (us) |
+|---|---:|
+| `cudaStreamWaitEvent` (queue dep) | **0.08** |
+| `cudaEventCreateWithFlags(disable_t)` + Destroy | 0.10 |
+| `cudaEventCreate` + Destroy (with timing) | 0.15 |
+| `cudaStreamQuery` (idle) | 1.21 |
+| `cudaStreamSynchronize` (idle) | 1.24 |
+| `cudaDeviceSynchronize` (idle) | 1.32 |
+| `cudaEventRecord` | 2.02 |
+| `cudaStreamCreate` + Destroy | 3.80 |
+| `cudaStreamCreateWithFlags(NB)` + Destroy | 3.84 |
+| `cudaStreamCreateWithPriority` + Destroy | 3.95 |
+| `cudaEventRecord` + Synchronize | 7.13 |
+| `cudaEventQuery` (signaled) | 8.47 |
+
+**Key insights:**
+- `cudaStreamWaitEvent` is **essentially free** (0.08 us) — just records a dependency in the stream
+- `cudaEventCreate(disable_t)` is much cheaper than default (0.10 vs 0.15 us)
+- Stream creation is 38× more expensive than event creation
+- `cudaEventQuery` after sync is unexpectedly expensive (8.5 us) — some completion bookkeeping
+
+
+# NVTX Instrumentation Cost (no profiler attached)
+
+| API | Cost |
+|---|---:|
+| `nvtxMark` | **~0 ns** |
+| `nvtxRangePush` + `nvtxRangePop` | **0.66 ns/pair** |
+| `nvtxRangeStart` + `nvtxRangeEnd` | **0.20 ns/pair** |
+
+**NVTX instrumentation is essentially free at runtime when no profiler is attached.** Safe to leave instrumentation in production code.
+
+
+# Dynamic Parallelism vs Host-Side Launch
+
+Tested 8 child kernels × 5000 FFMA each:
+
+| Method | Total time | Per-child overhead |
+|---|---:|---:|
+| Host-side chain (8 launches) | 0.119 ms | 1.5 us |
+| Dynamic parallelism (parent launches 8 children) | 0.181 ms | **9.3 us** |
+
+**Dynamic parallelism is ~6× slower per child launch** than host-side launch. Use device-side launch only when algorithmic structure requires it (recursive divide-conquer, runtime-determined work depth).
+
+
+# Persistent Kernels vs Kernel Chains: Surprise Result
+
+| Approach (16 iters × 5000 FFMA per iter, 148 blocks×128 thr) | Time |
+|---|---:|
+| Persistent kernel + grid.sync() per iter | 0.365 ms |
+| Persistent_PDL (with launch_dependents) | 0.362 ms |
+| **Equivalent kernel chain (16 separate launches)** | **0.247 ms** |
+
+**Kernel chain wins!** With 16+ syncs, cooperative grid.sync() overhead exceeds 16 separate launches.
+
+When persistent kernels DO win:
+- Per-iteration work is very small (<3 us)
+- Need to maintain register/shared-memory state across iterations
+- Want to avoid the cooperative launch flag's inherent cost (~50 us)
+
+
+# Real-World LLM-Style Pipeline (16 layers × 3 kernels = 48 kernels)
+
+GEMM (compute-bound, 10000 FFMA) → softmax (memory-bound) → GEMM:
+
+| Approach | Total | Per-kernel | Save |
+|---|---:|---:|---:|
+| Sequential (no PDL) | 3.955 ms | 82.39 us | baseline |
+| PDL only (sig 99%) | 3.849 ms | 80.20 us | +2.20 us/kernel |
+| CUDA Graph only | 3.850 ms | 80.22 us | +2.17 us/kernel |
+| Graph + PDL | 3.838 ms | 79.95 us | +2.44 us/kernel |
+
+**Real LLM-like pipeline savings: ~2.2 us/kernel = 2.7% time reduction.** Combined Graph+PDL barely beats either alone.
+
+Extrapolating to a real LLM (Llama 70B, 80 layers × 8 kernels = 640 kernels per token):
+- Savings = 640 × 2.4 us = **1.5 ms per token**
+- At 100 tok/s: 0.15 ms wasted per second per stream
+
