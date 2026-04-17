@@ -16542,3 +16542,27 @@ SASS confirms UIADD3 (UR registers) interleaved with FFMA (R registers) in the l
 **Compiler behavior**: ptxas does NOT promote warp-uniform FP32 chains to UFFMA (the Blackwell-new uniform FP32 pipe). Even `blockIdx.x`-derived FP32 computations use regular FFMA. The UFFMA instruction exists in ISA but the compiler only uses UIADD3/UIMAD/UISETP etc. for integer uniform operations.
 
 **Practical**: Loop counters, address calculations, and predicate evaluations on the uniform pipe are genuinely free — they don't compete with FMA compute. Design kernels with warp-uniform control flow (all lanes same branch) to maximize uniform pipe usage.
+
+
+# LOP3 + HFMA2 Characterization (ncu-Verified Pipe Assignment)
+
+| Instruction | Pipe (ncu) | Latency | Throughput | Dual-issue? |
+|-------------|-----------|--------:|----------:|:-----------:|
+| FFMA (FP32) | pipe_fma | 4 cy | 2.0 inst/SM/cy | Yes (fma_heavy + fma_lite) |
+| **LOP3** (3-input logic) | **pipe_alu** | **4 cy** | **2.0 inst/SM/cy** | **Yes** |
+| **HFMA2** (packed FP16) | **pipe_fma** | **4 cy** | **2.0 inst/SM/cy** | **Yes** |
+
+**LOP3 = same latency as FMA (4 cy), but on a DIFFERENT pipe (ALU).** This means LOP3 and FFMA can partially co-issue across pipes.
+
+### Cross-pipe co-issue measurement
+
+| Configuration | cy/iter | vs sequential |
+|--------------|--------:|--------------:|
+| 2×FFMA only | 4.1 | baseline |
+| 2×LOP3 only | 4.1 | baseline |
+| **2×FFMA + 2×LOP3** | **5.2** | **63% overlap** (vs 8.2 sequential) |
+| **4×FFMA + 4×LOP3** | **10.2** | **Same 63% ratio** |
+
+FMA and ALU pipes run on separate back-ends but share the front-end warp scheduler (1 inst/cy). Each additional instruction adds ~1 issue cycle regardless of pipe. The 63% overlap comes from latency hiding: while one pipe's result propagates, the other pipe can be issued.
+
+**Practical for FP4/FP6 decode**: LOP3 (byte extraction) and HFMA2 (packed compute) run on different pipes. A kernel doing both can achieve ~60% utilization of BOTH pipes simultaneously if properly interleaved.
