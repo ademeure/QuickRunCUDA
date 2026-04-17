@@ -18041,3 +18041,22 @@ Loop body size sweep (1000 iterations, single warp, dep-chain FMA):
 **No I-cache degradation through 2 KB loop body** (128 SASS instructions). Time scales perfectly linearly with instruction count — the L0 instruction buffer + L1 I-cache handle up to at least 2 KB of loop body without any fetch penalty.
 
 The earlier catalog data showed degradation starting at ~500 B (from 6 cy/FMA to ~8.5 cy/FMA). The discrepancy may be from different measurement methods or compiler behavior. At 2 KB, both measurements agree: no significant I-cache pressure for typical loop bodies.
+
+
+# PCIe Host↔Device Transfer Curve (Pinned Memory, Gen5 x16)
+
+| Size | H2D GB/s | D2H GB/s | Regime |
+|-----:|---------:|---------:|--------|
+| 1 KB | 0.5 | 0.4 | Overhead (2-3 µs floor) |
+| 16 KB | 4.9 | 5.1 | Ramping |
+| 256 KB | 34.7 | 35.8 | Near-peak |
+| 1 MB | 49.4 | 49.4 | 86% peak |
+| 4+ MB | 55-58 | 55-57 | **Peak** |
+| **Peak** | **57.5** | **57.3** | **90% of Gen5 x16 spec** |
+| **Bidirectional** | **99.7 GB/s aggregate** | | **Full duplex** |
+
+**PCIe Gen5 x16 = 57.5 GB/s** (90% of 64 GB/s theoretical). Symmetric H2D/D2H. Full duplex at ~100 GB/s combined.
+
+**Saturation at 4 MB** — below this, overhead reduces effective bandwidth. For bulk transfers (model loading, checkpointing), always use large buffers.
+
+**Model loading**: Llama-70B (137 GB BF16) via pinned H2D = **2.4 seconds**. PCIe is NOT the bottleneck — NVMe SSD (~12 GB/s = 11.4s) or network limits model loading speed.
