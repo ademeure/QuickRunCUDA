@@ -16524,3 +16524,21 @@ FMUL R, R, <user_constant>       // user rescale
 ```
 
 5 SASS instructions vs 1 for SIN. The range-checking adds ~16 cy overhead per `expf()` call. **For softmax/GELU, this overhead is unavoidable** — `__expf()` always generates range checks. Use `ex2.approx.ftz.f32` via PTX asm to skip range checks when input is known-bounded (saves 40%).
+
+
+# Uniform Pipe Co-Issue: Free Parallel Computation
+
+Measured UIADD3 (uniform integer add) running concurrently with vector FFMA:
+
+| Operation | cy/iter | Notes |
+|-----------|--------:|-------|
+| Vector FFMA chain | 4.0 | Baseline |
+| Uniform FFMA chain | 4.0 | Same latency (but compiler used vector FFMA) |
+| **Vec FFMA + Uni IADD** | **4.0** | **UIADD3 is FREE** |
+| **2× Vec FFMA + Uni IADD** | **4.1** | **Still free** |
+
+SASS confirms UIADD3 (UR registers) interleaved with FFMA (R registers) in the loop body. The uniform pipe processes the integer add in parallel with the FMA pipe — zero overhead.
+
+**Compiler behavior**: ptxas does NOT promote warp-uniform FP32 chains to UFFMA (the Blackwell-new uniform FP32 pipe). Even `blockIdx.x`-derived FP32 computations use regular FFMA. The UFFMA instruction exists in ISA but the compiler only uses UIADD3/UIMAD/UISETP etc. for integer uniform operations.
+
+**Practical**: Loop counters, address calculations, and predicate evaluations on the uniform pipe are genuinely free — they don't compete with FMA compute. Design kernels with warp-uniform control flow (all lanes same branch) to maximize uniform pipe usage.
