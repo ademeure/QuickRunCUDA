@@ -16598,3 +16598,34 @@ FMA and ALU pipes run on separate back-ends but share the front-end warp schedul
 **FP16 conversion is 2.4× faster than BF16.** The compiler fuses F32→F16→F32 into a single `F2FP.PACK_AB` instruction (5 cy each direction). BF16 requires separate `F2F.BF16.F32` + `SHF` (shift to reconstruct F32 from truncated mantissa).
 
 **Practical for mixed-precision**: When choosing between FP16 and BF16 as intermediate format, FP16 has cheaper conversion (5 vs 12 cy). BF16's advantage is range (same exponent as FP32), but if your values fit in FP16 range, prefer FP16 for the 2.4× conversion speedup.
+
+
+# Bit Manipulation Instruction Latency
+
+| Instruction | Latency | Dual-issue? | Pipe |
+|-------------|--------:|:-----------:|------|
+| **PRMT** (byte permute) | **4 cy** | Yes | ALU |
+| **SHF** (funnel shift) | **4 cy** | Yes | ALU |
+| **BFI** (bit field insert) | **4 cy** | Yes | ALU |
+| POPC (popcount) | ~12 cy | — | ALU (higher latency) |
+| BFIND (find leading one) | ~12 cy | — | ALU (higher latency) |
+
+**PRMT, SHF, BFI have FMA-equivalent 4 cy latency** with dual-issue capability (2.0 warp-inst/SM/cy). These are the building blocks for byte-level data manipulation in FP4/FP6 decode, crypto, and format conversion.
+
+**POPC and BFIND are 3× slower** (~12 cy) despite being on the same ALU pipe — likely multi-cycle functional units.
+
+**Practical for FP4 decode**: the PRMT→LOP3→HFMA2 pipeline (byte extract → mask → packed FMA) runs at 4+4+4 = 12 cy for the chain, but with cross-pipe co-issue (LOP3 on ALU, HFMA2 on FMA), effective cost is ~8 cy.
+
+
+# Production Kernel Pattern Costs (256 threads, 1 CTA, single SM)
+
+| Pattern | cy/iter | Throughput |
+|---------|--------:|---------:|
+| Smem load + FMA accumulate | 12.7 | 40 FLOP/cy/SM |
+| CTA tree reduction (256→1) | 363 | ~0.7 reductions/cy |
+| Warp softmax (max+exp+sum+div) | 349 | full softmax per warp |
+| Vectorized global read (v4, random) | 322 | 25.8 GB/s/SM |
+
+**CTA tree reduction** includes 3× __syncthreads (~84 cy) + smem operations + warp shuffle tail. The barrier overhead is ~23% of total cost.
+
+**Warp softmax** at 349 cy matches the earlier 229 cy/tile + global memory interaction overhead. The expf (~40 cy with range checks) and 10× shuffle operations dominate.
