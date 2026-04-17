@@ -17614,3 +17614,37 @@ nvcc on this cloud B300 REQUIRES `-arch=native` (or `-arch=sm_100a`). Without ex
 **`cudaSetDevice` = 2.1 seconds** — driver init, firmware load, context creation. This single call accounts for 99% of cold start. Keep containers warm to avoid it.
 
 **For serverless**: the 2.1s cold start is unavoidable on first invocation. Pre-warming the CUDA context reduces it to 18 ms (117× faster). Pre-caching compiled kernels reduces to 0.008 ms (>250,000× faster).
+
+
+# CUDA Memory Pool Performance (cudaMallocAsync)
+
+## Warmed pool: alloc+free cycle
+
+| Size | us/cycle | vs cudaMalloc (20 ms) |
+|-----:|--------:|---------:|
+| 4 KB | **0.31** | **64,500×** |
+| 64 KB | 0.31 | 64,500× |
+| 1 MB | 0.31 | 64,500× |
+| 16 MB | 0.31 | 64,500× |
+| 256 MB | 0.36 | 55,600× |
+
+**Pool alloc+free = 0.31 µs regardless of size** (up to 16 MB). The pool returns pre-mapped memory from a free list — no driver/VM interaction.
+
+## Burst allocation (N allocs, then N frees)
+
+| Burst | Total | Per-alloc |
+|------:|------:|----------:|
+| 8 × 1 MB | 3.2 µs | 0.39 µs |
+| 32 × 1 MB | 12.7 µs | 0.40 µs |
+| 128 × 1 MB | 51.4 µs | 0.40 µs |
+
+Linear scaling. No batching benefit — each alloc is independently O(1).
+
+## Pool retention vs fresh allocation
+
+| Scenario | Time | Ratio |
+|---------|-----:|------:|
+| 1 GB re-alloc (pool retained) | **4.4 µs** | 1× |
+| 1 GB fresh (after `cudaMemPoolTrimTo(0)`) | **210 ms** | **48,000×** |
+
+**Pre-allocating pools is critical.** vLLM/TensorRT-LLM pre-allocate large pools at startup to avoid the 210 ms per-allocation penalty during inference.
