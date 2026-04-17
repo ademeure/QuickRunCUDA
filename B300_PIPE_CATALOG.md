@@ -17551,3 +17551,23 @@ The M=1→2 algorithm switch explains the batch scaling discontinuity: batch=1 a
 - Layer compute at batch=1: ~22 µs → **prefetch NOT hideable** (2× compute)
 - Layer compute at batch=8: ~22 µs → **prefetch fully hidden** (compute > copy)
 - **Minimum batch for free weight prefetching: ~4**
+
+
+# Multi-Stream Concurrent Execution
+
+| Configuration | Time | vs single | Overlap |
+|--------------|-----:|----------:|---------|
+| Full-chip (148 SMs, 1 stream) | 443 ms | 1.00× | baseline |
+| **2×74-SM on 2 streams** | **450 ms** | **1.02×** | **Perfect** |
+| 4×37-SM on 4 streams | 450 ms | 1.02× | Perfect |
+| **8×1-SM on 8 streams** | **443 ms** | **1.00×** | **8.0× speedup** |
+| 8×1-SM sequential | 3543 ms | 8.00× | no overlap |
+| `cudaStreamWaitEvent` | 2.24 µs | — | dependency cost |
+
+**B300 achieves perfect multi-stream overlap.** Multiple kernels on separate streams run concurrently on different SMs with zero interference (~2% overhead from scheduling).
+
+**`cudaStreamWaitEvent` = 2.24 µs** — negligible cost for cross-stream dependencies. Stream-based pipeline parallelism adds essentially zero overhead.
+
+## nvcc Compilation Note
+
+nvcc on this cloud B300 REQUIRES `-arch=native` (or `-arch=sm_100a`). Without explicit arch, nvcc targets a default SM that is incompatible with sm_103a — kernels silently fail with "unsupported toolchain" error and return zero output. NVRTC (QuickRunCUDA) auto-detects the correct arch.
