@@ -467,3 +467,24 @@ NOTE: The 128 KB L1 effective size is single-warp; multi-warp may differ due to 
 - **L1 effective up to ~128 KB: HIGH** (clean transition to L2 at 256 KB)
 - **L2 latency ~152 ns: HIGH**
 
+
+
+## DSMEM Bandwidth — RE-TEST FAILED
+
+Tried two more rigorous DSMEM tests:
+1. `tests/dsmem_proper.cu`: register-accumulator pattern — compiler statically computed loop body (smem values determined at compile time after init), produced impossible 13 PB/s
+2. `tests/dsmem_cycles.cu`: clock64-based cycle test — output writes failed (uninitialized values returned)
+
+### Conclusion
+Original `tests/dsmem_v2.cu` ratio (4.7× slower DSMEM than local SMEM) is the BEST data we have. The absolute numbers (1000 GB/s remote, 4500 GB/s local) are likely far below true peak SMEM BW (38.5 TB/s aggregate theoretical) but the ratio appears consistent.
+
+For accurate DSMEM peak measurement, would need:
+- ncu profiling with `dsmem_count` metrics
+- Or kernel using shfl-style data exchange to force sync
+- Or proper warp-issue-rate analysis
+
+### Reliability
+- **DSMEM ratio (4.7× slower than local SMEM): MEDIUM confidence**
+- **Absolute DSMEM 1000 GB/s: LOW confidence — likely under-saturated**
+- **Local SMEM 4500 GB/s: superseded by `tests/shmem_peak.cu` showing 19.85 TB/s**
+
