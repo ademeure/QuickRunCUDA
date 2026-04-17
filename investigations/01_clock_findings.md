@@ -4,14 +4,25 @@
 **GPU:** NVIDIA B300 SXM6 AC (sm_103a), Device 0 of 2  
 **Measurement tool:** `/root/github/QuickRunCUDA/investigations/clock_definitive.cu`
 
+## ⚠️ CORRECTION (post-review)
+
+**Clock measurements below are VALID** (verified via %clock64/%globaltimer ratio).
+
+**FFMA TFLOPS numbers 153.93 and 145.48 are WRONG** — the formula used `148 SMs × 256 cores/SM × 2 op × clock`, but B300 has **128** FP32 cores/SM (not 256). The "256" was a 2× error.
+
+**Correct theoretical FP32 FFMA peak at 2032 MHz: 76.96 TFLOPS** = 148 × 128 × 2 op/FMA × 2.032 GHz.  
+**Correct at 1920 MHz: 72.74 TFLOPS.**
+
+The test did NOT actually measure FLOPS — it only computed the (incorrect) formula from the measured clock. Real achieved TFLOPS requires counting actual FLOPS executed and dividing by measured wall time. Needs re-test.
+
 ---
 
-## Bottom Line
+## Bottom Line (CORRECTED)
 
-| Condition | Measured sustained clock | FFMA TFLOPS (148 SM, 256 cores/SM) |
-|-----------|--------------------------|-------------------------------------|
-| Default (no lock) | **2031.4 MHz** | **153.93 TFLOPS** |
-| `nvidia-smi -lgc 2032` | **1919.8 MHz** | **145.48 TFLOPS** |
+| Condition | Measured sustained clock | FP32 FFMA theoretical peak |
+|-----------|--------------------------|---------------------------|
+| Default (no lock) | **2031.4 MHz** (verified) | 76.96 TFLOPS |
+| `nvidia-smi -lgc 2032` | **1919.8 MHz** (verified) | 72.74 TFLOPS |
 
 **The B300 boosts to ~2032 MHz under FFMA load by default. Setting `-lgc 2032` as a "lock" paradoxically CAPS the clock at 1920 MHz, not 2032 MHz.**
 
