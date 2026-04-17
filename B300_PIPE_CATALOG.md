@@ -18120,42 +18120,71 @@ BF16 tensor sustained (962-971 W, 2196 TFLOPS):
 **DFMA latency = 92 cy.** For FP64: use warp-level TLP (more warps), not ILP.
 
 
-# Maximum Concurrent Kernels: 128 Hardware Limit (Not SM Count!)
+# Concurrent Kernel Execution: Two Independent Limits
 
-Each kernel = 1 block × 256 threads on 1 independent stream:
+Execution has TWO constraints — the BINDING one depends on configuration:
 
-| Concurrent | Time | Speedup | Waves | Analysis |
-|----------:|---------:|--------:|------:|----------|
-| 1 | 110.9 ms | 1.0× | 1 | baseline |
-| 64 | 111.1 ms | 63.9× | 1 | perfect |
-| **128** | **111.4 ms** | **127.5×** | **1** | **LIMIT** |
-| 144 | 221.8 ms | 72.0× | **2** | **Cliff at 129!** |
-| 148 | 221.8 ms | 74.0× | 2 | Even at SM count |
-| 256 | 222.2 ms | 127.8× | 2 | Wave 2 fills remaining |
-| 512 | 444.0 ms | 127.9× | 4 | 4 × 128-kernel waves |
+## Limit 1: 128 hardware kernel dispatch slots
 
-**The limit is 128 hardware kernel dispatch slots, NOT the 148 SM count.** Kernel #129 triggers a second wave even though 20 SMs are idle. This is a global scheduler hardware constraint.
+With 1-block kernels, the kernel slot limit binds first:
 
-**Block size doesn't affect the limit:**
+| Kernels | Blocks | Time | Speedup | Waves |
+|--------:|-------:|---------:|--------:|------:|
+| 128 | 128 | 111.4 ms | 127.5× | 1 |
+| **129** | 129 | **218.4 ms** | 64.5× | **2 (cliff!)** |
+| 148 | 148 | 218.5 ms | 74.0× | 2 |
+| 256 | 256 | 218.9 ms | 127.7× | 2 |
 
-| Threads/block | 148-kernel time | Speedup |
-|--------------:|----------------:|--------:|
-| 32 | 218.7 ms | 74× |
-| 256 | 221.8 ms | 74× |
-| 1024 | 471.3 ms | 74× |
+Thread count doesn't matter (32 or 1024 threads: same 128-kernel cliff).
 
-Same 2-wave behavior at all block sizes. The limit is on KERNEL COUNT, not thread count.
+## Limit 2: 148 SM block capacity
 
-**CUDA Graph doesn't help:**
+With multi-block kernels, the SM count binds first:
 
-| Method | 148 kernels | Speedup |
-|--------|----------:|--------:|
-| 148 streams | 221.7 ms | baseline |
-| CUDA graph | 221.5 ms | **1.00×** |
+**2 blocks × 256 threads per kernel:**
 
-The graph can't bypass the 128-kernel hardware limit — same 2-wave behavior.
+| Kernels | Total blocks | Time | Analysis |
+|--------:|------------:|---------:|----------|
+| 74 | **148** | 111.0 ms | **1 wave (= SM count)** |
+| 100 | 200 | 135.1 ms | 1.2 waves (partial overlap) |
+| 128 | 256 | 135.2 ms | Same (128 < slot limit) |
+| 148 | 296 | 221.9 ms | 2 full waves |
 
-**For multi-tenant serving**: maximum 128 truly concurrent kernels. Use persistent kernels with cooperative scheduling to bypass this limit for >128 request streams.
+**4 blocks × 512 threads per kernel:**
+
+| Kernels | Total blocks | Time | Analysis |
+|--------:|------------:|---------:|----------|
+| **37** | **148** | 122.1 ms | **1 wave (= SM count)** |
+| 64 | 256 | 242.8 ms | ~2 waves |
+
+**8 blocks × 128 threads per kernel (high occupancy):**
+
+| Kernels | Total blocks | Time | Analysis |
+|--------:|------------:|---------:|----------|
+| 18 | 144 | 109.2 ms | 1 wave |
+| 19 | 152 | 110.8 ms | **Still ~1 wave** (4 extra blocks co-reside!) |
+| 32 | 256 | 110.8 ms | 1 wave (1.7 blocks/SM avg, fits easily) |
+| 64 | 512 | 140.7 ms | 1.3 waves (3.5 blocks/SM) |
+| 128 | 1024 | 241.5 ms | 2.2 waves (128-kernel slot also limits) |
+
+**Key insight**: with 8 blocks × 128 threads, each SM can host **multiple blocks from different kernels simultaneously** (up to ~16 blocks at 128 thr). So 32 kernels × 8 blocks = 256 blocks all fit in 1 wave because SMs share blocks across kernels.
+
+## Which limit binds?
+
+| Config | Slot limit (128 kernels) | SM limit (148 SMs) | Binding |
+|--------|:------------------------:|:-------------------:|---------|
+| 1 block/kernel | 128 kernels | 148 kernels | **Slots** |
+| 2 blocks/kernel | 128 kernels | 74 kernels | **SMs** |
+| 4 blocks/kernel | 128 kernels | 37 kernels | **SMs** |
+| 8 blocks/kernel | 128 kernels | 18 kernels* | **SMs** |
+
+*With high occupancy (128 thr/block), blocks co-reside → effective limit is higher than 18.
+
+## CUDA graphs: no help (same hardware limits)
+
+148 streams vs CUDA graph for 148 single-block kernels: **1.00×** speedup. The hardware limits cannot be bypassed.
+
+**For multi-tenant serving**: use 1-block kernels for up to 128 concurrent requests. Above 128: use persistent kernels with cooperative scheduling.
 
 
 # Async Polling: cudaStreamQuery / cudaEventQuery
