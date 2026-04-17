@@ -92,7 +92,7 @@ Note: Smem read peak is ~36 TB/s chip at 128 B/clk/SM — true HW peak, confirme
 |-----------|--------:|---------------:|------|---------------|
 | FFMA (f32) | **4 cy** | 2.0 cy (2 chains) | fma h+l | ALU, LSU, MUFU-free |
 | HFMA2 (f16x2) | 4 cy | **0.5 cy** (8 chains) | fma h+l | ALU, LSU, f32 |
-| DFMA (f64) | **64 cy** | 64 cy (**no ILP**) | fp64 | FFMA, ALU free |
+| DFMA (f64) | **92 cy** | 92 cy (**no ILP**) | fp64 | FFMA, ALU free |
 | IMAD.LO (i32) | 4 cy | 2.1 cy | fma | FFMA |
 | LOP3 / SHF | 4 cy | 2.0 cy | alu | FMA, LSU |
 | MUFU (sin) | **24 cy** | 8.4 cy (3 chains) | xu | — |
@@ -18135,3 +18135,17 @@ Each kernel uses 1 SM (1 block × 256 threads), launched on separate streams:
 **128 concurrent kernels run with ZERO overhead** — all finish in the same 111 ms as a single kernel. At 256 kernels (exceeding 148 SMs), the GPU runs 2 sequential waves.
 
 **For multi-tenant serving**: a single B300 can multiplex 128+ independent inference streams simultaneously with perfect isolation and zero scheduling overhead.
+
+
+# Async Polling: cudaStreamQuery / cudaEventQuery
+
+| Operation | Latency | Rate |
+|-----------|--------:|-----:|
+| cudaStreamQuery (idle/completed) | 1.22 µs | 820K/s |
+| **cudaStreamQuery (busy/pending)** | **0.14 µs** | **7.1M/s** |
+| cudaEventQuery (completed) | 1.21 µs | 826K/s |
+| **cudaEventQuery (pending)** | **0.12 µs** | **8.3M/s** |
+
+**Busy polling is 9× faster than completed query** (0.12 vs 1.22 µs). When the GPU is still working, the query returns `cudaErrorNotReady` immediately in 0.12 µs. The "completed" path is slower (1.2 µs) because it involves driver state transition.
+
+**For async serving**: use tight poll loops with `cudaStreamQuery` — at 7M polls/sec, the CPU overhead is negligible. Prefer polling over `cudaStreamSynchronize` (1.26 µs blocking) for latency-sensitive request completion detection.
