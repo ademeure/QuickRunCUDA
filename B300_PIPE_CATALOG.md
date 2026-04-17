@@ -17680,3 +17680,31 @@ Linear scaling. No batching benefit — each alloc is independently O(1).
 **First call = 35-74 ms** of JIT compilation and algorithm heuristic selection. The penalty is per-unique-shape — a new (M, N, K) triggers another cold call.
 
 **For LLM serving**: warmup each GEMM shape once at startup. ~20 shapes × ~50 ms = ~1 second total warmup (negligible vs 2.1s context init). After warmup, every call is steady-state.
+
+
+# LLM Serving Startup Timeline (Llama-70B BF16, Single B300)
+
+| Phase | Time | % of cold start |
+|-------|-----:|----------------:|
+| Python + framework import | 500 ms | 3% |
+| **CUDA context init** | **2116 ms** | **14%** |
+| Memory allocation | 100 ms | 1% |
+| **Weight loading (NVMe 12 GB/s)** | **11400 ms** | **73%** |
+| cuBLAS shape warmup (20 shapes) | 1000 ms | 6% |
+| CUDA graph capture | 500 ms | 3% |
+| KV cache pool setup | 5 ms | 0% |
+| First token decode | 24 ms | 0% |
+| **TOTAL cold start** | **15.6 s** | |
+
+**Weight loading = 73% of cold start.** CUDA context = 14%. Everything else = 13%.
+
+## Startup tiers
+
+| Tier | Time | Scenario |
+|------|-----:|----------|
+| **Cold (NVMe)** | **15.6 s** | Fresh container, local SSD |
+| Cold (InfiniBand) | 9.7 s | Weights from network (25 GB/s) |
+| **Warm** | **0.024 s** | Container alive, weights in HBM |
+| **Warm → cold ratio** | **650×** | **Keep containers warm!** |
+
+**For serverless**: the 650× warm/cold ratio means keeping GPU containers pre-warmed is 650× more responsive. Weight loading dominates cold start — invest in faster storage (NVMe Gen5, RDMA) to reduce it.
