@@ -17147,3 +17147,30 @@ Both static (`__shared__ float s[N]`) and dynamic (`extern __shared__ float d[]`
 The `__syncthreads()` cost at each smem stage depends on the **total CTA size** (not active threads). At 1024 threads (32 warps): each barrier costs 78 cy. With 5 smem stages → 390 cy in barriers alone (37% of total).
 
 **1024-thread reduction is 3.3× costlier than 32-thread.** For kernels with frequent reductions (LayerNorm, softmax), prefer 256-thread CTAs over 1024 — the 2× fewer reductions-per-SM trades favorably against the 2× lower per-reduction cost.
+
+
+# Shared Memory Bandwidth vs Vector Width (148 SMs × 256 threads)
+
+| Access pattern | B/thread | Chip BW (TB/s) | Per-SM (GB/s) | % of peak |
+|---------------|----------:|---------------:|---------:|----------:|
+| v1 read (4B) | 4 | 20.0 | 135 | 52% |
+| v2 read (8B) | 8 | 29.5 | 200 | 77% |
+| **v4 read (16B)** | 16 | **37.7** | **254** | **98%** |
+| v1 write+read pair | 4+4 | 8.5 | 57 | — |
+
+**v4 shared memory loads achieve 98% of theoretical peak** (128 B/clk/SM = 259 GB/s/SM at 2032 MHz). v1 only reaches 52% — each scalar load wastes half the smem read port bandwidth. Unlike global memory (where v2 saturates), **smem benefits from v4 width**.
+
+
+# Global Store Bandwidth (148 SMs × 256 threads, 512 MB buffer)
+
+| Width | Write BW (TB/s) | Read BW for comparison |
+|------:|----------------:|----------------------:|
+| v1 (4B) | 6.93 | 3.02 (v1 read) |
+| v4 (16B) | 7.40 | 6.80 (v4 read) |
+
+**Global writes match read bandwidth** (~7 TB/s). Store width has minimal effect — the memory controller buffers writes regardless of width.
+
+**Smem vs global summary:**
+- Smem v4 read: **37.7 TB/s** (5.4× HBM)
+- Global read: **7.0 TB/s** (HBM peak)
+- The 5.4× smem advantage is why tiled algorithms (GEMM, convolution) copy data to smem.
