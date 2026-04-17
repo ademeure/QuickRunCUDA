@@ -16397,3 +16397,24 @@ Single-thread pointer chase through pre-built linked list (data-dependent loads,
 **No hardware memory compression visible.** Zero and random data produce identical DRAM bandwidth within 0.5% noise. B300 transfers full-width cache lines regardless of data content. NVIDIA's DCC (Delta Color Compression) either isn't active for compute workloads or doesn't affect measured bandwidth at the DRAM interface.
 
 **Practical**: Don't count on zeros being "free" in memory traffic. Weight sparsity saves compute (via structured sparsity / FP4) but not memory bandwidth.
+
+
+# SM-to-L2 Access Latency Variation (148 SMs, 512 KB pointer chase per SM)
+
+Each SM simultaneously runs a 512 KB pointer chase through its own L2-resident region. Highly reproducible across runs (avg delta = 0.5 cy).
+
+| Metric | Value |
+|--------|------:|
+| **Average** | **301 cy** |
+| Min (SMs 0, 1) | 283 cy |
+| Max (SM 10) | 387 cy |
+| Range | 104 cy (37%) |
+| IQR (Q25-Q75) | 10.6 cy |
+
+**5 outlier SMs consistently 20-30% slower**: SM 6 (361), SM 10 (387), SM 38 (371), SM 94 (355), SM 111 (364). The remaining 143 SMs cluster tightly at 285-310 cy.
+
+**Fastest SMs (<290 cy)**: 0, 1, 32, 33, 40-42, 46-47, 68-69, 112-113, 122, 130-135 — scattered across GPCs, no clear 2-partition pattern.
+
+**Cause**: likely L2 bank contention (not physical distance). Under 148-way concurrent access, some SMs' address regions hash to the same L2 bank as many neighbors, creating queuing. The outlier pattern is deterministic because the address hash and SM-to-region mapping are fixed.
+
+**Practical**: For latency-sensitive single-SM workloads, L2 access is ~300 cy regardless of which SM the block lands on. The 37% variation only appears under heavy multi-SM contention and is fully hidden by TLP in bandwidth-bound workloads.
