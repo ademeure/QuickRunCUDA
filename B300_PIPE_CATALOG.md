@@ -18336,3 +18336,29 @@ Every CUDA API call measured in this catalog, sorted by cost:
 3. **Expensive** (>10 µs): callbacks, property queries, malloc, cold start
 
 **Cache** `GetDeviceProperties` and `GetDeviceLimit`. **Never** use `cudaMalloc` in hot paths.
+
+
+# Mixed-Duration Kernels: Fast Ones Backfill for FREE
+
+Slow = 221 ms, Fast = 111 ms (2× shorter). All 1 block × 256 threads:
+
+| Config | Kernels | Time | vs 64-slow |
+|--------|--------:|-----:|----------:|
+| A) 64 slow | 64 | 221.6 ms | **1.00×** |
+| B) 64 slow + 64 fast | 128 | **221.6 ms** | **1.00× (fast is FREE!)** |
+| C) **64 slow + 128 fast** | **192** | **221.8 ms** | **1.00× (128 fast FREE!)** |
+| D) 128 slow + 64 fast | 192 | 332.3 ms | 1.50× (slot-limited) |
+| E) Interleaved 64s+128f | 192 | 332.4 ms | 1.50× (same as D) |
+
+**Fast kernels that finish before slow ones are COMPLETELY FREE.** The scheduler backfills freed SMs with waiting kernels automatically.
+
+**Test C is the key result**: 192 total kernels (exceeding the 128-slot limit) complete in the SAME time as 64 slow kernels alone. The sequence:
+1. Wave 1: 128 kernels dispatched (64 slow + 64 fast on 128 SMs)
+2. At t=111 ms: 64 fast kernels finish, freeing 64 SMs
+3. Remaining 64 fast kernels from the overflow immediately fill in
+4. All fast kernels complete by t=111+111=222 ms ≈ slow_time
+5. **Total = slow_time = 221 ms** (all 128 fast kernels hidden)
+
+**Test D shows the converse**: when 128 SLOW kernels fill all slots, 64 fast kernels can't start until t=221 ms → total = 221+111 = 332 ms.
+
+**For continuous batching**: short decode tokens (fast) can be processed in gaps left by long prefill computations (slow) — effectively for free. This is the hardware mechanism that makes continuous batching work.
