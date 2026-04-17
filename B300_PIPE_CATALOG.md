@@ -16722,3 +16722,24 @@ FMA and ALU pipes run on separate back-ends but share the front-end warp schedul
 **Design rule**: For memory-bound kernels, target ≥8 warps/SM as the minimum occupancy. Going from 8→32 warps/SM gives another 1.4× bandwidth. Below 4 warps/SM, more than half of HBM bandwidth is wasted on latency gaps.
 
 **Thread config doesn't matter** — only total warp count. 256×148 (8 warps/SM) ≈ 512×74 (same warps/SM) within 5%.
+
+
+# Math Function Variant Costs (Single Chain, Includes Rescale FMA)
+
+| Function | cy/iter | vs exp2f | SASS path |
+|----------|--------:|---------:|-----------|
+| `exp2f` (base-2) | **20.1** | **1.00×** | MUFU.EX2 only |
+| `__expf` (fast) | 24.2 | 1.20× | MUFU.EX2 + ln2 scale |
+| `expf` (standard) | 24.2 | 1.20× | **Same as __expf!** |
+| `tanhf` (GELU) | 24.1 | 1.20× | MUFU.EX2-based |
+| `__logf` (fast) | 27.4 | 1.36× | MUFU.LG2 + scale |
+| `logf` (standard) | 27.4 | 1.36× | Same as __logf |
+| `rsqrtf` | 28.2 | 1.40× | MUFU.RSQ + FMA refine |
+| `__frcp_rn` (IEEE rcp) | **86.9** | **4.32×** | MUFU.RCP + Newton-Raphson |
+
+**Key findings:**
+1. **`__expf` = `expf` on B300** — the compiler generates identical SASS. No benefit to using the "fast" intrinsic.
+2. **`exp2f` is 17% cheaper** — avoids the log₂(e) pre-multiply. Use `exp2f(x * 1.4427f)` instead of `expf(x)` in hot loops (saves ~4 cy = 1 FMA).
+3. **`tanhf` = same cost as `expf`** — the compiler reduces tanh to MUFU.EX2 + FMA chain.
+4. **IEEE `__frcp_rn` is 4.3× more expensive** than `rsqrtf` — Newton-Raphson refinement for correct rounding adds ~60 cy.
+5. **`__logf` = `logf`** — same SASS on B300.
