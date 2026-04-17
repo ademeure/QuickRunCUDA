@@ -17293,3 +17293,45 @@ Includes only GEMV time. Real throughput ~40 tok/s (measured in catalog) due to 
 | Min load width for full BW | float2 (8B) |
 | Min warps/SM for 60% BW | 8 |
 | Min warps/SM for 86% BW | 32 |
+
+
+# Warp Vote / Elect Operation Costs
+
+| Operation | cy | vs FMA | Use case |
+|-----------|---:|-------:|----------|
+| FMA baseline | 4.1 | 1.0× | reference |
+| **`activemask`** | **4.7** | **1.1×** | **Essentially free** (HW register) |
+| `__all_sync` | 31.2 | 7.6× | Convergence check |
+| `__ballot_sync` | 31.4 | 7.7× | Lane mask computation |
+| `__any_sync` | 35.4 | 8.6× | Divergence detection |
+| `ballot` + `__popc` | 47.4 | 11.6× | Count matching lanes |
+| **`ballot` + `__ffs` (elect)** | **69.4** | **16.9×** | **Leader election** |
+
+**`activemask` is free** (reads HW register, no cross-lane communication). Vote operations (`ballot`, `any`, `all`) cost ~31-35 cy — similar to shuffle (26 cy) since they also require warp-wide coordination.
+
+**Leader election** (ballot + ffs) at 69 cy is the most expensive vote pattern. For warp-specialization, prefer static lane-0 leadership over dynamic election when possible.
+
+
+# ═══ COMPLETE COMPUTE PIPELINE AT A GLANCE ═══
+
+| Unit | Latency | Throughput/SM/cy | Depth | Pipe |
+|------|--------:|-----------------:|------:|------|
+| **FFMA** (FP32) | **4 cy** | 2.0 warp-inst | 2 | fma |
+| **HFMA2** (FP16×2) | **4 cy** | 2.0 warp-inst | 2 | fma |
+| **LOP3/SHF/BFI/PRMT** | **4 cy** | 2.0 warp-inst | 2 | alu |
+| **IMAD** (INT32) | **4 cy** | 2.0 warp-inst | 2 | fma |
+| **MUFU** (exp/sin/rcp) | **24 cy** | 0.12 warp-inst | 3 | xu |
+| **SHFL** (shuffle) | **26 cy** | — | 13 | shuffle |
+| **CREDUX** (HW reduce) | **23 cy** | — | — | alu+fma |
+| VOTE (ballot/any/all) | 31 cy | — | — | — |
+| **DFMA** (FP64) | **64 cy** | 0.05 warp-inst | 1 | fp64 |
+| **ld.shared** | **24 cy** | — | — | lsu |
+| **ld.global** (L1) | **39 cy** | 0.56 (8 ld ILP) | ~70 | lsu |
+| **ld.global** (L2) | **307 cy** | — | — | lsu |
+| **ld.global** (DRAM) | **860 cy** | — | — | lsu |
+
+**Co-issue rules:**
+- FMA + ALU + LSU + MUFU: all co-issue with each other (**+0.7 cy overhead**)
+- MUFU (24 cy) shadows everything when present — other pipes are free
+- Uniform pipe (UIADD3): zero cost alongside any vector pipe
+- Scheduler: 1 warp-instruction per cycle per SMSP, 4 SMSPs per SM
