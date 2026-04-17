@@ -95,7 +95,7 @@ Note: Smem read peak is ~36 TB/s chip at 128 B/clk/SM — true HW peak, confirme
 | DFMA (f64) | **64 cy** | 64 cy (**no ILP**) | fp64 | FFMA, ALU free |
 | IMAD.LO (i32) | 4 cy | 2.1 cy | fma | FFMA |
 | LOP3 / SHF | 4 cy | 2.0 cy | alu | FMA, LSU |
-| MUFU (ex2) | **14 cy** | 4 cy (4 chains) | xu | — |
+| MUFU (sin) | **24 cy** | 8.4 cy (3 chains) | xu | — |
 | SHFL | **24 cy** | 4 cy (6 chains) | alu? | — |
 | redux.sync | 8.5 cy | 8.8 cy (not pipelined) | adu | — |
 | ld.shared | **24 cy** | — | lsu | FMA, ALU |
