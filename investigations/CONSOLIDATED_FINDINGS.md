@@ -386,16 +386,15 @@ H2D/D2H pinned peaks at 91% of Gen5 x16 theoretical (63 GB/s).
 - Empirically: priority does NOT actively preempt when SMs can hold both kernels
 - High+low priority parallel = both run CONCURRENTLY (sharing SMs), not serial
 
-### Power & Thermal Behavior (CRITICAL for sustained workloads)
+### Power & Thermal Behavior
 - **B300 SXM6 TGP**: ~1000 W
 - **Idle**: 137 W, 120 MHz, 33°C
-- **FFMA stress (~6 sec)**: 400 W, 2032 MHz, 46°C — no throttle, only 40% TGP
-- **Sustained FP8 GEMM**: **744 W** during work (close to TGP limit)
-- **Sustained tensor throughput collapses to 53% of burst peak**:
-  - Single FP8 GEMM 8192³: 4385 TFLOPS
-  - Sustained 10000 iters: **2308 TFLOPS** (47% lower!)
-- Implies: real-world LLM training/inference will see ~50% of burst peak on prolonged loads
-- Workload type matters: FFMA-only stays at 400W, tensor cores hit 744W faster
+- **FFMA stress (~6 sec)**: 400 W, 2032 MHz, 46°C (only 40% TGP)
+- **Sustained FP8 GEMM (3 sec, ncu-verified)**: 870 W, 2032 MHz, 55°C
+- **Sustained throughput = burst throughput**: 4489 TFLOPS held flat over 60 batches × 0.05 sec each
+- ⚠️ **EARLIER "53% throttle" was a MEASUREMENT ARTIFACT** — `sleep_for` in test code inflated wall time, making throughput appear lower than reality
+- B300 maintains 2032 MHz boost clock through 3+ sec of FP8 GEMM at 870W
+- Did NOT test multi-minute durations — long-term thermal behavior unmeasured
 
 ### Pinned Memory: cudaMallocHost vs cudaHostRegister
 | Op | 4 KB | 16 MB |
