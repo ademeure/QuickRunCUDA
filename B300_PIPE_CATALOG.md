@@ -18227,3 +18227,20 @@ After hours of sustained benchmarking (hundreds of kernel launches, thermal cycl
 **`MaxPotentialBlockSize` = 15.3 µs** — does a full block-size search. This is 7× the kernel launch cost. Call once at initialization, cache the result.
 
 All other occupancy APIs are sub-microsecond and safe to call per-kernel.
+
+
+# CUDA Configuration API Costs
+
+| API | Cost | Cache? |
+|-----|-----:|:------:|
+| `cudaDeviceSetLimit` | 0.06 µs | — |
+| `cudaFuncSetSharedMemConfig` | 0.09 µs | — |
+| `cudaFuncSetCacheConfig` | 0.22 µs | — |
+| **`cudaGetDeviceProperties`** | **512 µs** | **Yes!** |
+| **`cudaDeviceGetLimit`** | **2121 µs** | **Yes!** |
+
+**`cudaGetDeviceProperties` = 512 µs** — queries all device attributes from driver. Call ONCE at startup, cache the result. Use `cudaDeviceGetAttribute` (0.01 µs) for individual lookups.
+
+**`cudaDeviceGetLimit` = 2.1 ms** — surprisingly expensive (driver round-trip). Cache the result; don't call in hot paths.
+
+All `Set` APIs are sub-microsecond and safe to call per-kernel.
