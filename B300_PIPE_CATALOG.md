@@ -17090,3 +17090,26 @@ Both static (`__shared__ float s[N]`) and dynamic (`extern __shared__ float d[]`
 | IMAD s64 (`mad.lo.s64`) | **11.4** | alu+fma | **2.8× slower than s32** (multi-op emulation) |
 
 **32-bit integer multiply is native** at FFMA speed (4 cy). 64-bit and 16-bit multiplies are emulated with multiple 32-bit operations — 2.5-2.8× overhead. Use 32-bit integers whenever possible.
+
+
+# SASS Instructions Per C/PTX Operation (B300 sm_103a)
+
+| C/PTX operation | SASS count | Key SASS opcodes |
+|----------------|----------:|-----------------|
+| `x * a + b` (FMA) | **1** | FFMA |
+| `__expf(x)` / `expf(x)` (bounded input) | **2** | FMUL×log₂e + MUFU.EX2 |
+| `expf(x)` (unbounded input) | **5** | FSETP + 2×@FMUL + MUFU.EX2 + FMUL |
+| `sinf(x)` | **2** | FMUL×(1/2π) + MUFU.SIN |
+| `__shfl_xor_sync(mask, x, offset)` | **1** | SHFL.BFLY |
+| `__syncthreads()` | **1** | BAR.SYNC.DEFER_BLOCKING |
+| `__threadfence()` | **2-3** | MEMBAR.SC.GPU + CCTL.IVALL |
+| `atomicAdd(ptr, val)` | **1** | ATOMG.E.ADD |
+| `*(float4*)ptr` (v4 load) | **1** | LDG.E.128 |
+| `(float)int_val` | **1** | I2FP.F32 |
+| `__float2half(x)` | **1** | F2FP.F16.F32 |
+| `x ^ y ^ z` (LOP3) | **1** | LOP3.LUT |
+| `__reduce_max_sync` | **2** | CREDUX.MAX + IMAD (result delivery) |
+
+**`expf` with bounded inputs = 2 SASS** — the compiler eliminates range-checking (FSETP + conditional FMUL) when it can prove the input won't overflow/underflow. This is common in softmax (where inputs are shifted by max) and activation functions (where inputs are clipped). Unbounded `expf` costs 5 SASS (2.5× more instruction slots).
+
+**`__shfl_xor_sync` = 1 SASS** — the `BAR.WARP.SYNC` is eliminated on B300 when the mask is compile-time 0xFFFFFFFF. This is why shuffle is cheaper than expected from the old "SHFL + SYNC" model.
