@@ -19471,3 +19471,69 @@ When the trick wins:
 - With trick → 4 blocks/SM but accept some slowdown
 - Net depends on your specific access pattern
 
+
+
+# 📋 SESSION SUMMARY: PDL + Streams + B300 Architecture Deep Dive
+
+## Headline Discoveries
+
+1. **🎯 The "Steal Reserved" Trick**: 4 blocks × 57 KiB shmem on SAME SM achieved by writing the runtime-reserved 1 KiB via raw PTX. Verified across 592 blocks, 0 corruption.
+
+2. **PDL Saves ~1.9 µs/kernel** (asymptotic) for chains ≥16. Optimal signal point: 90% (short kernels) → 99-100% (long kernels). Early signal causes contention slowdown.
+
+3. **Graphs ≈ PDL**: both save ~2.5 µs/kernel — they are SUBSTITUTES, not complements. Combined adds only 0.15 µs.
+
+4. **PCIe x16 Gen5: 57 GB/s** (90% of theoretical). NVLink: **757 GB/s unidirectional / 1503 GB/s bidirectional**. Kernel-side P2P matches DMA at 755 GB/s with float4 + 75K threads.
+
+5. **B300 has 4 MemSyncDomains, 6 stream priority levels, 4 async engines, 126.5 MB L2 (79 MB persist).**
+
+6. **`griddepcontrol.wait` is a memory fence**: causes 3 µs/kernel slowdown when kernels write memory. Use for synchronization only when needed.
+
+7. **Stream concurrency cliff at 148**: 128 dispatch slots, then 2-wave needed. Max effective concurrency ~116×.
+
+8. **Reserved 1 KiB is hard-locked** at compile time and runtime. Steal-trick is the ONLY backdoor. INCOMPATIBLE with cluster.sync, mbarrier, TMA, async-copy.
+
+## Performance Table (B300)
+
+| Operation | Latency |
+|---|---:|
+| FFMA pipeline | ~5.8 TB/s local HBM throughput |
+| cudaStreamWaitEvent | 0.08 µs |
+| cudaEventCreate (disable_timing) | 0.10 µs |
+| cudaMallocAsync | 0.42 µs |
+| Min kernel launch (event timing) | 4.4 µs |
+| Min kernel + sync (round-trip) | 7.3 µs |
+| cudaStreamCreate | 3.8 µs |
+| cudaEventRecord | 2.0 µs |
+| cudaStreamSynchronize (idle) | 1.24 µs |
+| Cooperative grid.sync() | ~3 µs |
+| Async P2P transfer min | 8 µs |
+| cudaMalloc (4 KB) | 20+ ms |
+| cudaSetDevice (cold) | 2116 ms |
+
+## Source Files Added (test/) This Session
+
+PDL-related:
+- pdl_overhead.cu, pdl_optimal.cu, pdl_verify.cu, pdl_mem.cu
+- pdl_multistream.cu, pdl_event.cu, pdl_chain.cu, pdl_chain_depth.cu
+- pdl_nested.cu, pdl_signal_count.cu, pdl_diagnose.cu, pdl_scenarios.cu
+- pdl_bench.cu, pdl_check.cu
+
+Stream/Graph:
+- streams3.cu, ptds.cu, cuda_graphs.cu, graph_pdl.cu, graph_pdl_node.cu
+- streamval.cu, host_callbacks.cu, sync_costs.cu, sync_policy.cu
+- llm_pipeline.cu, persistent_pdl.cu, cooperative.cu
+
+Launch attributes:
+- launch_attrs.cu, memdomains.cu, access_l2.cu, cluster_pdl.cu
+- cluster_sched.cu, cache_pref.cu, nvlink_hint.cu
+
+B300 architecture:
+- b300_arch_probe.cu, async_engines.cu, multi_gpu.cu, p2p_kernel.cu, p2p_deep.cu
+- shmem_test.cu, shmem_used.cu, shmem_reserved.cu/2/3.cu, shmem_raw.cu
+- shmem_reclaim.cu, shmem_4blocks.cu, shmem_creative.cu, shmem_truly_creative.cu
+- **shmem_steal_verify.cu, shmem_steal_4per_sm.cu** ⭐ (the trick verification)
+- shmem_steal_high_occ.cu, shmem_steal_perf.cu, shmem_trick_real.cu
+- shmem_steal_negative.cu, shmem_steal_pdl_only.cu, shmem_steal_cluster.cu
+- nvtx_test.cu, dyn_par.cu, launch_latency.cu, tma_test.cu
+
