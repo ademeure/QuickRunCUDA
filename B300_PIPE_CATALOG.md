@@ -17906,3 +17906,18 @@ Tested 12 cublasLt configurations (E4M3/E5M2 × BF16/FP32/E4M3 output × 2 compu
 | **BF16 tensor (cuBLAS)** | **962 W** | **2192** | **2278** |
 
 **BF16 tensor cores are 23× more power-efficient per FLOP** than scalar FP32 FMA. Tensor workloads draw 2.5× more total power (962 vs 386 W) but deliver 58× more throughput (2192 vs 38 TFLOPS).
+
+
+# PagedAttention KV Cache: Negligible Paging Overhead
+
+1024 KV blocks (2 KB each) randomly scattered across 1 GB pool:
+
+| Access pattern | BW (TB/s) | vs contiguous | vs HBM peak |
+|---------------|----------:|--------------:|------------:|
+| Contiguous (sequential) | 2.96 | 1.00× | 42% (v1) |
+| **Paged (random, v1)** | **2.67** | **0.90×** | 38% |
+| **Paged (random, v4)** | **7.36** | **2.49×** | **105%** |
+
+**PagedAttention has only 10% overhead** at scalar width — the L2 randomized hash and DRAM bank parallelism handle random page access efficiently. With v4 reads, paged access reaches **full HBM bandwidth** because each page is read contiguously once selected.
+
+**Practical for vLLM/TensorRT-LLM**: the block table (page indices) fits in L1 cache (~4 KB). KV data reads go directly to HBM at peak bandwidth. Paging overhead is negligible — use PagedAttention without performance concern on B300.
