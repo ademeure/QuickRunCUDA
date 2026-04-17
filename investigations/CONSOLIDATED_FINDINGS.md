@@ -322,3 +322,66 @@ No register spills up to 134 regs/thread.
 | PRMT.b32 | 4.03 |
 | BFE.u32 | 8.08 |
 - `__brev`, `__clz`, `__ffs` intrinsics: DCE'd in my test (compiler eliminated)
+
+### cuBLAS GEMM Precision Comparison (TFLOPS @ 2032 MHz, 8192³)
+| Precision | TFLOPS | Ratio vs BF16 |
+|---|---:|---:|
+| FP16→FP16 | NOT_SUPPORTED | — |
+| FP16→FP32 | 2238 | 1.0× |
+| BF16→FP32 | 2234 | 1.0× |
+| FP8→FP16 | 4398 | 1.97× |
+| FP8→BF16 | 4398 | 1.97× |
+- FP16 and BF16 identical throughput
+- FP8 ≈ 2× BF16 at large sizes
+- Clock state (1920 vs 2032) made <0.2% difference — GEMM is power-limited
+
+### Managed Memory Migration
+| Pattern | Throughput |
+|---|---:|
+| Cold h→GPU (page fault driven) | 6.5 GB/s |
+| Warm GPU access (already migrated) | 3352 GB/s |
+| Migrate back h←GPU | 6.9 GB/s |
+| After `cudaMemPrefetchAsync` | **2409 GB/s** (300× cold!) |
+- Reference: pageable `cudaMemcpy` 49 GB/s — still 7× faster than cold managed
+- **Prefetch hints ESSENTIAL for managed memory**
+
+### cudaMemcpy Bandwidth Curves (GB/s peak at 256 MB)
+| Mode | BW |
+|---|---:|
+| H2D pinned | 57.6 |
+| D2H pinned | 57.3 |
+| H2D pageable | 38.0 |
+| D2D | 3005 |
+
+H2D/D2H pinned peaks at 91% of Gen5 x16 theoretical (63 GB/s).
+
+### CUDA Graph Launch Speedup (vs direct launches)
+| Chain N | Speedup |
+|---:|---:|
+| 1 | 1.20× |
+| 8 | 1.94× |
+| 32 | 2.27× |
+| 128 | 2.45× |
+| 1024 | **2.52×** |
+- Per-kernel overhead: direct 2.07 µs → graph 0.84 µs
+
+### B300 Device Attributes (highlights from 115-attribute probe)
+- ComputeCapability: 10.3 (sm_103a)
+- MaxGridDim: 2.1B × 65535 × 65535
+- MaxBlocksPerMultiprocessor: 32
+- SingleToDoublePrecisionPerfRatio: 64
+- Max Texture 3D: 16384³ (4 TB volume)
+- TimelineSemaphoreInteropSupported: 1 (Vulkan interop)
+- SparseCudaArraySupported: 1
+- DeferredMappingCudaArraySupported: 1
+- IpcEventSupport: 1
+- MemoryPoolSupportedHandleTypes: 9 (bitmask)
+- HostRegisterReadOnlySupported: 0
+- CanFlushRemoteWrites: 0
+- GPUDirectRDMAFlushWritesOptions: 1
+- GPUDirectRDMAWritesOrdering: 100
+
+### Compute Preemption
+- `cudaDevAttrComputePreemptionSupported: 1` (supported per attribute)
+- Empirically: priority does NOT actively preempt when SMs can hold both kernels
+- High+low priority parallel = both run CONCURRENTLY (sharing SMs), not serial
