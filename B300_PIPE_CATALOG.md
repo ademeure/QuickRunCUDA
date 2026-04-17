@@ -16743,3 +16743,61 @@ FMA and ALU pipes run on separate back-ends but share the front-end warp schedul
 3. **`tanhf` = same cost as `expf`** — the compiler reduces tanh to MUFU.EX2 + FMA chain.
 4. **IEEE `__frcp_rn` is 4.3× more expensive** than `rsqrtf` — Newton-Raphson refinement for correct rounding adds ~60 cy.
 5. **`__logf` = `logf`** — same SASS on B300.
+
+
+# NVRTC Compilation Time + CUDA Context Init
+
+## CUDA context initialization
+
+| Phase | Time |
+|-------|-----:|
+| **CUDA context init** (cudaInit + buffers) | **~2000 ms** |
+| This is the one-time cost per process. Server mode amortizes it. |
+
+## NVRTC compilation (isolated from context init)
+
+| Kernel size | NVRTC time | Total (init + compile) |
+|-------------|----------:|----------------------:|
+| 7 lines (1 FMA) | **64 ms** | 2142 ms |
+| 1030 lines (1024 FMA) | ~320 ms | 2397 ms |
+| **4101 lines (4096 FMA)** | **~700 ms** | **2771 ms** |
+
+**NVRTC compilation scales sub-linearly with kernel size**: 64 ms for trivial kernels, ~700 ms for 4K lines. The PTX→SASS (ptxas) phase dominates for large kernels.
+
+**For JIT frameworks** (Triton, TVM, torch.compile): the 2-second CUDA context init is unavoidable per process, but NVRTC itself adds only 64-700 ms per kernel compile. Use `--reuse-cubin` or cache compiled CUBINs to avoid recompilation.
+
+
+# Store→Load Behavior + `.cg` Load Implementation
+
+## Compiler eliminates redundant store→load
+
+When the same thread stores then loads from the same address, ptxas eliminates the load entirely — it recognizes the store value is still in a register. This optimization applies even with `asm volatile` for `.ca` (default) loads.
+
+## `ld.global.cg` SASS implementation: CCTL.IVALL + LDG.E
+
+B300 does NOT have a separate `.cg` load path in SASS. Instead:
+
+```
+ld.global.cg.f32  →  CCTL.IVALL (invalidate L1) + LDG.E (load from L2)
+```
+
+| Pattern (asm-forced) | cy/iter | SASS |
+|---------------------|--------:|------|
+| STG + LDG same addr (.ca) | 4.6 | STG + FADD (load eliminated) |
+| **STG + LDG.cg same addr** | **357.6** | STG + MEMBAR + CCTL.IVALL + LDG.E |
+| LDG + STG chain (.ca, L1 warm) | 5.5 | LDG.E.STRONG.GPU + STG.E |
+
+**The 357 cy cost of `.cg` after a store is NOT the load latency — it's the CCTL.IVALL (L1 invalidation) + MEMBAR (store drain) + L2 round-trip combined.** For streaming reads without preceding stores, `.cg` adds only the L1-bypass overhead (~10-20 cy vs `.ca`).
+
+**Practical**: Never mix stores and `.cg` loads to the same address — the forced L1 invalidation is catastrophic (360 cy). Use default `.ca` loads or smem for producer-consumer patterns.
+
+
+# NVRTC Compilation Time (Isolated)
+
+| Kernel size | NVRTC only | Context init |
+|-------------|----------:|------------:|
+| 7 lines | ~64 ms | ~2000 ms |
+| 1030 lines | ~320 ms | — |
+| 4101 lines | ~700 ms | — |
+
+**NVRTC is fast**: 64-700 ms depending on kernel complexity. The ~2s total per QuickRunCUDA run is dominated by CUDA context initialization (cudaInit, buffer allocation), not compilation. Server mode amortizes the init cost.
