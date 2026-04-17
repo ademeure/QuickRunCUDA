@@ -19236,3 +19236,60 @@ If your kernel needs more than 232,448 bytes per block, you literally cannot hav
 
 DSMEM (cluster shared memory) effectively pools shmem across blocks in a cluster. With cluster=2, you have 2 × 232,448 = 464,896 user bytes addressable from one block (with constraints).
 
+
+
+# PDL Chain Depth: Asymptotic Behavior
+
+148 blocks × 128 threads, 1000 iters/kernel (~14 us each):
+
+| Chain | no_pdl (ms) | pdl_99 (ms) | save (us/kernel) | save (%) |
+|---:|---:|---:|---:|---:|
+| 1 | 0.019 | 0.020 | **-0.4** | -2% (overhead, no benefit) |
+| 2 | 0.033 | 0.032 | +0.4 | 1% |
+| 4 | 0.062 | 0.056 | +1.4 | 9% |
+| 8 | 0.119 | 0.106 | +1.6 | 11% |
+| 16 | 0.233 | 0.205 | +1.7 | 12% |
+| 32 | 0.463 | 0.404 | +1.8 | 13% |
+| 64 | 0.921 | 0.802 | +1.85 | 13% |
+| 128 | 1.838 | 1.598 | +1.88 | 13% |
+| 256 | 3.673 | 3.189 | +1.89 | 13% |
+| 512 | 7.342 | 6.370 | +1.90 | 13% |
+| 1024 | 14.678 | 12.735 | **+1.90** | **13%** |
+
+**Asymptotic PDL savings: ~1.9 µs/kernel** for ~14 µs kernels (= ~13% of kernel time).
+
+**Single kernel: PDL costs 0.4 µs** (launch attribute overhead with no benefit).
+
+The savings = overlap of (next kernel launch + setup) with (current kernel tail). For very long kernels, the savings still ~1.9 us, but as a percentage drops. Optimal scenario: many short kernels.
+
+
+# B300 Minimum Kernel Launch Latency
+
+| Method | Latency |
+|---|---:|
+| Empty kernel (1 block × 1 thread, event-based timing) | **4.4 us** (kernel runtime) |
+| Empty kernel (full launch + sync) | **7.3 us** (round-trip) |
+| `cudaLaunchKernelExC` + sync | 7.3 us |
+| `cudaLaunchKernel` + sync | 7.2 us |
+
+CPU sync overhead: 7.3 - 4.4 = **~2.9 µs**.
+
+GPU side: %globaltimer measurements show ~14-30 us between consecutive launches with cudaMemcpy back. The first launch is always slowest (warmup).
+
+**Key insight**: 4.4 us is the MINIMUM kernel time on B300 — set by GPU command processor scheduling overhead. A "no-op" kernel still takes 4.4 us because the SM must:
+1. Receive launch command from CP
+2. Allocate block resources
+3. Issue first warp
+4. Trap completion
+
+This sets a hard floor on per-launch latency and explains why PDL/Graph savings of ~2 us/kernel are significant.
+
+
+# Real B300 NVLink P2P Kernel BW (corrected)
+
+Initial test reported 286 GB/s — that was thread-count limited. Sweep across blocks × threads × vector size shows **kernel-side P2P matches DMA at 755 GB/s** with right config:
+
+- **float4 + 75K+ threads → 755 GB/s** (= cudaMemcpyPeer)
+- **`.cg` cache hint hurts NVLink reads** (305 vs 718 GB/s scalar)
+- Each SM contributes ~5 GB/s
+
