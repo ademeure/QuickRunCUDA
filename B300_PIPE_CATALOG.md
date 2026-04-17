@@ -18120,21 +18120,42 @@ BF16 tensor sustained (962-971 W, 2196 TFLOPS):
 **DFMA latency = 92 cy.** For FP64: use warp-level TLP (more warps), not ILP.
 
 
-# Maximum Concurrent Kernels: 128 with Perfect Overlap
+# Maximum Concurrent Kernels: 128 Hardware Limit (Not SM Count!)
 
-Each kernel uses 1 SM (1 block × 256 threads), launched on separate streams:
+Each kernel = 1 block × 256 threads on 1 independent stream:
 
-| Concurrent | Time | Speedup | Status |
-|----------:|---------:|--------:|--------|
-| 1 | 110.7 ms | 1.0× | baseline |
-| 16 | 110.9 ms | 16.0× | **perfect** |
-| 64 | 111.0 ms | 63.8× | **perfect** |
-| **128** | **111.2 ms** | **127.5×** | **perfect** |
-| 256 | 222.1 ms | 127.6× | 2 waves (> 148 SMs) |
+| Concurrent | Time | Speedup | Waves | Analysis |
+|----------:|---------:|--------:|------:|----------|
+| 1 | 110.9 ms | 1.0× | 1 | baseline |
+| 64 | 111.1 ms | 63.9× | 1 | perfect |
+| **128** | **111.4 ms** | **127.5×** | **1** | **LIMIT** |
+| 144 | 221.8 ms | 72.0× | **2** | **Cliff at 129!** |
+| 148 | 221.8 ms | 74.0× | 2 | Even at SM count |
+| 256 | 222.2 ms | 127.8× | 2 | Wave 2 fills remaining |
+| 512 | 444.0 ms | 127.9× | 4 | 4 × 128-kernel waves |
 
-**128 concurrent kernels run with ZERO overhead** — all finish in the same 111 ms as a single kernel. At 256 kernels (exceeding 148 SMs), the GPU runs 2 sequential waves.
+**The limit is 128 hardware kernel dispatch slots, NOT the 148 SM count.** Kernel #129 triggers a second wave even though 20 SMs are idle. This is a global scheduler hardware constraint.
 
-**For multi-tenant serving**: a single B300 can multiplex 128+ independent inference streams simultaneously with perfect isolation and zero scheduling overhead.
+**Block size doesn't affect the limit:**
+
+| Threads/block | 148-kernel time | Speedup |
+|--------------:|----------------:|--------:|
+| 32 | 218.7 ms | 74× |
+| 256 | 221.8 ms | 74× |
+| 1024 | 471.3 ms | 74× |
+
+Same 2-wave behavior at all block sizes. The limit is on KERNEL COUNT, not thread count.
+
+**CUDA Graph doesn't help:**
+
+| Method | 148 kernels | Speedup |
+|--------|----------:|--------:|
+| 148 streams | 221.7 ms | baseline |
+| CUDA graph | 221.5 ms | **1.00×** |
+
+The graph can't bypass the 128-kernel hardware limit — same 2-wave behavior.
+
+**For multi-tenant serving**: maximum 128 truly concurrent kernels. Use persistent kernels with cooperative scheduling to bypass this limit for >128 request streams.
 
 
 # Async Polling: cudaStreamQuery / cudaEventQuery
