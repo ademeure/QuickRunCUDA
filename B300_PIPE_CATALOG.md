@@ -17870,3 +17870,39 @@ Single B300, 2032 MHz, batch=1, context=1024:
 **92.7% of decode time is loading weights from HBM.** The GPU's 1806 TFLOPS BF16 tensor capacity is 99.8% idle at batch=1. Only batching (≥16 requests) or weight compression (FP8/FP4) can improve this.
 
 **MLP dominates**: Gate + Up + Down = 76.3% of layer time (201 µs). These three GEMVs load 1.4 GB of weights per layer — the primary optimization target for decode throughput.
+
+
+# FP8 cuBLAS: Not Available via Standard API on B300
+
+Tested 12 cublasLt configurations (E4M3/E5M2 × BF16/FP32/E4M3 output × 2 compute types): **ALL returned CUBLAS_STATUS_NOT_SUPPORTED.**
+
+**FP8 GEMM on sm_103a requires the `tcgen05.mma` tensor path**, which cuBLAS (as of CUDA 13.2) does not expose via the standard cublasLtMatmul API. Production FP8 inference requires:
+- **TensorRT-LLM**: custom tcgen05.mma FP8 kernels
+- **CUTLASS 3.x**: Blackwell-specific FP8 kernels using tcgen05
+- **Custom kernels**: direct PTX `tcgen05.mma` with FP8 descriptors
+
+**Published B300 FP8 peak = 5,000 TFLOPS** (2× BF16). Achieving this requires framework-level support for the tcgen05 path — not available through standard cuBLAS in the current CUDA release.
+
+
+# Sustained BF16 Tensor: 2192 TFLOPS at 962 W
+
+10-second sustained cuBLAS BF16 GEMM (8192×8192), 20,969 iterations:
+
+| Metric | Value |
+|--------|------:|
+| **Sustained TFLOPS** | **2192** (88% of 2500 peak) |
+| **Sustained power** | **962 W** (87% of 1100 W TDP) |
+| **Power efficiency** | **2278 GFLOPS/W** |
+| Per-GEMM latency | 501.5 µs |
+| GEMMs in 10 seconds | 20,969 |
+
+## Complete Power Hierarchy (Corrected)
+
+| Workload | Power | TFLOPS | GFLOPS/W |
+|----------|------:|-------:|---------:|
+| Idle | 196 W | — | — |
+| Memory streaming | 369 W | — | — |
+| FP32 FMA (scalar) | 386 W | 38 | 98 |
+| **BF16 tensor (cuBLAS)** | **962 W** | **2192** | **2278** |
+
+**BF16 tensor cores are 23× more power-efficient per FLOP** than scalar FP32 FMA. Tensor workloads draw 2.5× more total power (962 vs 386 W) but deliver 58× more throughput (2192 vs 38 TFLOPS).
