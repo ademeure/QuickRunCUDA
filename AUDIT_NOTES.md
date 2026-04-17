@@ -323,3 +323,116 @@ True SHMEM peak should be MUCH higher (~38 TB/s aggregate computed earlier). So 
 ### NOT VERIFIED THIS SESSION
 - 128 concurrent kernel slot limit (cited from earlier work)
 - Most main-catalog "F2FP" findings (those are pre-session)
+
+
+# Corrections Applied (after audit)
+
+## SHMEM Peak Bandwidth — Re-tested
+
+### Old (under-utilizing test)
+- Local SMEM read: 4500-4850 GB/s aggregate (12% of theoretical)
+
+### New (proper test, `tests/shmem_peak.cu`)
+- 8 reads_per_iter × 1000 iter × 256 thr × 148 SMs:
+- **19.85 TB/s aggregate (52% of theoretical 38.5 TB/s)**
+- Per-SM: 134 GB/s
+- Theoretical: 32 banks × 4 bytes × 2.032 GHz = 260 GB/s/SM = 38.5 TB/s aggregate
+
+Even better tests should be possible with more ILP per warp and pipelined accesses, but 52% is closer to realistic peak.
+
+## Tensor Core mma.sync Peak — Re-tested
+
+### Old
+- 514 TFLOPS BF16 m16n8k16 with ILP=4
+
+### New (`tests/mma_peak.cu`)
+- 32 warps/SM × 8 ILP × 8 acc chains: **544 TFLOPS BF16 m16n8k16**
+- Per-SM: 3.7 TFLOPS = 1.81 mma.sync m16n8k16 / cycle / SM
+- Per-partition (4): 0.45 mma/cy → 1 mma every ~2.2 cy per partition
+- This is the LEGACY mma.sync path peak, ~1/4 of B300's tcgen05 peak (~1980 TFLOPS spec)
+
+### Conclusion
+- mma.sync legacy path: 544 TFLOPS BF16 — VERIFIED PEAK
+- B300 full BF16 peak ~1980 TFLOPS requires `tcgen05.mma` (Blackwell-only) with TMEM
+- WGMMA (Hopper-style) might approach this on B300 too
+
+## FP32 Peak — Re-tested
+
+### Old
+- 52 TFLOPS with ILP=8, 8 warps/SM (68% of theoretical)
+
+### New (`tests/fp32_peak2.cu`)
+- ILP=16, 64 warps/SM (max occupancy): **58.61 TFLOPS = 76.2% of theoretical 77 TFLOPS**
+- 1024 threads/block × 2 blocks/SM × 148 SMs
+
+Likely limited by register file bandwidth or scheduler at this point. 76% achievement is near practical peak for FFMA chain.
+
+## L2 stride access "fetched" Numbers — Corrected
+
+The "32B sector" multiplier was WRONG for coalesced loads. For coalesced 32-thread access:
+- 32 threads × 4 bytes = 128 bytes = exactly 1 cache line / 4 sectors
+- No waste — fetched = useful
+
+Numbers like "11,400 GB/s fetched at stride=4" are ARTIFACTS of bad accounting. The true effective BW (~1426 GB/s) is the real number.
+
+## DSMEM — Likely Under-Utilizing (not yet re-tested with proper saturation)
+
+Previous: 1000 GB/s peer access. Local SMEM measured 4500 GB/s in same test.
+
+Both numbers are likely far below SHMEM peak (38.5 TB/s). Suggests the test underutilizes load bandwidth. RELATIVE comparison (4.7× slower for DSMEM) is robust though.
+
+## Stream concurrency (streams_explore.cu) — DEPRECATED FILE
+
+The original `tests/streams_explore.cu` had broken event timing (events on default stream while kernels on other streams = no observation).
+
+- ✗ DO NOT USE: tests/streams_explore.cu
+- ✓ Use instead: tests/streams3.cu (CPU-side timing with cudaDeviceSynchronize)
+
+
+# Updated Reliability Index
+
+After corrections, here's the trust ranking:
+
+### HIGH (cross-checked, methodologically sound)
+- B300 device props (148 SMs, 2032 MHz, 126.5 MB L2, etc.)
+- NVLink: 757 GB/s uni / 1503 bi DMA, 755 GB/s kernel (after correction)
+- Reserved 1 KiB shmem layout + steal trick
+- Cluster max: 8 portable, 16 non-portable
+- Sync API costs (cudaStreamWaitEvent 0.08 us, etc.)
+- Memory pool 160× faster than cudaMalloc
+- Atomic throughput
+- Clock 2032 MHz under load
+- PDL signal point optimum (90-99%)
+- Graphs ≈ PDL (~2.5 us/kernel)
+- PCIe Gen5 x16 ~57 GB/s
+- MemSyncDomainCount = 4
+- 6 stream priority levels
+- mma.sync m16n8k16 BF16 peak 544 TFLOPS (legacy path, NOT full B300 tensor peak)
+- FP32 76.2% of theoretical with ILP=16+max occupancy
+- SHMEM peak 19.85 TB/s aggregate (52% of theoretical 38.5)
+- LaunchCompletionEvent block-start signal saves ~60 us cross-stream
+
+### MEDIUM (single test or moderate uncertainty)
+- FFMA latency 23 cy
+- Bank conflict serialization cost
+- Constant memory broadcast 25 TB/s
+- L2 stride bandwidth (effective is real, fetched was wrong accounting)
+- Async copy 1.27× speedup at 16 KB
+
+### LOW / under-saturated
+- DSMEM 1000 GB/s — relative ratio robust, absolute likely under-peak
+- L1 cache size estimate (~32 KB)
+- NVTX 0 ns (below noise floor; safe to call "negligible")
+
+### KNOWN WRONG / SUPERSEDED
+- streams_explore.cu (broken timing)
+- "286 GB/s P2P kernel" (thread-limited; corrected to 755 GB/s)
+- "514 TFLOPS = tensor cores work!" (corrected: legacy path peak, not full B300)
+- "7.6 PB/s SHMEM" in early shmem_test.cu (DCE)
+- "32B sector × N" extrapolation in l2_cacheline.cu (bad accounting)
+- Multi-SM 600+ TB/s in some early tests (DCE-affected)
+
+### NOT VERIFIED THIS SESSION (cited from prior catalog)
+- 128 concurrent kernel slot limit
+- Most pre-session findings (B300 catalog ~16K lines that existed before)
+
