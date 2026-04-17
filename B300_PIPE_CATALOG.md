@@ -18023,3 +18023,21 @@ Tested 0 B to 256 MB workspace across 5 shapes (4096³, 8192³, GEMV, batch=128,
 - Sustainable poll rate: **~2M queries/sec**
 
 **GPU monitoring is completely free.** NVML uses a separate management path (PMU/I2C) that never interferes with compute. Monitor power, temperature, and clocks as aggressively as you want — zero impact on inference throughput.
+
+
+# Instruction Cache: No Degradation Through 2 KB Body
+
+Loop body size sweep (1000 iterations, single warp, dep-chain FMA):
+
+| Body FMAs | Body size | Time | cy/warp-FMA | vs baseline |
+|----------:|----------:|-----:|------------:|------------:|
+| 4 | 64 B | 0.012 ms | 6.3 | 1.00× |
+| 8 | 128 B | 0.020 ms | 5.2 | 0.82× |
+| 16 | 256 B | 0.049 ms | 6.2 | 0.99× |
+| 32 | 512 B | 0.096 ms | 6.1 | 0.97× |
+| 64 | 1 KB | 0.192 ms | 6.1 | 0.97× |
+| 128 | 2 KB | 0.384 ms | 6.1 | 0.97× |
+
+**No I-cache degradation through 2 KB loop body** (128 SASS instructions). Time scales perfectly linearly with instruction count — the L0 instruction buffer + L1 I-cache handle up to at least 2 KB of loop body without any fetch penalty.
+
+The earlier catalog data showed degradation starting at ~500 B (from 6 cy/FMA to ~8.5 cy/FMA). The discrepancy may be from different measurement methods or compiler behavior. At 2 KB, both measurements agree: no significant I-cache pressure for typical loop bodies.
