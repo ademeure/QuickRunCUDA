@@ -17818,3 +17818,24 @@ B300 supports 6 priority levels (-5 highest to 0 lowest).
 - Use partial-SM kernels (leave some SMs free for urgent requests)
 - Use persistent kernels with cooperative work scheduling
 - Use CUDA MPS or green contexts for resource partitioning
+
+
+# CUDA Graph vs Individual Launch: End-to-End
+
+| Kernels | Individual | Graph | Speedup | Per-kernel |
+|--------:|-----------:|------:|--------:|-----------:|
+| 1 | 3.0 µs | 2.1 µs | 1.5× | 2.1 µs |
+| 8 | 24.4 µs | 10.2 µs | **2.4×** | 1.3 µs |
+| 32 | 97.5 µs | 35.4 µs | **2.8×** | 1.1 µs |
+| **128** | **390 µs** | **137 µs** | **2.8×** | **1.07 µs** |
+
+**Graphs saturate at 2.8× speedup** — saving ~2 µs of CPU dispatch per kernel. Per-kernel cost drops from 3.05 µs (individual) to 1.07 µs (graph).
+
+**Graph creation overhead:**
+- Capture: 7-42 µs (linear in kernel count)
+- Instantiate: 18-123 µs
+- Total: amortized to negligible over many executions
+
+**For Llama-70B serving**: 8 kernels/layer × 80 layers = 640 kernels. Graph saves 640 × 2 µs = **1.3 ms/token** (~5% of 24 ms decode time).
+
+**Rule**: always use CUDA graphs for repeated kernel sequences. Even 1 kernel gives 1.5×. Breakeven is immediate — no minimum kernel count.
