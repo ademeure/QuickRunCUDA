@@ -17992,3 +17992,19 @@ Tested 0 B to 256 MB workspace across 5 shapes (4096³, 8192³, GEMV, batch=128,
 **All four transpose modes give identical performance** within 0.4%. cuBLAS's TMA-based data loading handles all memory layouts equally efficiently on B300.
 
 **Don't pre-transpose matrices for performance** — it wastes memory and adds no speedup. Use whichever layout is natural for your data flow.
+
+
+# Cooperative Grid Synchronization (`grid.sync()`)
+
+1184 blocks × 256 threads (303K threads across 148 SMs):
+
+| Metric | Value |
+|--------|------:|
+| **Grid sync latency** | **4,970 cy (2.45 µs)** |
+| vs CTA `__syncthreads` (256 thr) | 166× more expensive |
+| vs kernel relaunch + sync | **2.9× cheaper** |
+| Config: blocks per SM | 8 (max for cooperative) |
+
+**Grid sync (2.45 µs) is 2.9× cheaper than kernel relaunch (7.09 µs).** For persistent kernels that iterate many times, grid sync saves 4.64 µs per iteration vs relaunching.
+
+**For persistent serving kernels**: 100 iterations × 4.64 µs savings = 464 µs per inference pass. At 24 ms/token decode: ~2% speedup from avoiding kernel relaunches.
