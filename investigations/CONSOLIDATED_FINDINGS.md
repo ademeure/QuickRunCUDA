@@ -385,3 +385,23 @@ H2D/D2H pinned peaks at 91% of Gen5 x16 theoretical (63 GB/s).
 - `cudaDevAttrComputePreemptionSupported: 1` (supported per attribute)
 - Empirically: priority does NOT actively preempt when SMs can hold both kernels
 - High+low priority parallel = both run CONCURRENTLY (sharing SMs), not serial
+
+### Power & Thermal Behavior (CRITICAL for sustained workloads)
+- **B300 SXM6 TGP**: ~1000 W
+- **Idle**: 137 W, 120 MHz, 33°C
+- **FFMA stress (~6 sec)**: 400 W, 2032 MHz, 46°C — no throttle, only 40% TGP
+- **Sustained FP8 GEMM**: **744 W** during work (close to TGP limit)
+- **Sustained tensor throughput collapses to 53% of burst peak**:
+  - Single FP8 GEMM 8192³: 4385 TFLOPS
+  - Sustained 10000 iters: **2308 TFLOPS** (47% lower!)
+- Implies: real-world LLM training/inference will see ~50% of burst peak on prolonged loads
+- Workload type matters: FFMA-only stays at 400W, tensor cores hit 744W faster
+
+### Pinned Memory: cudaMallocHost vs cudaHostRegister
+| Op | 4 KB | 16 MB |
+|---|---:|---:|
+| `cudaMallocHost+Free` | 414 µs | 2888 µs |
+| `cudaHostRegister+Unreg` | **106 µs** | **750 µs** |
+- HostRegister 3-4× faster for setting up pinned memory
+- Once pinned, both have identical 56 GB/s memcpy throughput
+- HostRegister works on existing malloc'd buffers (useful for library interop)
