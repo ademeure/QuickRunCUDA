@@ -16969,3 +16969,45 @@ Single warp, no pending stores (minimum fence overhead):
 4. No HW FP32 sum exists — shuffle butterfly is the only option for float addition
 
 **Practical**: Replace all warp-level max/min with `__reduce_max/min_sync` for 6.5× speedup. For FP32 sum, stick with shuffle butterfly. Never use smem for warp-only reductions.
+
+
+# End-to-End Softmax Cost (32 Elements, Global Load → Normalize → Store)
+
+| Method | cy/row | Speedup |
+|--------|-------:|--------:|
+| Shuffle max + `expf` + shuffle sum | 1223 | baseline |
+| **HW `reduce_max` + `expf` + shuffle sum** | **1088** | **1.12×** |
+| HW `reduce_max` + `exp2f` + shuffle sum | 1086 | 1.13× |
+
+**The shuffle-based sum is the bottleneck** — HW reduce_max saves 135 cy (11%) but the 5-step shuffle sum at ~150 cy remains. The `exp2f` optimization (17% cheaper exp) saves only ~2 cy in the full pipeline because expf is not on the critical path when shuffles dominate.
+
+**Breakdown of 1223 cy per row** (all serial dependencies):
+- Global load (L1 warm): ~39 cy
+- 5× shuffle max (shfl_xor + fmax): ~150 cy
+- expf (MUFU + range checks): ~40 cy
+- 5× shuffle sum (shfl_xor + fadd): ~150 cy
+- Division (rcp + mul): ~28 cy
+- Store + loop: ~8 cy
+- **Gap (816 cy)**: scheduling overhead, instruction issue costs, no cross-row pipelining
+
+**For attention**: at seq_len=2048 with 32-element tiles, the softmax costs 2048/32 × 1088 = ~70K cy per head — a significant fraction of the Q×K^T GEMM.
+
+
+# Practical Roofline Crossover (FMA/Load Ratio Sweep)
+
+148 blocks × 256 threads, 512 MB DRAM-resident buffer, v4 loads + serial FMA chain:
+
+| FMA/load | Arith. Intensity | Load BW (TB/s) | TFLOPS |
+|---------:|-----------------:|---------------:|-------:|
+| 0 | 0.2 | 1.30 | 0.3 |
+| 4 | 0.8 | 1.13 | 0.9 |
+| 16 | 2.2 | 1.08 | 2.4 |
+| **32** | **4.2** | **1.01** | **4.3 (still mem-bound)** |
+| 64 | 8.2 | 0.91 | 7.5 |
+| **128** | **16.2** | **0.75** | **12.2 (compute-limited)** |
+
+**Crossover at AI ≈ 8-16 FLOP/byte for serial FMA chains.** Even at 32 FMAs per v4 load (AI=4.2), the GPU is STILL memory-bound — the FMA pipe truly co-issues with loads at near-zero overhead.
+
+**Theoretical crossover**: peak_FLOPS / peak_BW = 38 TFLOPS / 7 TB/s = **5.4 FLOP/byte** for an optimized kernel with full ILP. The higher practical crossover (~8-16) is from the serial dep chain limiting compute throughput.
+
+**Practical**: For LLM inference at batch=1, all GEMVs have AI < 1 → completely memory-bound. Only at batch ≥ 128 do GEMMs cross into compute-bound territory (AI ≈ 128 for large square GEMMs).
