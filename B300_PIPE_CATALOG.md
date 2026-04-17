@@ -17461,3 +17461,21 @@ The M=1→2 algorithm switch explains the batch scaling discontinuity: batch=1 a
 **KV cache / embedding pattern (v4 row reads)** at 1.14 TB/s = 16% of HBM. This is the bandwidth limit for paged attention with non-contiguous KV blocks. Each warp reads from 32 different rows, creating 32-way address divergence.
 
 **Practical for attention**: with head_dim=128 (512B per KV vector) and seq_len=2048, the KV cache read per head = 2048 × 512B = 1 MB. At 1.14 TB/s: 1 MB / 1.14 TB/s ≈ 0.9 µs per head. For 64 heads: ~56 µs — comparable to the GEMV weight loading.
+
+
+# Warp Match Operations: Data-Dependent Cost
+
+| Operation | Distinct values | cy | vs shuffle |
+|-----------|----------------:|---:|-----------:|
+| `__match_all_sync` | any | **5.1** | **0.2×** (cheap) |
+| `__match_any_sync` | 1 (all same) | 11.6 | 0.4× |
+| `__match_any_sync` | 4 groups | 19.4 | 0.6× |
+| `__match_any_sync` | 8 groups | ~50 | ~1.7× |
+| **`__match_any_sync`** | **32 (all unique)** | **398** | **13× (avoid!)** |
+| `__shfl_xor_sync` | — | 30.0 | 1.0× (reference) |
+
+**`__match_any_sync` cost scales with the number of distinct values in the warp.** At 32-unique (every lane different): 398 cy = 13× shuffle cost. The hardware performs a 32-way cross-lane comparison that serializes with high diversity.
+
+**`__match_all_sync` is always cheap (5 cy)** — it only checks if ALL values are equal, which is a simple AND-reduction.
+
+**Design rule**: Use `__match_any_sync` only when the expected distinct value count is ≤4-8. For hash tables with high-diversity keys, use shared memory or ballot-based approaches instead.
