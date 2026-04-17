@@ -17754,9 +17754,9 @@ Linear scaling. No batching benefit — each alloc is independently O(1).
 
 ## This Catalog
 
-17,900+ lines | 160+ commits | 360+ sections
-Validated: 96-97% accuracy across 3 LLM model sizes
-Scope: 4 cy FMA → 7 TB/s HBM → 2192 TFLOPS → $0.36/Mtok → 15.6s cold start
+18,100+ lines | 177 commits | 375 sections
+Validated: 96-97% accuracy across Llama-1B/8B/70B
+Scope: 4 cy FMA → 7 TB/s HBM → 2192 TFLOPS → $0.36/Mtok → 89s cold start
 
 
 # BF16 Free Batching: Verified at LLM MLP Shapes
