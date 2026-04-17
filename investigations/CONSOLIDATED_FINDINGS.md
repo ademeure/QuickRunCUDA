@@ -48,6 +48,29 @@ Clock context: B300 SXM6 AC defaults to 2032 MHz boost, but `nvidia-smi -lgc 203
 - Real noop kernel runtime: 3-4 ns (inside event overhead)
 - "2.05 µs invariant" catalog claim was event-floor behavior only, not true across grid sizes
 
+### B300 GPC Topology
+- **8 GPCs total** (NOT 10 as earlier catalog claimed)
+- ncu counter confirms exactly 8.0000
+- Structure: 2 GPCs × 20 SMs + 6 GPCs × 18 SMs = 148 SMs
+- SM IDs are round-robin/column-major across GPCs (NOT consecutive)
+- Max cluster=8 correlates with GPC width
+- Cluster=16 non-portable requires cross-GPC, fails on B300
+
+### SHMEM Peak BW — Resolved
+- **Peak: 37.6-38.0 TB/s @ 2032 MHz** (98% of 38.49 TB/s theoretical)
+- Access driver: `LDS.128` (vector load) vs `LDS` (scalar)
+- Both volatile and non-volatile v4 give IDENTICAL 37.63 TB/s
+- **Catalog's "volatile forces re-reads" explanation is WRONG** — it's just scalar vs vector
+- Scalar LDS × 8 = only 19-26 TB/s due to 4× more issue slots
+- Thermal throttle: sustained load drops 2032→1920 MHz after ~2ms; peak is burst number
+
+### Atomic Peak — Resolved
+- **530+ Gops/s peak** at stride=4B + UNROLL=16 (L2-resident)
+- Catalog's "137/273/372" are ALL correct for their conditions (different ILP)
+- **L2/DRAM boundary at stride=64B** (footprint crosses 126 MB L2)
+- DRAM-bound = only 10-14 Gops/s
+- "2.7× coalescing speedup" claim was actually L2 residency effect
+
 ### FP64 DFMA
 - **Peak: 1.20 TFLOPS at 2032 MHz** (Agent 14; FP32/64 ratio = 64, matches 76.96/64 = 1.203)
 - **Zero-pipelined per warp**: 64 cy spacing between DFMA issues, despite 16-cy FP64 pipe depth (25% util per warp)
