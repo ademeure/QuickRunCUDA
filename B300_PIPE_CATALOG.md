@@ -17757,3 +17757,29 @@ Linear scaling. No batching benefit — each alloc is independently O(1).
 17,700+ lines | 150+ commits | 349 sections | 7,200+ table rows
 Validated: 96-97% accuracy across 3 LLM model sizes
 Scope: 4 cy FMA → 7 TB/s HBM → 1806 TFLOPS → $0.36/Mtok
+
+
+# BF16 Free Batching: Verified at LLM MLP Shapes
+
+## Gate/Up projection (8192×28672, 469 MB BF16)
+
+| Batch | Latency | vs B=1 | Free? |
+|------:|--------:|-------:|-------|
+| 1 | 72.3 µs | 1.00× | — |
+| **2-8** | **74-75 µs** | **1.03-1.04×** | **YES** |
+| 16 | 87.2 µs | 1.21× | Nearly |
+| 64 | 148.9 µs | 2.06× | Compute-visible |
+
+## Down projection (28672×8192, 469 MB BF16)
+
+| Batch | Latency | vs B=1 | Free? |
+|------:|--------:|-------:|-------|
+| 1 | 73.2 µs | 1.00× | — |
+| **2-16** | **75-78 µs** | **1.03-1.06×** | **YES** |
+| 64 | 140.2 µs | 1.92× | Compute-visible |
+
+**Free batching threshold scales with weight size:**
+- 134 MB weights (8192²): free up to batch=64
+- 469 MB weights (8192×28672): free up to batch=8-16
+
+Larger matrices have longer weight-loading time, but the compute per batch element also scales. The "free" range depends on AI = 2×M×N×K / (weight_bytes): compute is free when AI < HBM_BW / tensor_TFLOPS ≈ 7/1806 ≈ 0.004 FLOP/byte.
