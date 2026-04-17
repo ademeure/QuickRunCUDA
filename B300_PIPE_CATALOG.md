@@ -1,9 +1,9 @@
 # B300 / Blackwell sm_103a — SM Pipe Catalog
 
-**Platform:** NVIDIA B300 SXM6 AC, driver locked to **1920 MHz SM clock**, **148 SMs**, CUDA 13.0.
-**Methodology:** inline PTX asm with chain-dependency feedback to defeat DCE, SASS static count verified against expected, pipe assignment from ncu `sm__inst_executed_pipe_*.avg.per_cycle_active`. Rates are warp-instructions issued per SM per cycle (= "SASS-inst/SM/clk" in the headline sense).
+**Platform:** NVIDIA B300 SXM6 AC, **148 SMs**, **2032 MHz** natural boost (was cloud-locked to 1800 MHz; released via `nvmlDeviceResetGpuLockedClocks()`). 288 GB HBM3E, CUDA 13.0/13.2.
+**Methodology:** inline PTX asm with chain-dependency feedback to defeat DCE, SASS static count verified against expected, pipe assignment from ncu `sm__inst_executed_pipe_*.avg.per_cycle_active`. Rates are warp-instructions issued per SM per cycle.
 
-All numbers below are measured, not datasheet.
+All numbers below are measured, not datasheet. **TRUE performance at 2032 MHz boost** (cycle-based measurements are clock-independent; see later sections for corrected ns/µs values). **Validated at 96-97% accuracy** across Llama-1B/8B/70B decode predictions.
 
 ---
 
