@@ -18429,6 +18429,190 @@ With PDL: kernel N+1's blocks start arriving on SMs as kernel N's blocks finish.
 
 **Estimated savings**: up to ~5% of decode time for long pipeline chains (80 layers × 8 kernels). The benefit grows with the ratio of kernel tail time to total kernel time.
 
-## Status: BLOCKED
+## PDL Empirical Measurements (B300 sm_103a, nvcc 13.2)
 
-PDL benchmarking blocked by CUDA driver corruption (nvidia_uvm stuck from PCI unbind attempt). Requires instance reboot to test. The PDL code compiles correctly via NVRTC for sm_103a.
+### Pure PDL Primitive Cost
+
+| Test | Time (us) | Notes |
+|---|---:|---|
+| Empty kernel (1 block, 32 thr) | 7.51 | CPU launch overhead |
+| Empty kernel (148 blocks × 128 thr) | 7.33 | Same as small grid |
+| `griddepcontrol.launch_dependents` only | 7.44 | Instruction itself ~free |
+| `griddepcontrol.wait` only | 7.70 | ~0.2 us extra |
+| `signal+wait` in same kernel | 7.65 | Combined ~free |
+
+**PTX instructions are essentially free**. Cost is the launch overhead (~7.5 us), not the PDL ops themselves.
+
+### PDL Pair (Producer + Consumer)
+
+| Config | Sequential | PDL | Save (us) |
+|---|---:|---:|---:|
+| empty + empty (148×128) | 9.20 us | 9.12 us | +0.08 |
+| signal+wait + signal+wait | 9.20 us | 8.96 us | +0.24 |
+| signal_only + wait+5000-iter compute | 66.17 us | 65.44 us | +0.73 |
+| signal_only + wait+10000-iter compute | 122.46 us | 121.76 us | +0.70 |
+
+**PDL saves ~0.5-1 us per pair** — the inter-launch overhead.
+
+### Optimal Signal Point Sweep (64-kernel chain, 148×128, conditional-write style)
+
+| Kernel iters | Per-kernel us | Best signal | Save (us/kernel) |
+|---:|---:|---:|---:|
+| 500 | 8.21 | **90%** | +1.91 |
+| 1,000 | 14.35 | **95%** | +2.39 |
+| 2,500 | 30.75 | **98%** | +1.81 |
+| 5,000 | 59.40 | **99%** | +2.16 |
+| 10,000 | 115.75 | **99%** | +1.87 |
+| 25,000 | 284.83 | 100% | +1.09 |
+| 50,000 | 568.59 | 100% | +1.86 |
+| 100,000 | 1134.07 | 100% | +1.43 |
+
+**Optimal signal point shifts later as kernels get longer.** Signal too early and contention costs > launch savings. For long kernels (>20 ms total), pure no-PDL is best.
+
+### Critical: Memory Write Behavior
+
+**PDL behavior depends on whether the kernel writes to memory:**
+
+| Anti-DCE style | nopdl (us/kernel) | PDL @99% (us/kernel) | Save |
+|---|---:|---:|---:|
+| **A: conditional write** (`if (a == -42) out[]`) | 59.4 | 57.4 | **+2.09** |
+| **B: unconditional write** (`if (tid==0) out[blk]`) | 59.4 | 62.6 | **-3.23** |
+
+Identical kernel structure except for the final write. PDL saves **+2 us/kernel** when kernels are pure compute (no writes), but COSTS **-3 us/kernel** when there are unconditional writes per block. Tested with both same and separate output buffers — slowdown is independent of aliasing.
+
+**Hypothesis**: `griddepcontrol.wait` implements memory ordering, not just control sync. With pending writes from producer, wait implies fence-like overhead.
+
+### Early-signal Contention (FFMA-bound producer + consumer)
+
+When PDL signal is early (10-50%), consumer warps wake up while producer still has heavy compute. Both kernels then compete for the FFMA pipe on shared SMs:
+
+| Producer iters | sig=50% (us extra) | sig=75% (us extra) | sig=99% (us extra) |
+|---:|---:|---:|---:|
+| 100,000 | -46.85 (slowdown) | -22.64 | +0.58 |
+| 50,000 | -22.09 | -10.06 | +1.56 |
+| 10,000 | -2.87 | -0.44 | +1.87 |
+
+**Early signal during compute → severe contention slowdown**. Total compute work grows because the FFMA pipe must service both kernels' warps simultaneously.
+
+### PDL vs CUDA Graphs
+
+Both target inter-kernel launch overhead. **They are SUBSTITUTES, not complements**.
+
+For 1000-iter kernels, 128-kernel chain (per-kernel us):
+| Mode | us/kernel | Total (128 kerns) |
+|---|---:|---:|
+| Plain stream launches | 14.36 | 1838 us |
+| CUDA Graph | 11.87 | 1519 us |
+| Stream + PDL (sig 99%) | 12.01 | 1537 us |
+| **Graph + PDL** | **11.85** | **1517 us** |
+
+**Graphs save ~2.5 us/kernel; PDL saves ~2.4 us/kernel; combined adds only ~0.15 us extra.** Both fight the same launch-overhead bottleneck. Graph build cost: 7.8 us capture + 21.7 us instantiate (amortizes after ~13 launches).
+
+### Multi-Stream PDL via ProgrammaticEvent
+
+```cpp
+cudaLaunchAttribute prod_attrs[1];
+prod_attrs[0].id = cudaLaunchAttributeProgrammaticEvent;
+prod_attrs[0].val.programmaticEvent.event = pdl_event;
+prod_attrs[0].val.programmaticEvent.flags = 0;
+prod_attrs[0].val.programmaticEvent.triggerAtBlockStart = 0;  // 1 = signal at launch
+```
+
+| Pattern | Time (5000 iter producer + consumer, 148×128) | vs 1-stream seq |
+|---|---:|---:|
+| 1-stream sequential (no PDL) | 0.122 ms | baseline |
+| 1-stream PDL (sig 99%) | 0.123 ms | +0.001 ms |
+| 1-stream PDL (sig 50%) | 0.130 ms | +0.008 ms (contention) |
+| 2-stream + cudaEventRecord+Wait | 0.127 ms | +0.005 ms (event sync overhead) |
+| **2-stream PDL ProgrammaticEvent (sig 99%)** | **0.123 ms** | **+0.001 ms (event sync hidden!)** |
+| 2-stream PDL `triggerAtBlockStart=1` | 0.123 ms | similar |
+| 2-stream parallel, NO sync (incorrect) | 0.068 ms | **0.5× — both share SMs** |
+
+**Key**: PDL ProgrammaticEvent eliminates the ~5 us cudaStreamWaitEvent cost when crossing streams. For real producer-consumer chains across streams, this is the main PDL benefit.
+
+### CPU Launch Overhead (per launch)
+
+| Method | us/launch |
+|---|---:|
+| `<<<>>>` syntax | ~1.5-2.0 |
+| `cudaLaunchKernelExC` (no attrs) | ~1.5-2.0 |
+| `cudaLaunchKernelExC` (with PDL attr) | ~1.5-2.0 (no extra) |
+| `cudaGraphLaunch` (pre-instantiated) | ~0.3-0.5 |
+| `cudaStreamWaitEvent` | ~5 |
+| `cudaEventRecord` | ~3 |
+
+### Stream Concurrency (B300, 148 SMs)
+
+| Streams | Time | Effective concurrency |
+|---:|---:|---:|
+| 1 | 0.57 ms | 1× |
+| 2 | 0.58 ms | 2× |
+| 8 | 0.59 ms | 7.8× |
+| 32 | 0.63 ms | 29× |
+| 64 | 0.70 ms | 53× |
+| 128 | 0.83 ms | **88×** |
+| **148** | **1.18 ms** | **72× ← cliff!** |
+| 192 | 1.27 ms | 87× |
+| 256 | 1.39 ms | 105× |
+| 512 | 2.53 ms | 116× (max) |
+
+**Cliff at 148 streams**: 128 = 1 wave fits, but 148 > 128 dispatch slots → 2 waves required. Concurrency tops out around 116×.
+
+### Stream Priority
+
+| Priority levels (B300) | -5 (high) to 0 (low) | **6 levels** |
+|---|---|---|
+
+Priority does NOT preempt running kernels on the same SMs. Both stream priorities run in parallel if blocks fit; if not, they alternate per scheduler decision (no preemption observed in tests).
+
+| Test | Time |
+|---|---:|
+| Low alone (148 blocks×128 thr) | 0.574 ms |
+| High alone | 0.574 ms |
+| Low \| High parallel (296 blocks total, 2/SM) | 0.600 ms (0.52× of sum — both fit) |
+| Low \| High order reversed | 0.600 ms (priority doesn't change schedule order much) |
+| Half\|Half (74 blocks each, parallel) | 0.575 ms (1.00× of single — perfect parallel) |
+
+### Two-Stream Scaling: Block Count Sweep
+
+When does multi-stream concurrency stop being free?
+
+| Blocks/stream (×2 streams) | Single-kernel time | Two-parallel time | Ratio |
+|---:|---:|---:|---:|
+| 1-74 | 0.574 ms | 0.575 ms | **1.00×** (perfect parallel) |
+| 100 | 0.573 ms | 0.600 ms | 1.05× (slight contention) |
+| 148 (296 total = 2/SM) | 0.574 ms | 0.600 ms | 1.04× |
+| 296 (592 total = 4/SM) | 0.574 ms | 0.698 ms | 1.22× |
+
+**Two streams parallel: free up to ~2 blocks per SM, then sub-linear.**
+
+### When PDL Helps
+
+1. **Cross-stream chains** with explicit event sync — saves ~5 us per sync
+2. **Short kernels in single stream** (sig 90-99%) — saves ~2 us/kernel
+3. **Pure compute kernels** without unconditional memory writes
+4. **NOT helpful** for: long compute kernels (>20 ms each), kernels with heavy memory writes
+
+### When PDL Hurts
+
+1. **Early signal during heavy compute** — contention slowdown
+2. **Unconditional per-block memory writes** — 3 us/kernel overhead from wait fence
+3. **Long kernels** where launch overhead is <1% of runtime
+
+### Best-practice signal point heuristic
+
+```
+optimal_signal_pct = max(50, 100 - 200 / kernel_time_us)
+```
+
+For 60us kernels: 100 - 200/60 = 96%. For 600us kernels: 99.6%.
+
+Source files in `tests/`:
+- `pdl_overhead.cu` — primitive isolation
+- `pdl_optimal.cu` — signal sweep
+- `pdl_verify.cu` — anti-DCE A vs B
+- `pdl_mem.cu` — buffer aliasing
+- `pdl_multistream.cu` — ProgrammaticEvent
+- `cuda_graphs.cu` — Graphs vs Streams
+- `graph_pdl.cu` — combined Graph+PDL
+- `streams3.cu` — multi-stream concurrency
