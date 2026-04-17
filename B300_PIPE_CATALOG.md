@@ -17113,3 +17113,37 @@ Both static (`__shared__ float s[N]`) and dynamic (`extern __shared__ float d[]`
 **`expf` with bounded inputs = 2 SASS** — the compiler eliminates range-checking (FSETP + conditional FMUL) when it can prove the input won't overflow/underflow. This is common in softmax (where inputs are shifted by max) and activation functions (where inputs are clipped). Unbounded `expf` costs 5 SASS (2.5× more instruction slots).
 
 **`__shfl_xor_sync` = 1 SASS** — the `BAR.WARP.SYNC` is eliminated on B300 when the mask is compile-time 0xFFFFFFFF. This is why shuffle is cheaper than expected from the old "SHFL + SYNC" model.
+
+
+# Load Width vs HBM Bandwidth (32 warps/SM, 512 MB streaming)
+
+| Width | B/thread/load | Warp footprint | BW (TB/s) | % of peak |
+|------:|---------:|--------:|----------:|---------:|
+| v1 (4B) | 4 | 128 B | 3.02 | **43%** |
+| **v2 (8B)** | 8 | 256 B | **6.95** | **99%** |
+| v4 (16B) | 16 | 512 B | 6.80 | 97% |
+| v8 (32B) | 32 | 1024 B | 7.09 | 101% |
+
+**v2 (8B) is the minimum load width to saturate HBM.** v1 (scalar 4B) wastes 57% of bandwidth because each warp only fills 128B out of the memory controller's sector capacity.
+
+**v4 and v8 give NO bandwidth benefit over v2** at full occupancy — HBM is already saturated. Wider loads reduce the number of issued instructions (fewer issue slots consumed) but don't increase bandwidth.
+
+**Design rule**: Always use at least `float2` (8B) loads for streaming kernels. Single-element `float` loads waste >50% of HBM bandwidth. Use v4 (16B) or v8 (32B) only when it reduces instruction count enough to help compute-bound loops.
+
+
+# CTA Reduction Cost vs Thread Count (Tree Reduction + Shuffle Tail)
+
+| Threads | Stages | cy/reduce | Per-stage avg | Barrier overhead |
+|--------:|-------:|----------:|--------------:|----------------:|
+| 32 | 5 (shuffle only) | 327 | 65 | 0 (no smem) |
+| 64 | 6 | 329 | 55 | 1 × syncthreads |
+| 128 | 7 | 413 | 59 | 2 × syncthreads |
+| 256 | 8 | **527** | 66 | 3 × syncthreads |
+| 512 | 9 | 703 | 78 | 4 × syncthreads |
+| **1024** | 10 | **1066** | **107** | **5 × syncthreads** |
+
+**Model: reduce_cost = 150 (shuffle tail) + N_smem_stages × (42 + 2×total_warps)**
+
+The `__syncthreads()` cost at each smem stage depends on the **total CTA size** (not active threads). At 1024 threads (32 warps): each barrier costs 78 cy. With 5 smem stages → 390 cy in barriers alone (37% of total).
+
+**1024-thread reduction is 3.3× costlier than 32-thread.** For kernels with frequent reductions (LayerNorm, softmax), prefer 256-thread CTAs over 1024 — the 2× fewer reductions-per-SM trades favorably against the 2× lower per-reduction cost.
