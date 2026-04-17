@@ -64,11 +64,20 @@ Clock context: B300 SXM6 AC defaults to 2032 MHz boost, but `nvidia-smi -lgc 203
 - Scalar LDS × 8 = only 19-26 TB/s due to 4× more issue slots
 - Thermal throttle: sustained load drops 2032→1920 MHz after ~2ms; peak is burst number
 
-### Atomic Peak — Resolved
-- **530+ Gops/s peak** at stride=4B + UNROLL=16 (L2-resident)
-- Catalog's "137/273/372" are ALL correct for their conditions (different ILP)
+### Atomic Peak — Fully Resolved
+- **1005 Gops/s at UNROLL=32** (stride=4B, L2-resident) = 125 G HW packets/s
+- Linear ILP scaling: UNROLL=4→126, 8→252, 16→502, 32→1005 Gops/s
+- Model: 148 L2 slices × 2.032 GHz / 2.4 cy/packet = 125 G packets/s ✓
+- Each L2 slice = 1 atomic unit with ~2.4 cy throughput
+- Catalog's "137/273/372/530" all correct for their UNROLL depths
 - **L2/DRAM boundary at stride=64B** (footprint crosses 126 MB L2)
-- DRAM-bound = only 10-14 Gops/s
+- DRAM-bound = 12-38 Gops/s
+- Full contention (all → A[0]): 27 Gops/s
+- atomicCAS: -43% vs atomicAdd
+- u64 atomic: -47% vs u32
+- `red.global`: only 5 Gops/s (compiler emits CCTL.IVALL — avoid)
+- Global atom latency (dep chain): 1169-1172 cy
+- Scope ordering has negligible effect on DRAM-bound throughput
 - "2.7× coalescing speedup" claim was actually L2 residency effect
 
 ### L1 Cache Structure (Agent 12)
