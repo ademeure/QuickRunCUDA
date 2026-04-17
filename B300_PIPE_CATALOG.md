@@ -17237,3 +17237,59 @@ Includes only GEMV time. Real throughput ~40 tok/s (measured in catalog) due to 
 - **Batch=16**: 15.9 TFLOPS — the minimum batch to efficiently use the GPU
 - **Batch=64+**: 48-60 TFLOPS — target this for prefill or batched decode
 - **Continuous batching with ≥16 concurrent requests** transforms the GPU from 4% → 27% → 80%+ efficiency
+
+
+# ═══ COMPLETE MEMORY HIERARCHY AT A GLANCE ═══
+
+## Latency (Single-Thread Pointer Chase, Cycles @ 2032 MHz)
+
+| Level | Latency (cy) | Latency (ns) | Relative |
+|-------|-------------:|-------------:|---------:|
+| Register | 0 | 0 | instant |
+| **L1 data cache** | **39** | **19** | 1× |
+| **Shared memory** | **24** | **12** | 0.6× |
+| **L2 (near partition)** | **307** | **151** | 8× |
+| L2 (far partition) | ~400 | ~197 | 10× |
+| **DRAM (TLB warm)** | **860** | **423** | 22× |
+| DRAM (TLB cold, random) | ~14000 | ~6890 | 359× |
+| NVLink peer GPU | ~3000 | ~1477 | 77× |
+| PCIe (host memory) | ~4000+ | ~1970+ | 100×+ |
+
+## Bandwidth (Chip-Wide, Measured at Saturation)
+
+| Level | Read BW (TB/s) | Write BW (TB/s) | Access width |
+|-------|---------------:|----------------:|------------:|
+| Register file | — | — | 32B/thread |
+| **Smem (v4)** | **37.7** | ~8.5 (R+W) | **5.4× HBM** |
+| Smem (v1) | 20.0 | — | 2.9× HBM |
+| **L2 cache** | **~19** | — | **2.7× HBM** |
+| **HBM3E (v2+ loads)** | **7.0** | **7.0** | **Baseline** |
+| HBM3E (v1 loads) | 3.0 | 6.9 | 0.43× (wasted) |
+| NVLink (18 links) | 0.82 read | 0.72 write | per direction |
+| PCIe Gen5 x16 | 0.058 | 0.058 | full duplex |
+
+## Capacity
+
+| Level | Size | Per-SM |
+|-------|-----:|-------:|
+| Register file | 9.7 MB (65536 × 4B × 148) | 256 KB |
+| L1 data cache | ~28 MB (192 KB × 148) | 192 KB |
+| Shared memory | ~34 MB (228 KB × 148) | 228 KB |
+| L2 cache | **126 MB** (2 partitions) | shared |
+| HBM3E | **288 GB** (274 GB usable) | shared |
+| NVLink peer | 288 GB (per GPU) | — |
+| Host memory | system-dependent | — |
+
+## Key Design Numbers
+
+| What | Value |
+|------|------:|
+| L2 sector size | 32 B |
+| L1 sector size | 32 B |
+| Smem banks | 32 × 4B |
+| DRAM page (huge) | 2 MB |
+| TLB entries (2MB pages) | ≥4096 (covers 8+ GB) |
+| L2 hash | Randomized (no stride attacks) |
+| Min load width for full BW | float2 (8B) |
+| Min warps/SM for 60% BW | 8 |
+| Min warps/SM for 86% BW | 32 |
