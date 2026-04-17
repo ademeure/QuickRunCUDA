@@ -1,165 +1,73 @@
-// Integer arithmetic throughput on B300
+// Integer ops with anti-DCE (runtime constants from kernel arg)
 #include <cuda_runtime.h>
 #include <cstdio>
-#include <chrono>
 
-#define ITERS 50000
-#define ILP 8
-
-extern "C" __global__ void int_add(int *in, int *out) {
-    int a[ILP];
-    for (int i = 0; i < ILP; i++) a[i] = in[i];
-    int b = in[8], c = in[9];
-
-    #pragma unroll 1
-    for (int i = 0; i < ITERS; i++) {
-        #pragma unroll
-        for (int j = 0; j < ILP; j++) a[j] = a[j] + b + c;
+template<typename Op>
+__global__ void run_int(unsigned *out, int iters, unsigned k1, unsigned k2, Op op) {
+    unsigned a = threadIdx.x + 1;
+    unsigned b = threadIdx.x * 7 + 1;
+    unsigned c = threadIdx.x * 13 + 1;
+    unsigned d = threadIdx.x * 31 + 1;
+    for (int i = 0; i < iters; i++) {
+        a = op(a, k1, k2); b = op(b, k1, k2); c = op(c, k1, k2); d = op(d, k1, k2);
     }
-
-    if (threadIdx.x == 0) {
-        int s = 0;
-        for (int i = 0; i < ILP; i++) s += a[i];
-        out[blockIdx.x] = s;
-    }
-}
-
-extern "C" __global__ void int_mad(int *in, int *out) {
-    int a[ILP];
-    for (int i = 0; i < ILP; i++) a[i] = in[i];
-    int b = in[8], c = in[9];
-
-    #pragma unroll 1
-    for (int i = 0; i < ITERS; i++) {
-        #pragma unroll
-        for (int j = 0; j < ILP; j++)
-            asm volatile("mad.lo.s32 %0, %0, %1, %2;" : "+r"(a[j]) : "r"(b), "r"(c));
-    }
-
-    if (threadIdx.x == 0) {
-        int s = 0;
-        for (int i = 0; i < ILP; i++) s += a[i];
-        out[blockIdx.x] = s;
-    }
-}
-
-extern "C" __global__ void int_mul(int *in, int *out) {
-    int a[ILP];
-    for (int i = 0; i < ILP; i++) a[i] = in[i];
-    int b = in[8];
-
-    #pragma unroll 1
-    for (int i = 0; i < ITERS; i++) {
-        #pragma unroll
-        for (int j = 0; j < ILP; j++) a[j] = a[j] * b;
-    }
-
-    if (threadIdx.x == 0) {
-        int s = 0;
-        for (int i = 0; i < ILP; i++) s += a[i];
-        out[blockIdx.x] = s;
-    }
-}
-
-extern "C" __global__ void int_shl(int *in, int *out) {
-    int a[ILP];
-    for (int i = 0; i < ILP; i++) a[i] = in[i];
-
-    #pragma unroll 1
-    for (int i = 0; i < ITERS; i++) {
-        #pragma unroll
-        for (int j = 0; j < ILP; j++) a[j] = a[j] << 3;
-    }
-
-    if (threadIdx.x == 0) {
-        int s = 0;
-        for (int i = 0; i < ILP; i++) s += a[i];
-        out[blockIdx.x] = s;
-    }
-}
-
-extern "C" __global__ void int_xor(int *in, int *out) {
-    int a[ILP];
-    for (int i = 0; i < ILP; i++) a[i] = in[i];
-    int b = in[8];
-
-    #pragma unroll 1
-    for (int i = 0; i < ITERS; i++) {
-        #pragma unroll
-        for (int j = 0; j < ILP; j++) a[j] = a[j] ^ b;
-    }
-
-    if (threadIdx.x == 0) {
-        int s = 0;
-        for (int i = 0; i < ILP; i++) s += a[i];
-        out[blockIdx.x] = s;
-    }
-}
-
-extern "C" __global__ void int_popc(int *in, int *out) {
-    int a[ILP];
-    for (int i = 0; i < ILP; i++) a[i] = in[i];
-
-    #pragma unroll 1
-    for (int i = 0; i < ITERS; i++) {
-        #pragma unroll
-        for (int j = 0; j < ILP; j++) a[j] = __popc(a[j] * 31 + j);
-    }
-
-    if (threadIdx.x == 0) {
-        int s = 0;
-        for (int i = 0; i < ILP; i++) s += a[i];
-        out[blockIdx.x] = s;
-    }
+    if (a + b + c + d == 0xdeadbeef) out[blockIdx.x] = a+b+c+d;
 }
 
 int main() {
     cudaSetDevice(0);
-    cudaDeviceProp prop; cudaGetDeviceProperties(&prop, 0);
-    int sm = prop.multiProcessorCount;
+    unsigned *d_out; cudaMalloc(&d_out, 1024*sizeof(unsigned));
+    cudaEvent_t e0, e1; cudaEventCreate(&e0); cudaEventCreate(&e1);
 
-    int *d_in, *d_out;
-    cudaMalloc(&d_in, 16 * sizeof(int));
-    cudaMalloc(&d_out, sm * sizeof(int));
+    int iters = 100000;
+    int blocks = 148, threads = 128;
+    long total_ops = (long)blocks * threads * iters * 4;
+    unsigned k1 = 17, k2 = 13;  // runtime kernel args
 
-    int h_in[16];
-    for (int i = 0; i < 16; i++) h_in[i] = 1 + i * 7;
-    cudaMemcpy(d_in, h_in, 16 * sizeof(int), cudaMemcpyHostToDevice);
-
-    cudaStream_t s; cudaStreamCreate(&s);
-
-    auto bench = [&](auto fn, int trials=10) {
-        for (int i = 0; i < 2; i++) { fn(); cudaDeviceSynchronize(); }
+    auto bench = [&](auto launch, const char *name) {
+        for (int i = 0; i < 3; i++) launch();
+        cudaDeviceSynchronize();
         float best = 1e30f;
-        for (int i = 0; i < trials; i++) {
-            auto t0 = std::chrono::high_resolution_clock::now();
-            fn();
-            cudaDeviceSynchronize();
-            auto t1 = std::chrono::high_resolution_clock::now();
-            float ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
+        for (int i = 0; i < 3; i++) {
+            cudaEventRecord(e0);
+            launch();
+            cudaEventRecord(e1);
+            cudaEventSynchronize(e1);
+            float ms; cudaEventElapsedTime(&ms, e0, e1);
             if (ms < best) best = ms;
         }
-        return best;
+        double gops = total_ops / (best/1000.0) / 1e9;
+        printf("  %-20s %8.3f ms  %8.1f Gops/s\n", name, best, gops);
     };
 
-    auto run = [&](const char *name, void (*fn_ptr)(int*, int*)) {
-        float t = bench([&]{ fn_ptr<<<sm, 128, 0, s>>>(d_in, d_out); });
-        long long ops = (long long)sm * 128 * ITERS * ILP;
-        double tops = (double)ops / (t/1e3) / 1e12;
-        printf("  %-15s : %.3f ms, %.2f Gops/s/SM\n", name, t, tops*1e3/sm);
-    };
+    printf("# B300 integer ops with runtime k1, k2 (defeats DCE)\n");
+    printf("# 4-ILP chains, 148 × 128 = 18944 threads × 100k iter × 4\n");
+    printf("# %-20s %-12s %-12s\n", "op", "time_ms", "Gops/s");
 
-    printf("# B300 integer arithmetic throughput\n");
-    printf("# 148 blocks × 128 threads × ILP=%d × %d iters\n\n", ILP, ITERS);
+    bench([&]{ run_int<<<blocks, threads>>>(d_out, iters, k1, k2,
+        [] __device__ (unsigned x, unsigned a, unsigned b) { return x + a; }); }, "iadd");
+    bench([&]{ run_int<<<blocks, threads>>>(d_out, iters, k1, k2,
+        [] __device__ (unsigned x, unsigned a, unsigned b) { return x * a; }); }, "imul");
+    bench([&]{ run_int<<<blocks, threads>>>(d_out, iters, k1, k2,
+        [] __device__ (unsigned x, unsigned a, unsigned b) { return __umul24(x, a); }); }, "umul24");
+    bench([&]{ run_int<<<blocks, threads>>>(d_out, iters, k1, k2,
+        [] __device__ (unsigned x, unsigned a, unsigned b) { return x * a + b; }); }, "imad");
+    bench([&]{ run_int<<<blocks, threads>>>(d_out, iters, k1, k2,
+        [] __device__ (unsigned x, unsigned a, unsigned b) { return (x << (a&31)) | (x >> ((32-a)&31)); }); }, "rotl (var)");
+    bench([&]{ run_int<<<blocks, threads>>>(d_out, iters, k1, k2,
+        [] __device__ (unsigned x, unsigned a, unsigned b) { return x & a; }); }, "and");
+    bench([&]{ run_int<<<blocks, threads>>>(d_out, iters, k1, k2,
+        [] __device__ (unsigned x, unsigned a, unsigned b) { return x ^ a; }); }, "xor");
+    bench([&]{ run_int<<<blocks, threads>>>(d_out, iters, k1, k2,
+        [] __device__ (unsigned x, unsigned a, unsigned b) { return __popc(x ^ a); }); }, "popc");
+    bench([&]{ run_int<<<blocks, threads>>>(d_out, iters, k1, k2,
+        [] __device__ (unsigned x, unsigned a, unsigned b) { return __clz(x | a); }); }, "clz");
+    bench([&]{ run_int<<<blocks, threads>>>(d_out, iters, k1, k2,
+        [] __device__ (unsigned x, unsigned a, unsigned b) { return __brev(x ^ a); }); }, "brev");
+    bench([&]{ run_int<<<blocks, threads>>>(d_out, iters, k1, k2,
+        [] __device__ (unsigned x, unsigned a, unsigned b) { return __byte_perm(x, a, 0x4321); }); }, "byte_perm");
+    bench([&]{ run_int<<<blocks, threads>>>(d_out, iters, k1, k2,
+        [] __device__ (unsigned x, unsigned a, unsigned b) { return x / a + b; }); }, "udiv");
 
-    run("int add",    int_add);
-    run("int mad.lo", int_mad);
-    run("int mul",    int_mul);
-    run("int shl",    int_shl);
-    run("int xor",    int_xor);
-    run("int __popc", int_popc);
-
-    cudaStreamDestroy(s);
-    cudaFree(d_in); cudaFree(d_out);
     return 0;
 }
