@@ -27,6 +27,7 @@ CUDA 13.2 runtime / 13.0 driver (580.126.09).
 | **HBM3E write NINJA (1 v8 store/warp)** | **7.57** | **98.7%** ← SoL | NINJA recipe (e75c7e1) — beats cudaMemset by 5% |
 | **HBM3E concurrent R+W (best ratio)** | **7.31** | 95% | pure R or pure W (de3b4d5) |
 | **HBM3E concurrent R+W (50:50)** | **6.68** | 87% | minimum at any mix (de3b4d5) |
+| **D2D copy (separate src/dst)** | **6.93** | 90.3% | NINJA recipe (4958d6b) — 5.5% > cudaMemcpyAsync; src/dst on diff stacks unlock partial-duplex |
 | **L2 kernel-effective** | **23.85** | (incl. L1 reuse) | v8 + 8-ILP @ 96 MB workload (1e590cf) |
 | **L2 bus traffic (ncu lts)** | **13.30** | (pure L2 BW) | same kernel (1e590cf) |
 | **SHMEM read peak** | **38.4** | 99.8% of 38.5 spec | pure-vector reads (d41c38c) |
