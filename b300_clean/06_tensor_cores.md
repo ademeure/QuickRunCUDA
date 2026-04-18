@@ -19,7 +19,7 @@ All numbers measured on sm_103a, single chip (148 SMs), MMA-only (no DRAM). Same
 | **FP16 / BF16 dense** (K=16) | cuBLAS → `tcgen05.mma kind::f16` | **2 259** sustained @ 8192³ (cuBLAS 13.4) | **92%** of 2465 theor | **HIGH** | 2032 |
 | FP16 / BF16 (microbench) | `tcgen05.mma kind::f16` direct | **2 325** | **93%** of 2465 | HIGH | 1920 |
 | **TF32** (K=8) | `tcgen05.mma kind::tf32` / cuBLAS TF32 | **1 113-1 163** | **90-93%** of 1232 theor | HIGH | 1920 |
-| FP16 / BF16 — **mma.sync legacy** (K=16, m16n8k16) | `mma.sync.aligned.m16n8k16.f32.bf16.bf16.f32` ILP=2, 64w/SM | **577** @ 1920 → **~611** extrap @ 2032 | 25% of tcgen05 — mma.sync is **4× slower** | HIGH | 1920 (extrap) |
+| FP16 / BF16 — **mma.sync legacy** (K=16, m16n8k16) | `mma.sync.aligned.m16n8k16.f32.bf16.bf16.f32` ILP=2, 64w/SM | **577 TFLOPS @ 2032 MHz boost** (CORRECTION: catalog "1920→611 extrap" was wrong — NVML showed 2032 throughout). 93.7% of 616 theoretical | tcgen05 path 4× faster (2325) | HIGH | **2032 boost** |
 | TF32 — mma.sync legacy (m16n8k8) | `mma.sync.aligned.m16n8k8.f32.tf32.tf32.f32` | **288** | half of mma.sync FP16 (K=8 vs K=16) | MEDIUM | ~2032 |
 | **INT8 dense** | `mma.sync m16n8k32.s32.s8.s8.s32.satfinite` (IMMA.16832.S8.S8.SAT) | **143 TOPS** | ~3% of theoretical FP8 — **deliberately throttled** (5 NOPs/issue) | HIGH | ~2032 |
 | INT8 via tcgen05 | `tcgen05.mma kind::i8` | **NOT SUPPORTED on sm_103a** (gated to sm_100a/100f/110a/110f) | — | HIGH | — |

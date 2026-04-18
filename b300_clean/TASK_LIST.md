@@ -101,3 +101,8 @@ Free rein on:
 - [x] cuBLAS DGEMM peak: 1.05 TFLOPS — NO FP64 tensor speedup. B300 is ~5x slower than H100 for HPC FP64; commit `126e052`
 - [x] DMMA microbench: 1.05 TFLOPS at all ILP — REFUTES catalog "~2 TF DMMA" (was MED conf). DMMA = DFMA pipe; commit `0d5fd43`
 - [x] CPU<->GPU round-trip: 2.03 us (1.95x faster than catalog 4us). Use ld.relaxed.sys (no MEMBAR.ALL.SYS); commit `dcc0f20`
+- [x] Dynamic Parallelism launch: 8.56 us per launch — 2.7x SLOWER than CPU launch (3.07us). DP NOT recommended for low-latency chaining; commit `078ea97`
+- [x] Online softmax investigation: matches L4 optimized 3-pass (1.28 vs 1.26 ms). Different bottlenecks: online XU-bound, 3-pass HBM-bound. NOT a magic bullet on B300; commit `01b192c`
+- [x] L1 cache BW measured: 38.3 TB/s (ILP>=4 saturates LSU at 1 LDG/2cy/SMSP). Refines catalog 30-46 TB/s claim. Beware DCE: non-safe version "showed" 3619 TB/s; commit `04e3dc1`
+- [x] MUFU.EX2 peak: 9622 Gops/s pure ex2.approx.ftz. Catalog "600 Gops/s" was 16x undercount (warp-inst confusion); commit `5f70214`
+- [x] Persistent vs per-launch axpy: 3.6x speedup from per-block L1 retention (24.7 vs 7.0 TB/s effective; same DRAM 7.04 TB/s); commit `e825808`
