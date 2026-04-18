@@ -192,15 +192,21 @@ read protocol roundtrip overhead.
 Improved from 6.74 TB/s by tuning block count and using 1-KB-per-warp
 HBM access pattern (matches the HBM read SoL recipe).
 
-### Best BF16 row-softmax (6.01 TB/s = 82.3% HBM — NINJA register-cache)
+### Best BF16 row-softmax (~6 TB/s — corrected analysis)
 ```cuda
 // 256 thr/block, 1 row per block. Each thread loads 16 BF16 = 2 uint4 ONCE.
-// CRITICAL: keep uint4 v0, v1 alive across all 3 passes (max, sum, write).
-// Compiler keeps them in registers; no L1 re-reads.
+// Keep uint4 v0, v1 alive across passes via vectorized loads + register reuse.
 // (See investigations/ninja_softmax_v4_register.cu — commit 57a2e6f)
 ```
-1.78x faster than naive 3-pass. Proves softmax is HBM-read-bound when
-implemented properly (not compute-bound on expf as previously claimed).
+**Actual ncu DRAM rate**: 6.07 TB/s aggregate (3.07 R + 3.00 W) =
+**91% of HBM concurrent R+W ceiling (6.68 TB/s)**, which is the
+*relevant* SoL for mixed-traffic kernels — not the pure-direction peak.
+
+Speedup over naive 3-pass: ~1.5–1.8× (varies with baseline run).
+Per Agent 3 critique: the "82.3% HBM peak" framing was wrong (used
+pure-read denominator). Bigger contributing factors are vectorization
+(LDG.E.U16 → LDG.E.128 = 8× fewer L1 transactions) AND register-keep,
+not register-keep alone.
 
 ### Best BF16 axpy (7.02 TB/s = 91.5% spec — NINJA block tuning)
 ```cuda
