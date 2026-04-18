@@ -479,7 +479,23 @@ A scheduled job that periodically spawns sub-agents to audit recent
 ninja claims. Found 4 over-claims this session; could catch them
 automatically.
 
-### D4. Per-precision power/perf table
+### D4. [x] RESOLVED — built D4_PRECISION_POWER_PERF_TABLE.md
+
+Comprehensive synthesis at `b300_clean/D4_PRECISION_POWER_PERF_TABLE.md` covering:
+- Compute peaks: FP32 (70.6 TF, 0.16 TF/W), BF16 (2309 TF, 5.7 TF/W),
+  FP8 cuBLAS (4500, 4.8 TF/W), FP4 cuBLAS (10800, 11.5 TF/W)
+- Memory BW: HBM 7.31 TB/s, L2 26.7 TB/s, SMEM 38 TB/s, NVLink 773 GB/s
+- Power decomposition: idle 200W → cuBLAS TGP 940W
+- Latency table for all major operations
+- Practical recipe per workload type (decode/prefill/streaming/multi-GPU)
+
+Bonus: also re-measured FP32 FFMA (70.6 TF = 93% spec), FP64 DFMA (1.0 TF =
+84% spec), BF16 mma.sync (2309 TF = 92% spec), via investigations/ninja_precision_table.cu.
+
+FP8 mma.sync direct measurement showed DCE artifact (170% of spec impossible);
+cuBLAS path gives clean 90% of spec. Sticking with cuBLAS for FP8.
+
+Investigated this session, commit `f19e984`.
 For each of (FP4, FP8 e4m3, FP8 e5m2, FP16, BF16, FP32, TF32, FP64),
 tabulate: peak TFLOPS, sustained TFLOPS, power, TFLOPS/W. Standardized
 benchmark suite.
