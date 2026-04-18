@@ -120,10 +120,30 @@ relative ordering are SAFE — no drift correction needed.
 
 Investigated this session, commit `54aadb2`.
 
-### B2. L2 used as "tier-2 SHMEM" via persistent attribute
-We have 79 MB persisting region. Can we use it as a 79 MB shared
-data store accessible from any SM, faster than HBM? What's the
-read latency?
+### B2. [x] RESOLVED — YES, L2 viable as tier-2 SHMEM (3.7× BW, 1.7× latency)
+
+BW (best of 5, ~3-10 ms launches with inner-loop reads):
+   WS=  8 MB:    20.5 TB/s
+   WS= 32 MB:    26.0 TB/s   ← L2 sweet spot
+   WS= 64 MB:   **26.7 TB/s** ← peak L2 read BW (3.66× HBM 7.3 TB/s)
+   WS= 79 MB:    19.8 TB/s   (persistent cap; partial eviction in 126 MB L2)
+   WS=128 MB:    14.2 TB/s   (mixed, near L2 capacity)
+   WS=256 MB+:    7.0 TB/s   (pure HBM)
+
+Latency (random pointer-chase, full chain visit):
+   L2-resident (≤32 MB): 152 ns / 308 cy  ← constant
+   Just over L2 (79 MB):  329 ns           ← THRASHING WORSE THAN HBM
+   Pure HBM (≥256 MB):    264 ns / 537 cy
+
+**Persistent attribute provides NO benefit** when L2 retains data naturally
+between back-to-back launches (no other workload evicting). Identical BW for
+baseline vs persistent at every WS. At 128 MB the persistent attr is actually
+WORSE (11.87 vs 14.20 TB/s baseline) — likely tags too much for L2 capacity.
+
+THRASHING WARNING: 79-100 MB working sets have higher latency (329 ns) than
+pure HBM (264 ns). The L2 keeps fetching+evicting. AVOID this WS range.
+
+Investigated this session, commit `034e2ff`.
 
 ### B3. cuBLAS algo selection — how does it choose?
 For N=8192 FP8, cuBLAS picks one algo. For N=512 it picks another.
