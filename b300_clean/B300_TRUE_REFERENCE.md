@@ -243,10 +243,15 @@ not register-keep alone.
 - CUDA_R_8F_E4M3 inputs, CUDA_R_16BF output, CUBLAS_COMPUTE_32F
 - (See investigations/d4_tcgen05_via_cublas.cu)
 
-### Lowest-latency CPU↔GPU (4 µs round-trip)
-- Persistent kernel polling on mapped memory
-- `ld.acquire.sys.u32` on GPU side
-- `volatile` + `__sync_synchronize` on CPU side
+### Lowest-latency CPU↔GPU — **2.03 µs round-trip** (was 4 µs in catalog)
+- Persistent kernel polling on mapped memory + CPU pinned to a core
+- GPU side: `ld.relaxed.sys` + `st.relaxed.sys` (NOT acquire/release)
+  - Or equivalently: plain `volatile` access (compiler emits LDG.E.STRONG.SYS)
+- CPU side: `volatile` writes (no `__sync_synchronize` needed)
+- **Catalog 4 µs was ld.acquire/st.release.sys** which emits MEMBAR.ALL.SYS = +1.5 µs penalty
+- SASS confirmed: MEMBAR.ALL.SYS in acquire/release variant; absent in relaxed variant
+- **1.95× speedup** verified on 10000 round-trips (commit `TBD`)
+- Investigations: `ninja_persist_opt.cu` + `persistent_handoff.cu`
 
 ## 9. Methodology — USE THE HARNESS
 
