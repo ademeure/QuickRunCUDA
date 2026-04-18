@@ -15,7 +15,7 @@ unless noted. % is of HBM3E 7672 GB/s spec.
 | BF16 axpy | 84.0% (6.45) | **91.54%** (7.02) | **+7.5** | 131K small blocks (`866e951`) |
 | BF16 absmax | 87.8% (6.74) | 90.21% (6.92) | +2.4 | 18944 blocks block-reduce (`1b8ca7e`) |
 | BF16 hist 256-bin | 85.6% (6.57) | 87.4% (6.71) | +1.8 | 740 blocks tuned (`866e951`) |
-| BF16 softmax | 70.0% (5.10) | **82.3%** (6.01) | **+12.3** | register-keep-alive across 3 passes; **1.78× speedup** (`57a2e6f`) |
+| BF16 softmax | 70.0% (5.10) | ~6.07 TB/s actual DRAM | n/a | 91% of R+W ceiling, ~1.5–1.8× speedup; vectorization + reg-cache (`57a2e6f`) |
 
 ## Methodology insights discovered
 
@@ -86,16 +86,17 @@ want FEWER large blocks (atomic contention).
 | Histogram global atomics (no SMEM) | 0.03% peak | 9000 atomic ops in flight serialize |
 | Cluster softmax | Crashes (DSMEM HW issue) | per 04_dsmem_overhead.md flag |
 
-## Unbeatable ceilings (true SoL)
+## Unbeatable ceilings (true SoL) — POST-AGENT-CRITIQUE CORRECTIONS
 
 | Operation | SoL | Ratio achieved | Source of cap |
 |---|---:|---:|---|
 | HBM write | 7672 GB/s | 98.7% | HBM3E refresh + command bus |
 | HBM read | 7672 GB/s | 95.3% | HBM3E read roundtrip protocol |
-| HBM concurrent R+W | 6.68 TB/s | 87% (in-place) | direction turnaround |
-| FP32 FFMA | 76.96 TFLOPS @ 2032 boost | 85.5% sustained at 1920 MHz | warp pipeline bubbles |
+| HBM concurrent R+W | 6.68 TB/s | 87% (in-place) / 90.3% (D2D) | direction turnaround |
+| **FP32 FFMA** | **76.96 TFLOPS @ 2032 MHz** | **96.92%** (74.62 TFLOPS) | needs `nvidia-smi -rgc` for boost; NCHAIN=3 + immediate constant |
+| **FP8 cuBLAS sustained** | ~5000 TFLOPS NVIDIA spec | 88.5% (4425 TFLOPS @ 943 W) | **via cudaGraph — direct call has 1ms overhead** |
+| **BF16 mma.sync (multi-chain)** | ~570 TFLOPS | 100% (catalog burst confirmed) | tensor pipe RAW chain rate |
 | SHMEM read | 38.5 TB/s | 99.8% | already at SoL |
-| Tensor BF16 mma.sync | 569 TFLOPS | 100% (SoL hit) | already at SoL |
 
 ## How to reproduce
 
