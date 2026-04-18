@@ -48,7 +48,7 @@ CUDA 13.2 runtime / 13.0 driver (580.126.09).
 | **BF16 cuBLAS GEMM N=8192** | **2242** | 90% of NVIDIA 2500 spec | (e752547) |
 | **FP8 e4m3 cuBLAS LtMatmul** (zero data, sustained via cudaGraph) | **4425** | 88.5% of 5000 spec, 30 sec @ 943 W | (06b0d8d) |
 | **FP8 e4m3 cuBLAS LtMatmul** (random data) | **3983** | 80% of spec — REALISTIC | (bf98e90) |
-| **BF16 mma.sync persistent** (sustained 30 sec) | **1543** | 2.7× catalog "burst 569" — corrected | (06b0d8d) |
+| **BF16 mma.sync 8-chain** (multi-accumulator) | **~570** | matches catalog "burst 569" | (83ef1c6) — single-chain "1543" was over-counted; RETRACTED |
 
 **WARNING**: catalog claims like "FP8 4491 TFLOPS" were ALL zero-data.
 
