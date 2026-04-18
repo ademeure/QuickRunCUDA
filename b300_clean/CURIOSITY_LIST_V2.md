@@ -39,14 +39,26 @@ Working tcgen05 microbench would let us:
 **Test**: write minimal tcgen05.kind::f8f6f4 kernel using TMA + cluster,
 measure single-call TFLOPS, compare to cuBLAS.
 
-### S3. The 962 W TGP question — what actually hits it?
-Catalog says max 1100 W TDP, 962 W typical sustained. cuBLAS via cudaGraph
-hit 943 W (Agent 2 verified). What gets us to 1100 W?
-Hypotheses: (a) FP4 dense tcgen05 (highest TOPS/inst), (b) Mixed FP8 GEMM +
-HBM saturation, (c) Tensor core + SFU + LSU all firing simultaneously.
+### S3. [PARTIAL] mma.sync alone CANNOT hit 940W TGP — needs tcgen05
+Hypothesis (c) FAILS for legacy mma.sync. Sustained power tests:
+  Idle:                       200 W
+  HMMA+LDG mixed (1 warp):    305 W   (LDG stalls warps → less power, not more)
+  Kitchen sink (4 roles):     280 W   (under-utilization per pipe)
+  Pure HMMA 16 warps/SM:      405 W
+  HMMA + FFMA same warp:      424 W   (+20W from FFMA pipe)
+  cuBLAS BF16/FP8 via cudaGraph: 940 W (tcgen05, prior measurement)
 
-**Test**: build a kernel that combines (FP8 GEMM via tcgen05) + (FP32 FFMA)
-+ (HBM read) on different warps in the same block. Does power approach 1100W?
+So legacy mma.sync caps at ~425W (≈ 45% of cuBLAS power). The 940W from
+cuBLAS REQUIRES tcgen05 (newer per-CTA tensor units that draw much more
+power per FLOP). This is consistent with tcgen05 being a major architectural
+upgrade, not just a programming convenience.
+
+Path forward (S2): get raw tcgen05.mma compiling so we can measure its power
+draw vs mma.sync to quantify the per-FLOP power cost difference.
+
+Investigated this session, commit `affce3d`.
+
+### S3-original. (legacy text preserved)
 
 ### S4. [x] RESOLVED — 4 tensor cores per SM ARE per-SMSP independent
 Same warp-sweep as S1 directly answers this:
