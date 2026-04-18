@@ -220,8 +220,33 @@ combination. If sweeping many shapes, expect 60 ms × N_shapes startup time.
 
 Investigated this session, commit `23a363f`.
 
-### C4. cudaGraph instantiation cost vs node count
-Graph with 100 nodes vs 1000 vs 10000 — instantiation time scaling.
+### C4. [x] RESOLVED — cudaGraph inst ~2 us/node; launch ~0.65 us/node
+Linear chain of noop kernels:
+   nodes  build_us  inst_us  launch_us  per_node_inst  per_node_launch
+       1     1.1     3.8       8.0       3.81           8.0
+       4     1.7     9.0      10.8       2.25           2.7
+      16     2.4    15.2      19.6       0.95           1.2
+      64     7.8    99.0      53.8       1.55           0.84
+     256    31.9   433.5     195.1       1.69           0.76
+    1024   129.3  1705.7     794.3       1.67           0.78
+    4096   600.4  8502.2    2754.1       2.08           0.67
+   16384  3303.0 37768.7   10329.3       2.31           0.63
+
+Steady-state:
+- Build:    ~0.2-0.3 us per node
+- Instantiate: ~1.7-2.3 us per node (LINEAR — biggest cost)
+- Launch:   ~0.63-0.78 us per node (vs ~5 us direct dispatch = 7-8× faster)
+
+Amortization point: graph instantiation costs ~2 us/node; saves ~4 us/launch
+vs direct dispatch. Pays for itself if graph re-launched ≥1 time.
+
+For 1024-node graph: 1.7 ms inst + 0.79 ms launch = total 2.5 ms first time,
+0.79 ms each subsequent launch.
+
+For 16K nodes: 38 ms inst is significant — consider splitting into smaller
+graphs or using cudaGraphInstantiateWithFlags for lower-cost paths.
+
+Investigated this session, commit `d80e1f8`.
 
 ### C5. Async copy hint actual semantics
 cp.async.bulk has multiple variants. Which gives lowest latency
