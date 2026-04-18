@@ -139,12 +139,23 @@ For every B300 measurement:
 7. **SASS-verify**: `nvcc -keep` and look at the .sass — count the expected instructions.
 8. **Cross-check with ncu** where available: `pipe_fma.avg.pct_of_peak_sustained_active` for FFMA, etc.
 
-### 5. This catalog has many known inaccuracies
+### 5. Authoritative B300 reference
 
-See `CRITIQUE.md` (698 lines) and `AUDIT_NOTES.md` (490 lines) for known issues with `B300_PIPE_CATALOG.md`. Trust order:
-1. AUDIT_NOTES.md > CRITIQUE.md > B300_PIPE_CATALOG.md
-2. Any number in catalog should be verified before citing.
-3. "HIGH confidence" in AUDIT_NOTES.md typically means cross-checked; others need re-verification.
+**For HIGH-confidence rigor-verified numbers, use `b300_clean/B300_TRUE_REFERENCE.md`** —
+the master summary built from the 33-task rigor sweep (commits A1–L4 of `f2fp-deep-dive`).
+Every number cites the commit that produced it.
+
+For historical / lower-confidence context: `B300_PIPE_CATALOG.md`, `AUDIT_NOTES.md`, `CRITIQUE.md`.
+
+Trust order:
+1. **`b300_clean/B300_TRUE_REFERENCE.md`** ← prefer this (rigor-verified 2026-04-18)
+2. `b300_clean/M3_REVERIFY_LOG.md` (per-claim re-verification chain)
+3. `b300_clean/01_*.md` through `17_*.md` (category breakdowns)
+4. AUDIT_NOTES.md (older HIGH-confidence)
+5. CRITIQUE.md > B300_PIPE_CATALOG.md (legacy / unverified)
+
+For any NEW measurement, run `./utils/rigor_run.sh ./your_binary` to get
+3-method (wall-clock + ncu + SASS) verification automatically.
 
 ### 6. When spawning sub-agents for investigations
 
