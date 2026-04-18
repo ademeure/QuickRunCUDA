@@ -246,9 +246,34 @@ WHEN PDL DOESN'T HELP:
 
 Investigated this session, commit `9e7c592`.
 
-### B6. NVLink-broadcast atomics
-Cross-GPU atomic.sys.add to multiple peers via mapped memory. Could
-enable hardware-accelerated all-reduce primitives.
+### B6. [x] RESOLVED — Cross-GPU atomic peaks at 16.6 Gatom/s (1/3 local)
+
+Single-thread atomicAdd_system latency (clock64-based, issue-side only):
+   Cross-GPU (remote on GPU1 from GPU0):  20 cy = 10 ns
+   Local (same GPU):                       14 cy = 7 ns
+   ⚠ Issue-side; not round-trip. Real round-trip see catalog 1.66 us.
+
+Throughput sweep (atomicAdd_system to single remote location):
+   threads=     1  → 58.9 ns/atom (~1 round-trip per atom)
+   threads=    32  → 2.1 ns/atom (warp parallelism)
+   threads=   256  → 0.7 ns/atom
+   threads=  1024  → 0.1 ns/atom (8.25 Gatom/s)
+   threads= 32768  → 16.15 Gatom/s ← saturates here
+   threads=151552  → 16.56 Gatom/s (peak)
+
+Local atomic comparison (no NVLink):
+   threads=  1024:  11.4 Gatom/s
+   threads=151552:  **48.7 Gatom/s (peak)**
+
+So cross-GPU atomic peak = 1/3 of local atomic peak. NVLink atomic broadcast
+to single location: 16.6 Gatom/s aggregate from initiator.
+
+Practical: hardware-accelerated all-reduce via atomic broadcast is FEASIBLE
+but BW-limited to 16.6 G ops/s × 8 B (uint64) = 132 GB/s. Compared to ring
+all-reduce (A3) at 546 GB/s effective, atomic is 4× slower. Use atomic
+broadcast for SPARSE updates only.
+
+Investigated this session, commit `450d613`.
 
 ## Tier C — Smaller curiosities
 
