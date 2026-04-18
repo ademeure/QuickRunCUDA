@@ -61,7 +61,9 @@ SASS (ncu-verified): `STG.E.ENL2.256` (write) / `LDG.E.ENL2.256` (read).
 | v4 + 8-ILP, 512 thr/blk, modest grid | 6.17 TB/s | 16-B stores under-fill HBM channel bursts |
 | Per-thread consecutive (breaks per-warp coalesce) | **2.24 TB/s (-69%)** | Each warp scattered across 32 cache lines instead of one contiguous 1 KB |
 | Naive 1-ILP read | 2.46 TB/s (32%) | Issue rate too low to hide HBM latency; not enough in-flight requests |
-| TMA `cp.async.bulk` 8 KB chunks | 6.33 TB/s (82%) | Same ceiling as STG; the 17% gap to cudaMemset is NOT per-instruction width |
+| TMA `cp.async.bulk` 8 KB chunks (WRITE) | 6.33 TB/s (82%) | Same ceiling as STG; the 17% gap to cudaMemset is NOT per-instruction width |
+| TMA `cp.async.bulk` 8 KB chunks (READ, blocks=37888) | **7344 GB/s (95.7%)** | TMA read = LDG read within 0.3% — same HBM SoL via either method (commit below) |
+| LDG.E.128 read peak (blocks=37888) | **7365 GB/s (96.0%)** | The HBM read SoL ceiling on B300 |
 | Default-cache STG.E.128 default `st.global.v4` | 6.18–6.30 TB/s | One-direction ceiling for v4 + grid-stride is ~80% spec; v8 + per-warp lifts it to 95% |
 
 **Pattern is everything.** Same instruction width (v8) with grid-stride hits 6.2 TB/s; with per-warp coalesced bursts hits 7.30 TB/s. The 17% gap is purely launch geometry / access pattern.
