@@ -5,18 +5,27 @@ genuinely curious about, prioritized by potential impact and intellectual intere
 
 ## Tier S — Genuinely mysterious / would change my mental model
 
-### S1. Why does mma.sync cap at 12% of NVIDIA's BF16 spec?
-NVIDIA quotes B300 BF16 dense = 2500 TFLOPS. cuBLAS achieves 2242 (90%).
-Direct mma.sync caps at **570 TFLOPS = 23% of spec, 100% of legacy
-tensor pipe**. So either:
-- (a) Each SM has 4 tensor cores, but mma.sync only uses 1 → spec assumes 4x mma.sync rate
-- (b) Spec is "tcgen05 path"; mma.sync is intentionally legacy/slower hardware
-- (c) cuBLAS uses a fundamentally different opcode (sparse, structured, etc.)
+### S1. [x] RESOLVED — mma.sync hits 90.5% of spec (NOT 23%)
+**REFUTED**: prior "570 TFLOPS = 23% of spec" claim was sub-optimal launch geom.
 
-**Test**: write 4 concurrent mma.sync chains in different warps on same SM —
-does each warp still hit 570/148 = 3.85 TFLOPS, or does the per-SM bandwidth
-break? If the SM's 4 tensor cores ARE separate units, 4 warps × 3.85 = 15.4 TFLOPS/SM
-should be achievable. Doing this would prove path (a) vs (b).
+True peak via raw mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32:
+  warps/SM=1:  0.23 PFLOPS (9.2%)
+  warps/SM=2:  0.46 PFLOPS (18.3%)
+  warps/SM=4:  0.91 PFLOPS (36.4%)  -- 1 per SMSP
+  warps/SM=8:  1.81 PFLOPS (72.5%)  -- 2 per SMSP
+  warps/SM=16: **2.26 PFLOPS (90.5%)** -- 4 per SMSP, SoL
+  warps/SM=32: 2.22 PFLOPS (88.8%)  -- 8 per SMSP, slight regress (RF pressure)
+
+ncu confirms: at warps/SM=8, sm__pipe_tensor_cycles_active.sum / cycles = 78%.
+Linear scaling 1→4 warps/SM proves each SMSP can issue mma independently.
+
+So path (a) is correct: per-SMSP tensor units exist, but each saturates at
+~0.46 mma/SMSP/cycle. Need 4-8 warps per SMSP to fill pipeline.
+
+The 12% / 23% claim was a measurement artifact (low warp count, ILP).
+**mma.sync DOES reach NVIDIA's spec.** No need for tcgen05 to hit 90%+ BF16.
+
+Investigated this session, commit `fceb94d`.
 
 ### S2. Direct tcgen05 PTX — actually make it compile and run
 We tried earlier and failed (alloc/dealloc hung; mma errored). cuBLAS
