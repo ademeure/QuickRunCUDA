@@ -200,9 +200,25 @@ Investigated this session, commit `65f3795`. Full table in 16_power_clock.md.
 After many alloc/free, does the pool fragment? Test long-running
 sequences.
 
-### C3. cuBLAS warmup characterization
-First call to cublasLtMatmul does heuristic selection (~1 ms?).
-Second call faster. Quantify the warmup curve.
+### C3. [x] RESOLVED — cuBLAS warmup costs 64 ms total before steady-state
+
+For BF16 GEMM M=N=K=4096:
+   cublasLtCreate (handle):       1666 us
+   cublasLtMatmulAlgoGetHeuristic: **60776 us (60 ms!)** ← biggest cost
+   1st cublasLtMatmul call:       1755 us / 79 TFLOPS  (~22× slow)
+   2nd cublasLtMatmul call:        94 us / 1602 TFLOPS (18.7× faster than 1st)
+   3rd-20th calls:               85-91 us / 1640-1780 TFLOPS (steady)
+
+Steady-state: 1740 TFLOPS BF16 = 70% of NVIDIA's 2500 PF spec at this size.
+(Larger M=N=K=8192 reaches higher ~90% via mma.sync; cuBLAS picks per-size.)
+
+WARMUP RECIPE for benchmarks: at least 2-3 iterations of cublasLtMatmul before
+timing. The first call is 18× slower (CUDA module load + JIT).
+
+The 60 ms heuristic selection is the BIG cost — done once per (desc,layout)
+combination. If sweeping many shapes, expect 60 ms × N_shapes startup time.
+
+Investigated this session, commit `23a363f`.
 
 ### C4. cudaGraph instantiation cost vs node count
 Graph with 100 nodes vs 1000 vs 10000 — instantiation time scaling.
