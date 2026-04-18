@@ -131,7 +131,7 @@ Even more brutal under 600 W power cap: FP8 random = 3087 TFLOPS (-43%).
 - **Concurrent kernel slot limit = 128** (NOT 148 SMs) (7407cba)
 - **Pageable memory MIGRATES to GPU on first touch** at 1.5 TB/s (00d971c)
 - **PCIe Gen 6 x16** physically; effective BW only 57.7 GB/s (d40a35e)
-- **Power: min 200 W, max 1100 W** (NOT 700 W) (862014c)
+- **Power: min 200 W, TDP 1100 W (sustained avg ceiling 1093 W; transient peaks to 1259 W)** (862014c, 2a44ef5, agent-verified)
 
 ## 7. Counterintuitive findings (the surprises)
 
