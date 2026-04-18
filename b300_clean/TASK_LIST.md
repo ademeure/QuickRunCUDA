@@ -99,3 +99,5 @@ Free rein on:
 - [x] H4 cross-process IPC measured: open=56us, ping-pong=2.2us/dir (~13x slower than intra-proc atomic); PCIe Gen6 57.3 GB/s confirmed; commit `09e7a19`
 - [x] TMA bulk READ vs LDG READ: identical at HBM SoL (7344 vs 7365 GB/s); TMA needs blocks>=1000 to saturate; commit `26f8592`
 - [x] cuBLAS DGEMM peak: 1.05 TFLOPS — NO FP64 tensor speedup. B300 is ~5x slower than H100 for HPC FP64; commit `126e052`
+- [x] DMMA microbench: 1.05 TFLOPS at all ILP — REFUTES catalog "~2 TF DMMA" (was MED conf). DMMA = DFMA pipe; commit `0d5fd43`
+- [x] CPU<->GPU round-trip: 2.03 us (1.95x faster than catalog 4us). Use ld.relaxed.sys (no MEMBAR.ALL.SYS); commit `dcc0f20`

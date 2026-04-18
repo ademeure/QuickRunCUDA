@@ -250,7 +250,7 @@ not register-keep alone.
 - CPU side: `volatile` writes (no `__sync_synchronize` needed)
 - **Catalog 4 µs was ld.acquire/st.release.sys** which emits MEMBAR.ALL.SYS = +1.5 µs penalty
 - SASS confirmed: MEMBAR.ALL.SYS in acquire/release variant; absent in relaxed variant
-- **1.95× speedup** verified on 10000 round-trips (commit `TBD`)
+- **1.95× speedup** verified on 10000 round-trips (commit `dcc0f20`)
 - Investigations: `ninja_persist_opt.cu` + `persistent_handoff.cu`
 
 ## 9. Methodology — USE THE HARNESS
