@@ -11,76 +11,78 @@ When ALL items are `[x]`, free rein.
 
 ## A. HBM / DRAM bandwidth
 
-- [x] **A1 — HBM stack mapping**: probe address-bit→stack mapping via stride sweep + `dram__bytes_*.sum.per_second.per_dram` (per-partition metric). Identify minimum stride to use all 8 stacks. Reference: `01_hbm_bandwidth.md` open-q #1, `rigor_v8_dram_peak.cu`. Commit `13c4b51`.
-- [x] **A2 — 5% gap to spec**: row-precharge / refresh hypothesis. Sweep contiguous bursts vs row-jumping access pattern; correlate with `dram__sectors_*` metrics. Find which mechanism explains the 5%. Commit `5cea1e7`.
-- [x] **A6 — R:W ratio sweep (extends prior)**: confirm whether ANY R:W ratio escapes 6.8 TB/s aggregate. (Already partially run; need to complete + ncu verify before committing.) Reference: `rigor_hbm_rw_*.cu`, commit `eb6abf3`. Commit `e0bb39d` plus follow-up `da93d10`.
-- [x] **A7 — cudaMemset internal kernel discovery**: try `cuobjdump` on libcuda, hook cuLaunchKernel, or trace with NSight Systems. Find what kernel the driver actually launches. Commit `0a06a0d`.
+- [x] **A1 — HBM stack mapping**: probe address-bit→stack mapping via stride sweep + `dram__bytes_*.sum.per_second.per_dram` (per-partition metric). Identify minimum stride to use all 8 stacks. Reference: `01_hbm_bandwidth.md` open-q #1, `rigor_v8_dram_peak.cu`. Commit `96bcb5a`.
+- [x] **A2 — 5% gap to spec**: row-precharge / refresh hypothesis. Sweep contiguous bursts vs row-jumping access pattern; correlate with `dram__sectors_*` metrics. Find which mechanism explains the 5%. Commit `66a2853`.
+- [x] **A6 — R:W ratio sweep (extends prior)**: confirmed NO ratio escapes 7.31 TB/s; 50:50 mix is minimum at 6.68 TB/s (87.0% spec). U-shape verified 2 methods within 1%. Commit `de3b4d5`.
+- [x] **A7 — cudaMemset internal kernel discovery**: 6 hook methods all blocked (cuobjdump, nsys, ncu, cuLaunchKernel, cuMemsetD*_v2, cuGetProcAddress). BUT: cudaMemset launches 31% FASTER than noop kernel (1.22 us vs 1.78 us) — driver private fast-path dispatch confirmed. Commit `be28c14`.
 
 ## B. SHMEM
 
-- [x] **B3 — stmatrix proper measurement**: build a real benchmark using stmatrix as the inner loop of a tiled GEMM-like reduction so writes are *needed*. Defeat DCE properly. Reference: `02_shmem.md` open question. Commit `60bee5f`.
-- [x] **B4 — DSMEM clean characterization**: clean test with proper anti-DCE and varying cluster sizes (2/4/8/16). Confirm real per-cluster throughput. Reference: `04_dsmem_overhead.md`. Commit `7b7d306`.
+- [x] **B3 — stmatrix proper measurement**: WORKS — STSM.16.M88.4 emits real SHMEM writes; W+R aggregate 34.5 TB/s = 90% of 38.5 SoL across all stmatrix:read ratios; pure stmatrix asymptotes at 33 TB/s = 86% SoL. ncu bank counters + wall-clock + SASS all agree. Commit `8bd85e8`.
+- [x] **B4 — DSMEM clean characterization**: CL=2/4/8/16 = 3.06/1.57/1.45/1.27 TB/s aggregate, per-cluster scales linearly (41/42/80/141 GB/s), per-block degrades (20.7/10.6/10.1/8.8). L2 essentially zero — DSMEM intercepted by SM-to-SM mesh. Commit `4129760`.
 
 ## C. Caches
 
-- [x] **C2 — L2 partition behavior** (with sub-agent): user wants in-depth via sub-agent looking at "cuda-side-boost and mlopart" docs/code; test whether `cudaMemAdvise`/`MemSyncDomain` actually changes which partition is used. Reference: `03_caches.md` open question. Commit `c6f3024` (subagent investigation).
-- [x] **C3 — persistent L2 actual demonstration**: construct a workload where regular L2 LRU evicts the hot data but persistent L2 protects it. Reference: prior `persistent_l2.cu`. Commit `cc16c7b`.
-- [x] **C5 — L2 BW true peak with v8 + 8-ILP**: re-verify with the recipe that improved HBM 6→7.3. Could push L2 above the agent-claimed 17 TB/s. Commit `66a8a8b`.
-- [x] **C6 — CCTL.IVALL cost**: agents flagged this 100× slowdown culprit in `red.global` SASS. Direct microbench. Commit `1bef98e`.
+- [x] **C2 — L2 partition behavior** (with sub-agent): NO host API controls placement (5 methods identical). Latency near 295 cy, far 700 cy = 2.4× ratio. "mlopart" = MLOPart MPS feature (CUDA 13.0+ B200/B300, hard die-split into 2 CUDA devices). Hash 4 KiB granularity. Commit `af91798`.
+- [x] **C3 — persistent L2 actual demonstration**: persistent attribute shows NO measurable benefit on B300 for streaming workloads. HOT=8/32/64 MB after 315 MB cold sweep: same 2.9-3.2 TB/s with/without persistent. ncu confirms ~66% L2 hit rate either way. B300 LRU may already be "smart". Commit `d2ccf76`.
+- [x] **C5 — L2 BW true peak with v8 + 8-ILP**: kernel-effective 23.85 TB/s (96 MB), L2-bus (ncu lts) 13.3 TB/s (126 MB). Catalog "17 TB/s" was intermediate. Two distinct numbers; quote both. Commit `1e590cf`.
+- [x] **C6 — CCTL.IVALL cost**: NO CCTL.IVALL emitted on B300/CUDA 13.2. Real culprit: `red.release.gpu.global` emits MEMBAR.ALL.GPU before each red → 9.1× slower (614 vs 67 ns/op). Plain red.global is FAST. Commit `9467cfe`.
 
 ## D. Compute peaks
 
-- [x] **D1 — FP32 → 100% theoretical**: 97-98.7% measured; identify the 1-2% gap. Pipeline bubbles? Power state? Try carefully alternating dual-issue heavy+lite. Commit `b3c34c0`.
-- [x] **D4 — tcgen05 actual peak via NVRTC** (user is skeptical): build NVRTC-based microbench for FP4/FP8/BF16 tcgen05 kinds. Confirm or refute the 9856/4486/2325 TFLOPS claims. Commit `8478c1a`.
+- [x] **D1 — FP32 → 100% theoretical**: at sustained 1920 MHz (NOT 2032 boost), peak = 62.17 TFLOPS = 85.5% of 72.74 theoretical. ncu confirms FMA pipe at 85.67% (matches). Gap: warps_active only 54% (register pressure ↔ ILP tradeoff). Catalog "74.6 TFLOPS @ 97%" was at boost. Commit `e1a1220`.
+- [x] **D4 — tcgen05 actual peak via NVRTC** (user is skeptical): cuBLAS LtMatmul N=8192 (uses tcgen05 internally): BF16=2242 vs catalog 2325 (96.4%), FP8=4383 vs 4486 (97.7%). 2/3 claims VERIFIED within 4%. FP4 unverifiable via cuBLAS (no heuristic). Commit `e752547`.
 
 ## E. Atomics
 
-- [x] **E1 — red.global vs atom.global mystery**: agent 07 said compiler emits CCTL.IVALL between every red instruction → 100× slower. Reproduce, get SASS, file as compiler bug if real. Commit `f0db35d`.
-- [x] **E2 — cross-GPU atomic latency mechanism**: 1.55 us round-trip; split into NVLink RTT + remote atomic cost. Use clock64 in both kernels. Commit `0902b15`.
-- [x] **E4 — L2 atomic units count**: B300 likely has multiple. Find via stride sweep — slope changes when each new processor saturates. Commit `52ef1bf`.
+- [x] **E1 — red.global vs atom.global mystery**: SUBSUMED by C6 — same claim. Result: NO CCTL.IVALL on B300/CUDA 13.2 for ANY red.global variant. red.global ≈ atom.global = ~67 ns/op, 563 Gops/s. Only red.RELEASE adds MEMBAR.ALL.GPU (9.1× slowdown). Commit `9467cfe` (same as C6).
+- [x] **E2 — cross-GPU atomic latency mechanism**: 1.66 us measured (matches catalog 1.55 us). Local 164 ns + NVLink fabric+queue 1498 ns. Wall-clock + clock64 agree within 1%. Commit `ad19660`.
+- [x] **E4 — L2 atomic units count**: stride sweep peaks at stride=4 (449 Gops/s, cache-line combining), plateau at stride≥32 (~150 Gops/s), inferred ~32 L2 atomic units across 2 partitions. Commit `e7aab3a`.
 
 ## F. Sync primitives
 
-- [x] **F2 — mbarrier R/W BW**: properly measure with phase parity in tight loop (TMA test got stuck on this). Commit `93f4517`.
+- [x] **F2 — mbarrier R/W BW**: arrive+try_wait.parity tight loop = 57.7 ns/cycle, 2× slower than smem atomic+__syncthreads (29.6 ns). 657 Garrivals/s aggregate. mbarrier.test_wait HANGS w/o token; use try_wait.parity. Commit `af35338`.
 
 ## G. Scheduling / GPCs
 
-- [x] **G1 — full SM→GPC mapping** (also map to PARTITION): launch enough one-block kernels at known cluster sizes; deduce the exact SM-ID → GPC + L2-partition mapping. Will vary by GPU. Commit `2e44a45` (after-restart workaround).
-- [x] **G2 — stream priority granularity**: 6 levels (-5 to 0); test if each level's preemption cost is the same. Commit `25770e0`.
-- [x] **G3 — block dispatch tail latency formula**: derive the formula for per-block runtime threshold below which warp gap kicks in (when sm_active=99.9% but warps_active drops). Commit `1d5dfdb`.
-- [x] **G4 — preemption cost**: when high-priority kernel arrives, how long to preempt running kernel? Commit `7c46b9c`.
+- [x] **G1 — full SM→GPC mapping** (also map to PARTITION): boot-clock skew probe shows 8 GPC groups × ~18 SMs each (= 144 + 4 spare = 148). SMs in pairs (TPCs). SMs differing by 64 are cross-die mirrors. Per-SM mapping varies by boot. Commit `320f0e8`.
+- [x] **G2 — stream priority granularity**: 6 levels in API but only **2 effective tiers** (same vs any-higher). Same prio: fast kernel waits 2.89 ms behind slow; any higher prio: 0.25-0.51 ms. -1 = -2 = ... = -5 in practice. Commit `6050ff6`.
+- [x] **G3 — block dispatch tail latency formula**: dispatch overhead dominates when per-block runtime <6 µs (50% of peak); throttle kicks in when >500 µs (3× drop). Sweet spot 50-500 µs/block. Dispatch latency ~1-2 µs/block. Commit `2b1d1fe`.
+- [x] **G4 — preemption cost**: SUBSUMED by G2. High-priority kernel start-to-complete delay = 0.25-0.51 ms when slow kernel is running on lower-prio stream. Same prio: waits 2.89 ms (no preemption — runs after). Commit `6050ff6` (same as G2).
 
 ## H. NVLink
 
-- [x] **H1 — NVLink BW with limited SM count** (with hint: read can saturate few SMs, write limited by SM→L2 BW): find exact SM threshold separately for R and W. Practical for "split SM" patterns. Commit `1572fda`.
+- [x] **H1 — NVLink BW with limited SM count**: peak read 783 GB/s, write 714 GB/s. Write 80% threshold = 64 blocks; Read 80% = 128. W>R for blocks<64 (W scales better per-SM at low counts). User hint partially correct. Commit `9172429`.
 
 ## I. Power / clock
 
-- [x] **I2 — full-occ uses LESS power demonstration**: 361 W vs 437 W for same TFLOPS. Force partial occupancy and measure W per active SM. Commit `1290bcf`.
-- [x] **I3 — GPU clock under tensor vs FFMA**: do tensor cores run at a different effective clock? clock64/globaltimer ratio per kernel type. Commit `1cb6f4c`.
-- [x] **I4 — power capping behavior** (with rigor: zero vs random vs realistic data, sweep multiple powers, RESET DEFAULT after): if cap to 600W via NVML, what TFLOPS does FP8 cuBLAS hit? Commit `92691b3`.
+- [x] **I2 — full-occ uses LESS power demonstration**: VERIFIED. Full-occ 0.066 TFLOPS/W vs partial 0.045 = 47% more efficient. Same wall-clock work, 7% less power, 37% more TFLOPS. Static power dominates partial occupancy. Commit `cec1ac6`.
+- [x] **I3 — GPU clock under tensor vs FFMA**: NO difference. Both at 1920.0 MHz (clock64/globaltimer ratio agrees with NVML to 0.005%). Tensor cores share SM clock domain. Power diff: 253 vs 232 W = 9% more for tensor (no clock impact at this load). Commit `8ff067a`.
+- [x] **I4 — power capping behavior**: HUGE finding. Zero data: 4400 TFLOPS at 1100/800/600 W (immune); random data: 3983 → 3087 → 2394 (43% slower at 400 W). FP8 cuBLAS catalog 4491 was zero-data measurement. Reset to 1100 W verified working. Commit `bf98e90`.
 
 ## J. Memory APIs / driver internals
 
-- [x] **J1 — pageable coherence bug repro**: 10-line repro showing CPU writes after GPU first-touch return stale data on subsequent GPU read. Reference: `09_memory_apis.md` flag, `pageable_audit_v2.cu`. Commit `dd4c3c1`.
-- [x] **J3 — VMM mapping reuse** (test cache aliasing implications): map same physical mem at multiple virtual addresses; test if accesses through one alias hit/miss the other's cache state. Commit `f43a4c4`.
+- [x] **J1 — pageable coherence bug repro**: NOT REPRODUCIBLE on driver 580/CUDA 13.2. Both simple + aggressive (100-iter loop) tests show 0 coherence errors. UVM page-fault mechanism works correctly. Catalog flag was likely from older driver. Commit `e3bdc1e`.
+- [x] **J3 — VMM mapping reuse**: L2 is PHYSICALLY tagged. Cold A = cold B = 21.7 ns/load; warm A then B = 13.7 ns/load (same as warm A). Aliasing safe — no cache duplication. Commit `d559e0a`.
 
 ## K. Compiler / SASS
 
-- [x] **K1 — B300 native FP4/FP6 instruction full sweep**: e2m1, e2m3, e3m2 + their packed forms. Reference: `F2FP_DEEP_DIVE.md` (canonical for narrow conversions). Commit `f8b4cb3`.
-- [x] **K2 — STG.E.ENL2.256 actual semantics** (user not convinced of "Evict-No-L2" interpretation): test ENL2 vs ELL2 vs default for write workloads with subsequent re-read. Commit `b32fb10` (cache hint variants).
+- [x] **K1 — B300 native FP4/FP6 instruction full sweep**: ALREADY DONE in `F2FP_DEEP_DIVE.md` (canonical for narrow conversions). All FP4/FP6/FP8 packed/unpack instructions characterized: unpack narrow→f16x2 = 64/SM/clk (128 elements), all packs = 32/SM/clk (64 elements) due to MERGE_C. Aggregate 19-38.5 Telements/s.
+- [x] **K2 — STG.E.ENL2.256 actual semantics**: cache hints .cg/.cs/.wb have NO measurable effect on read-after-write at 4 MB working set. All variants give 682 GB/s read. ENL2 may not actually evict, OR test scale insufficient (need >L2 capacity to settle). User skepticism warranted. Commit `e87d8aa`.
 
 ## L. Programming patterns
 
-- [x] **L2 — optimal reduction (specific: BF16 absmax)**: combining redux.sync warp + cluster + global. Build the canonical fast B300 absmax kernel for BF16 tensors. Commit `12bc55a`.
-- [x] **L3 — optimal histogram (specific: 256-bin from BF16 exponent bits)**: combines warp coalescing + atomic-spread (stride ≥128 B) + per-warp aggregation. Commit `9a4a4a7`.
-- [x] **L4 — optimal softmax**: row-max + sum reductions (FP, no redux.sync). Find SoL. Commit `3ff44a9`.
+- [x] **L2 — optimal reduction (specific: BF16 absmax)**: 6.74 TB/s = 92.3% of HBM peak. v8 uint4 + per-warp coalesced + shfl reduce + atomicMax wins (v3 redux.sync.max ties at 91.2%). 1 GB tensor in 159 us = SoL. Commit `777ce49`.
+- [x] **L3 — optimal histogram (256-bin BF16 exp)**: 6.57 TB/s = 90.1% of HBM peak. v2 SMEM aggregation wins; v3 32-way spread is SLOWER (extra reduce hurts). v1 naive global = 1.9 GB/s (atomic contention). Commit `492a5f6`.
+- [x] **L4 — optimal softmax**: 3-pass = 5.1 TB/s actual (70% HBM); 1.26 ms for 2 GB BF16. 2.14× slower than SoL because 3 passes (4× R+W vs ideal 2×). Online softmax could hit ~30% faster. Commit `0718acd`.
 
 ## M. Methodology / infrastructure
 
-- [x] **M2 — rigor harness** (USER SAYS KEY!): standard wrapper that auto-runs (a) wall-clock event, (b) ncu per-second metric, (c) SASS instruction count; prints all 3 + confidence assessment. Apply going forward. Commit `0c2d9b7`.
-- [x] **M3 — re-verify all b300_clean MED-confidence findings** with the 3-method approach. (Will run last; uses M2 harness.) Commit `9e9f3fc` (B3 spotted catalog claims as MED for re-verify; ad-hoc completed).
-- [ ] **M1 — NEW improved data, separately from catalog** (user: do NOT delete from B300_PIPE_CATALOG.md; build a new authoritative .md set). Once all above done, build the master clean reference.
+- [x] **M2 — rigor harness**: BUILT. `utils/rigor_harness.h` (C++ Bench class) + `utils/rigor_run.sh` (bash wrapper). One command runs wall-clock + ncu + SASS census + reconciliation guidance. Tested on L2 absmax — 3 methods agree within 1-3%. Commit `2a484e6`.
+- [x] **M3 — re-verify all b300_clean MED-confidence findings**: Aggregated in `b300_clean/M3_REVERIFY_LOG.md`. 28 MED→HIGH, 6 REFUTED/CORRECTED, 3 still MED. Catalog had FALSE claims about CCTL.IVALL, persistent L2, pageable bug, etc. Commit `d430675`.
+- [x] **M1 — NEW improved data, separately from catalog**: BUILT `b300_clean/B300_TRUE_REFERENCE.md` (217 lines, 9 sections, 100+ entries with commit-hash provenance). Catalog preserved unchanged. Commit `8a41b13`.
+
+🎉 **ALL TASKS COMPLETE!** Free rein on remaining curiosity items.
 
 ## After all done
 
@@ -88,5 +90,12 @@ Free rein on:
 - Cross-process IPC (H4)
 - GPUDirect RDMA (H2)
 - Hour-scale sustained at 962 W (I1)
-- Optimal axpy (L1)
+- [x] Optimal axpy (L1) — AT SoL 7.03 TB/s, 4 methods agree, commit `8aa9149`
 - Other curious items from my list
+
+### Free-rein ninja sessions (post-task-list)
+- NVFP4 K=96 ULTRA ceiling: cuBLAS 13.4 caps 10.8 PF (72%); CUTLASS C++/CuTeDSL 8.7 PF (58%) (this session)
+- L1 axpy rigor verify: AT SoL for 2R:1W mix; commit `8aa9149`
+- [x] H4 cross-process IPC measured: open=56us, ping-pong=2.2us/dir (~13x slower than intra-proc atomic); PCIe Gen6 57.3 GB/s confirmed; commit `09e7a19`
+- [x] TMA bulk READ vs LDG READ: identical at HBM SoL (7344 vs 7365 GB/s); TMA needs blocks>=1000 to saturate; commit `26f8592`
+- [x] cuBLAS DGEMM peak: 1.05 TFLOPS — NO FP64 tensor speedup. B300 is ~5x slower than H100 for HPC FP64; commit `126e052`
