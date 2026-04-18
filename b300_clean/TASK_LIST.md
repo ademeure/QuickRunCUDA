@@ -111,3 +111,9 @@ Free rein on:
 - [x] SMEM atomic peak: 9603 / 9624 Gops/s = 99.78% of architectural ceiling. NVML 2032MHz confirmed; ncu 1 ATOMS/cy/SM exact; commits `15a9339` + `f5f5e61` (refined)
 - [x] Memory latency ladder REVISED: L1 20ns / L2 152ns / DRAM 409ns at 2GB. Earlier "DRAM 157ns" was bug (warm pass got flushed between launches); commits `aac9a93` (WRONG) + `7fd1fac` (FIX)
 - [x] TF32 mma.sync peak: 289.6 TFLOPS = 94% theoretical, MED conf -> HIGH (matches catalog 288 within 0.5%); commit `1c35f51`
+- [x] __syncthreads vs block size: 12 ns @ 32 thr -> 49 ns @ 1024 thr (NOT constant as catalog implied); commit `a9736ca`
+- [x] Per-SM L2 latency: bimodal 8 near (530 cy) / 140 far (735 cy) for single-line read, range 1.5x; uniform 14% for DRAM perm chase; commit `01b5fcc`
+- [x] Per-SM L2 spatial locality CORRECTED: prior 8/140 was atomicCAS bias; with 148 blocks see offset-dependent ~74/74 split + DIFFERENT near SM sets per address; PROVES 4 KiB hash interleave; range 254-324 cy = 1.27x; commit `fba8edf`
+- [x] L2 BW pure (.cg L1-bypass): 20-21 TB/s verified by ncu (l1tex_hit=0%, lts_hit=96%, dram=9 GB/s). Refines catalog C5 23.85 vs 13.3; commit `37ee1a0`
+- [x] HBM atomic peak: 35 Gops/s = 28x slower than L2 atomic, 274x slower than SMEM. ncu DRAM 2.78 TB/s confirms HBM path; commit `521a51f` (CONFLATED combined+uncombined - see below)
+- [x] Atomic ladder REVISED apples-to-apples + bytes/s sanity: L2 uncombined 191 Gops/766 GB/s vs HBM 52 Gops/208 GB/s = 3.7x ratio (NOT 28x); commits `b0106de` (+ occ sweep) earlier `523-`
