@@ -85,11 +85,39 @@ and online softmax. What's the achievable SoL?
 **Test**: implement minimal FlashAttention v2-style kernel for 1 head;
 compare to xFormers/FlashAttention library; find the gap.
 
-### A2. RMS norm + GeLU + bias fused — fully fused elementwise kernel
-Most inference pipelines have these. SoL = 1R + 1W per element = HBM peak.
-Current PyTorch / cuBLAS may not fuse these well. What's achievable as
-a custom kernel?
-**Test**: BF16 RMS norm 4096 dim + GeLU + bias add, target N=1M tokens.
+### A2. [x] RESOLVED — Fused kernel hits 89% HBM (RMS+bias); GeLU bottleneck
+
+Test: BF16, D=4096, N=1M tokens (8 GB input + 8 GB output = 16 GB traffic).
+
+Memory SoL: 16 GB / 7.31 TB/s = 2.19 ms.
+
+Pure copy at warp-per-row pattern: 2.58 ms = **6.66 TB/s = 91% HBM** ✓
+
+Fused kernel results (1 warp per row, 256 thr/blk, 8 rows/blk, vec uint4):
+   8 blocks/SM (default):  RMS+bias = 7.43 ms = 2.31 TB/s (32%) ← reg spill!
+   8 blocks/SM:            RMS+GeLU+bias = 9.50 ms = 1.81 TB/s (25%)
+   2 blocks/SM:            RMS+bias    = 2.63 ms = **6.54 TB/s (89%)** ← SoL
+   2 blocks/SM:            RMS+GeLU+bias = 6.35 ms = 2.71 TB/s (37%)
+
+**KEY FINDING: register pressure was the bottleneck**, not compute or memory.
+
+Each thread stages 16 uint4 (256 B = 64 32-bit registers) for the row.
+At 8 blocks/SM × 256 thr = 2048 threads/SM × 64 reg = 128 K registers needed,
+but RF cap = 64 K → spill to L1 → 2.8× slowdown (6.54 → 2.31 TB/s).
+
+Lowering occupancy to 2 blocks/SM keeps row in registers, hits 89% HBM SoL.
+
+GeLU still costs 2.4× over RMS+bias (6.35 vs 2.63 ms) due to __expf MUFU.
+For inference recipe: fuse RMS+matmul instead of RMS+GeLU separately, since
+matmul's compute-bound nature hides GeLU's MUFU cost.
+
+Practical recipe for SoL fused elementwise:
+- __launch_bounds__(threads, 2) to keep occupancy low and registers in RF
+- Vectorize loads as uint4 (8 BF16 per LDG.128)
+- Stage row in registers (avoid SMEM round-trip)
+- Use __shfl_xor_sync tree for warp sum (REDUX.f32 not on sm_103)
+
+Investigated this session, commit `e9be3e3`.
 
 ### A3. All-Reduce on 2× B300 via NVLink
 Catalog has cross-GPU atomic at 1.66 us, NVLink P2P at 783 GB/s.
