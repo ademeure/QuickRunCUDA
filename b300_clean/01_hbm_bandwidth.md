@@ -185,10 +185,33 @@ CTA-count, occupancy, and cache hint do NOT matter once the above are satisfied 
 
 ---
 
+## R:W ratio sweep — no ratio escapes 7.4 TB/s (HIGH confidence)
+
+A6 rigor: per-thread mix of N_R 32-B reads and N_W 32-B writes (32 ops total per thread), single kernel, ncu `dram__bytes_read.sum.per_second` + `dram__bytes_write.sum.per_second`, two methods agree within 1%.
+
+| R:W (ops/thr) | DRAM read (TB/s) | DRAM write (TB/s) | Aggregate (TB/s) | % of 7672 spec |
+|---|---:|---:|---:|---:|
+| 32:0  | 7.31 | ~0   | **7.31** | 95.3% |
+| 28:4  | 6.22 | 0.86 | 7.08 | 92.3% |
+| 24:8  | 5.40 | 1.72 | 7.12 | 92.8% |
+| 20:12 | 4.32 | 2.50 | 6.82 | 88.9% |
+| 16:16 | 3.39 | 3.29 | **6.68** ← min | **87.0%** |
+| 12:20 | 2.52 | 4.09 | 6.61 | 86.2% |
+| 8:24  | 1.65 | 4.85 | 6.50 | 84.7% |
+| 4:28  | 0.83 | 5.72 | 6.55 | 85.4% |
+| 0:32  | ~0   | 7.28 | **7.28** | 94.9% |
+
+**U-shape, minimum at 50:50 (6.68 TB/s).** No ratio escapes 7.31 TB/s — the pure-direction peaks. Mixed-traffic workloads pay a 4–13% efficiency penalty vs single-direction. Asymmetry: 8:24 (heavy-W) lower than 24:8 (heavy-R), suggesting writes incur slightly higher per-byte controller cost than reads when mixed.
+
+This **confirms HBM3E is a shared bus, not full-duplex** (the open question from commit 48d2a60). Mechanism: HBM3E read↔write turnaround penalty (tWTR/tRTW datasheet timing) — every direction switch costs cycles, and 50:50 maximizes switches.
+
+Commit: rigor_a6_rw_ratio_sweep.cu — Method 1 wall-clock + Method 2 ncu, agree within 1%. Method 3 SASS verification: each kernel emits N_R `LDG.E.128` + N_W `STG.E.128` instructions as expected.
+
+---
+
 ## Open questions / NEEDS NEW MEASUREMENT
 
-1. **Concurrent R+W aggregate ncu re-verification at multiple R/W ratios.** The 6.74 TB/s aggregate is from a single kernel doing equal R and W. Need: vary ratio (e.g. 7:1, 1:7) and watch dram counters during BOTH kernels to confirm the "controller prioritizes reads" mechanism (commit 48d2a60 flagged MED confidence).
-2. **Why exactly the 5% spec gap?** Refresh + command bus + row-precharge are the candidates; no direct measurement to attribute the budget.
+1. **Why exactly the 5% spec gap?** Refresh + command bus + row-precharge are the candidates; no direct measurement to attribute the budget. (A2 partially addressed: bursts <1 KB hit 98.6%, longer bursts under-saturate parallelism — commit 66a2853.)
 3. **What recipe (if any) gets cudaMemset to >7.30 TB/s in ncu?** The wall-clock 7.5 TB/s suggests there might be a marginally faster channel utilization pattern that nobody has reproduced from user PTX. SASS extraction of cudaMemset's driver kernel would settle it.
 4. **HBM3E refresh-rate sensitivity.** No measurement of whether long-sustained streaming hits a refresh-induced floor lower than burst peak.
 5. **Multi-GPU contention** — 2× B300 in the same chassis, both saturating HBM. Does the NVLink fabric introduce additional HBM-side contention? Untested.
