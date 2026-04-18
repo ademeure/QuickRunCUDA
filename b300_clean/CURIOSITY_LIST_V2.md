@@ -437,9 +437,28 @@ graphs or using cudaGraphInstantiateWithFlags for lower-cost paths.
 
 Investigated this session, commit `d80e1f8`.
 
-### C5. Async copy hint actual semantics
-cp.async.bulk has multiple variants. Which gives lowest latency
-for SHMEM→GMEM streaming?
+### C5. [x] RESOLVED — cp.async cache hint barely matters when HBM-bound
+
+For GMEM→SMEM streaming (4 GB working set, fully HBM-bound):
+   LDG.128 baseline (sync):    0.899 ms = 4.78 TB/s (65% HBM)
+   cp.async.cg (bypass L1):    0.926 ms = 4.64 TB/s (63% HBM)
+   cp.async.ca (cache L1):     0.932 ms = 4.61 TB/s (63% HBM)
+
+All three within 3% — cache hint barely matters when HBM is bottleneck.
+
+The 65% HBM ceiling here is from latency-limited single-LDG-per-iter pattern.
+True streaming SoL: see existing 02_shmem.md (38.5 TB/s SMEM peak via larger
+ILP), 01_hbm_bandwidth.md (98.7% HBM via STG.E.128 grid-stride).
+
+For SHMEM→GMEM streaming via cp.async.bulk (TMA store): see prior catalog
+A2 (1 KB bursts hit 98.6% HBM write).
+
+PRACTICAL: cache hint doesn't matter for streaming. Pick:
+- .cg if want to preserve L1 for other concurrent kernels
+- .ca if expect re-read soon (rare in streaming)
+- LDG.128 sync if avoiding cp.async complexity (essentially same BW)
+
+Investigated this session, commit `9e72824`.
 
 ## Tier D — Methodology / infrastructure
 
