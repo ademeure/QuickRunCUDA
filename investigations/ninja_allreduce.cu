@@ -1,104 +1,103 @@
-// 2-GPU all-reduce via NVLink P2P
-// Theoretical SoL: each GPU reads the OTHER's buffer once = 1 buffer's worth
-// of NVLink traffic. At 783 GB/s peak read NVLink: B/783e9 seconds.
-
+// A3: 2-GPU all-reduce SoL via NVLink
+// Theoretical: bidirectional ring all-reduce on 2 GPUs ≈ 2 × (N/2 GB / 820 GB/s)
+// For 1 GB BF16: 2 × 0.5 / 0.820 = 1.22 ms
 #include <cuda_runtime.h>
 #include <cuda_bf16.h>
 #include <cstdio>
+#include <chrono>
 
-// Each GPU reads peer's buffer, sums into local, writes result to local
-// At end, both GPUs have the sum (= 2x avg).
-__launch_bounds__(256, 8) __global__ void allreduce_pair(
-    __nv_bfloat16 *local, const __nv_bfloat16 *peer, int N)
-{
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int warp_id = tid / 32, lane = tid & 31;
-    // Each warp handles 8 BF16 per thread × 32 lanes = 256 BF16 = 512 B per warp
-    int idx = (warp_id * 32 + lane) * 8;
-    if (idx + 7 >= N) return;
-    uint4 v_local = *(uint4*)&local[idx];
-    uint4 v_peer = *(uint4*)&peer[idx];
-    __nv_bfloat16 *l = (__nv_bfloat16*)&v_local;
-    __nv_bfloat16 *p = (__nv_bfloat16*)&v_peer;
-    __nv_bfloat16 out[8];
-    #pragma unroll
-    for (int i = 0; i < 8; i++) {
-        out[i] = __hadd(l[i], p[i]);
+constexpr size_t N_BYTES = 1024ull * 1024 * 1024;  // 1 GB
+
+__global__ void k_add(__nv_bfloat16 *dst, const __nv_bfloat16 *src, size_t N) {
+    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t stride = (size_t)gridDim.x * blockDim.x;
+    for (size_t i = tid; i < N; i += stride) {
+        float a = __bfloat162float(dst[i]);
+        float b = __bfloat162float(src[i]);
+        dst[i] = __float2bfloat16(a + b);
     }
-    *(uint4*)&local[idx] = *(uint4*)out;
 }
 
 int main() {
-    int n; cudaGetDeviceCount(&n);
-    if (n < 2) { printf("Need 2 GPUs\n"); return 1; }
     cudaSetDevice(0); cudaDeviceEnablePeerAccess(1, 0);
     cudaSetDevice(1); cudaDeviceEnablePeerAccess(0, 0);
 
-    size_t bytes = 1ull * 1024 * 1024 * 1024;  // 1 GB BF16 buffer
-    int N = bytes / sizeof(__nv_bfloat16);
-    int blocks = bytes / (256 * 16);  // 256 thr × 16 B per thread
+    __nv_bfloat16 *d0, *d1, *d0_recv, *d1_recv;
+    cudaSetDevice(0); cudaMalloc(&d0, N_BYTES); cudaMalloc(&d0_recv, N_BYTES / 2);
+    cudaSetDevice(1); cudaMalloc(&d1, N_BYTES); cudaMalloc(&d1_recv, N_BYTES / 2);
+    cudaSetDevice(0); cudaMemset(d0, 0x3c, N_BYTES);
+    cudaSetDevice(1); cudaMemset(d1, 0x3c, N_BYTES);
 
-    __nv_bfloat16 *d0, *d1;
-    cudaSetDevice(0); cudaMalloc(&d0, bytes); cudaMemset(d0, 0x42, bytes);
-    cudaSetDevice(1); cudaMalloc(&d1, bytes); cudaMemset(d1, 0x33, bytes);
+    size_t N_elems = N_BYTES / 2;
+    size_t half_bytes = N_BYTES / 2;
+    size_t half_elems = N_elems / 2;
 
-    cudaSetDevice(0);
-    cudaStream_t s0, s1;
-    cudaStreamCreate(&s0);
-    cudaSetDevice(1); cudaStreamCreate(&s1);
+    cudaStream_t s0a, s0b, s1a, s1b;
+    cudaSetDevice(0); cudaStreamCreate(&s0a); cudaStreamCreate(&s0b);
+    cudaSetDevice(1); cudaStreamCreate(&s1a); cudaStreamCreate(&s1b);
+    cudaEvent_t e0, e1;
+    cudaSetDevice(0); cudaEventCreate(&e0); cudaEventCreate(&e1);
 
-    cudaSetDevice(0);
-    cudaEvent_t e0a, e0b; cudaEventCreate(&e0a); cudaEventCreate(&e0b);
-    cudaSetDevice(1);
-    cudaEvent_t e1a, e1b; cudaEventCreate(&e1a); cudaEventCreate(&e1b);
-
-    auto run = [&]() {
+    auto run_ring = [&]() {
         cudaSetDevice(0);
-        allreduce_pair<<<blocks, 256, 0, s0>>>(d0, d1, N);
+        cudaMemcpyPeerAsync(d0_recv, 0, d1 + half_elems, 1, half_bytes, s0a);
         cudaSetDevice(1);
-        allreduce_pair<<<blocks, 256, 0, s1>>>(d1, d0, N);
+        cudaMemcpyPeerAsync(d1_recv, 1, d0, 0, half_bytes, s1a);
+        cudaSetDevice(0); cudaStreamSynchronize(s0a);
+        k_add<<<148*8, 256, 0, s0a>>>(d0 + half_elems, d0_recv, half_elems);
+        cudaSetDevice(1); cudaStreamSynchronize(s1a);
+        k_add<<<148*8, 256, 0, s1a>>>(d1, d1_recv, half_elems);
+        cudaSetDevice(0); cudaStreamSynchronize(s0a);
+        cudaMemcpyPeerAsync(d1 + half_elems, 1, d0 + half_elems, 0, half_bytes, s0b);
+        cudaSetDevice(1); cudaStreamSynchronize(s1a);
+        cudaMemcpyPeerAsync(d0, 0, d1, 1, half_bytes, s1b);
+        cudaSetDevice(0); cudaStreamSynchronize(s0b);
+        cudaSetDevice(1); cudaStreamSynchronize(s1b);
     };
 
-    // Warmup
-    for (int i = 0; i < 5; i++) run();
-    cudaSetDevice(0); cudaDeviceSynchronize();
-    cudaSetDevice(1); cudaDeviceSynchronize();
+    auto bench = [&](const char* name, auto fn, double bytes_per_iter) {
+        for (int i = 0; i < 3; i++) fn();
+        cudaSetDevice(0); cudaDeviceSynchronize();
+        cudaSetDevice(1); cudaDeviceSynchronize();
+        double best = 1e30;
+        for (int i = 0; i < 5; i++) {
+            auto t0 = std::chrono::high_resolution_clock::now();
+            fn();
+            cudaSetDevice(0); cudaDeviceSynchronize();
+            cudaSetDevice(1); cudaDeviceSynchronize();
+            auto t1 = std::chrono::high_resolution_clock::now();
+            double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+            if (ms < best) best = ms;
+        }
+        double bw = bytes_per_iter / (best/1000.0) / 1e9;
+        printf("  %-40s  %.3f ms  effective BW = %.0f GB/s\n", name, best, bw);
+    };
 
-    float best0 = 1e30f, best1 = 1e30f;
-    for (int i = 0; i < 10; i++) {
+    printf("# 2× B300 NVLink all-reduce (N = 1 GB BF16, %.0f M elements)\n", (double)N_elems / 1e6);
+    printf("# Theoretical: 1.22 ms via bidirectional ring at 820 GB/s\n\n");
+
+    bench("Single-dir P2P copy (0.5 GB)", [&]() {
         cudaSetDevice(0);
-        cudaEventRecord(e0a, s0);
-        cudaSetDevice(1);
-        cudaEventRecord(e1a, s1);
-        run();
+        cudaMemcpyPeerAsync(d0_recv, 0, d1, 1, half_bytes, s0a);
+        cudaStreamSynchronize(s0a);
+    }, half_bytes);
+
+    bench("Bidirectional P2P (0.5 GB ea)", [&]() {
         cudaSetDevice(0);
-        cudaEventRecord(e0b, s0);
+        cudaMemcpyPeerAsync(d0_recv, 0, d1, 1, half_bytes, s0a);
         cudaSetDevice(1);
-        cudaEventRecord(e1b, s1);
-        cudaEventSynchronize(e0b);
-        cudaEventSynchronize(e1b);
-        float ms0, ms1;
-        cudaEventElapsedTime(&ms0, e0a, e0b);
-        cudaEventElapsedTime(&ms1, e1a, e1b);
-        if (ms0 < best0) best0 = ms0;
-        if (ms1 < best1) best1 = ms1;
-    }
+        cudaMemcpyPeerAsync(d1_recv, 1, d0, 0, half_bytes, s1a);
+        cudaSetDevice(0); cudaStreamSynchronize(s0a);
+        cudaSetDevice(1); cudaStreamSynchronize(s1a);
+    }, half_bytes * 2);
 
-    // Each GPU READ B from peer, WROTE B local
-    // NVLink traffic = B per GPU = aggregate 2B over 2 GPUs (one direction)
-    // OR each direction has B → bidir traffic 2B at 1500 GB/s peak = B/750
-    double sol_us_unidir = (double)bytes / 783e9 * 1e6;
-    double sol_us_bidir = (double)bytes / 750e9 * 1e6;
-    double r0 = bytes / (best0/1000) / 1e9;
-    double r1 = bytes / (best1/1000) / 1e9;
+    bench("Single-dir P2P copy (1 GB)", [&]() {
+        cudaSetDevice(0);
+        cudaMemcpyPeerAsync(d0, 0, d1, 1, N_BYTES, s0a);
+        cudaStreamSynchronize(s0a);
+    }, N_BYTES);
 
-    printf("# 2-GPU all-reduce, %.0f MB BF16 buffer\n", bytes/1e6);
-    printf("  GPU 0: %.4f ms = %.0f GB/s peer-read rate\n", best0, r0);
-    printf("  GPU 1: %.4f ms = %.0f GB/s peer-read rate\n", best1, r1);
-    printf("  Wall time (max): %.4f ms\n", best0 > best1 ? best0 : best1);
-    printf("  SoL (unidir 783 GB/s): %.1f us; ratio %.2fx\n",
-           sol_us_unidir, (best0 > best1 ? best0 : best1) * 1000 / sol_us_unidir);
-    printf("  SoL (bidir 1500 GB/s/750 each-way): %.1f us; ratio %.2fx\n",
-           sol_us_bidir, (best0 > best1 ? best0 : best1) * 1000 / sol_us_bidir);
+    bench("Ring all-reduce (1 GB)", run_ring, N_BYTES);  // 1 GB tensor input
+
     return 0;
 }

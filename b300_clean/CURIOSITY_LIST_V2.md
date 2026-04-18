@@ -119,11 +119,29 @@ Practical recipe for SoL fused elementwise:
 
 Investigated this session, commit `e9be3e3`.
 
-### A3. All-Reduce on 2× B300 via NVLink
-Catalog has cross-GPU atomic at 1.66 us, NVLink P2P at 783 GB/s.
-What's the SoL for an all-reduce of, say, 1 GB BF16 across 2 GPUs?
-Useful for tensor-parallel inference.
-**Test**: ring/tree all-reduce vs raw cudaMemcpyP2P; measure roundtrip.
+### A3. [x] RESOLVED — 1 GB BF16 all-reduce: 1.97 ms (67% NVLink SoL)
+
+NVLink baselines (NV18 between 2× B300):
+   Single-dir P2P 0.5 GB:   703 us → 763 GB/s (matches catalog 783)
+   Bidirectional 0.5 GB ea: 712 us → 1509 GB/s aggregate (= 2× single-dir)
+   Single-dir P2P 1.0 GB:  1388 us → 773 GB/s
+
+Custom ring all-reduce (2 GPUs, 1 GB BF16 input):
+   Measured: 1.97 ms (effective 546 GB/s)
+   Theoretical: 0.61 (P1 cross-recv) + 0.14 (reduce) + 0.61 (P2 cross-send)
+                = 1.36 ms via bidir NVLink + HBM
+   Achievement: 67% of theoretical (extra 0.6 ms = stream sync overhead × 3
+                between phases + reduce kernel launch overhead × 2)
+
+   NCCL would likely do better (~85-90%) via fused phases + persistent kernels.
+
+For tensor-parallel inference latency: 1 GB BF16 all-reduce = 2 ms = ~10% of
+typical layer compute time at large batch. Acceptable but not free.
+
+Practical: for 8 GPU tensor parallel (NVL8), bandwidth scales but latency
+for small messages is dominated by NVLink hop count + sync overhead.
+
+Investigated this session, commit `e49e9ef`.
 
 ### A4. Pipeline-parallel GEMM across 2 GPUs
 Split a large GEMM (e.g. 32K × 32K BF16) so half the matrix is on each
