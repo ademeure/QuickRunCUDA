@@ -117,3 +117,10 @@ Free rein on:
 - [x] L2 BW pure (.cg L1-bypass): 20-21 TB/s verified by ncu (l1tex_hit=0%, lts_hit=96%, dram=9 GB/s). Refines catalog C5 23.85 vs 13.3; commit `37ee1a0`
 - [x] HBM atomic peak: 35 Gops/s = 28x slower than L2 atomic, 274x slower than SMEM. ncu DRAM 2.78 TB/s confirms HBM path; commit `521a51f` (CONFLATED combined+uncombined - see below)
 - [x] Atomic ladder REVISED apples-to-apples + bytes/s sanity: L2 uncombined 191 Gops/766 GB/s vs HBM 52 Gops/208 GB/s = 3.7x ratio (NOT 28x); commits `b0106de` (+ occ sweep) earlier `523-`
+- [x] NVFP4 GEMM batch-size scaling: HBM-bound to M=256, crossover M=512, compute-bound M>=1024; theory matches 2% (M_cross=504 predicted, 512 measured); commit `dce7ed4`
+- [x] Atomic deep dive (combine ratio + uint64 + 128-bit attempt): HBM combine=32 ceiling = 769 Gops, 3.08 TB/s payload, 4 TB/s DRAM; commits `8c107c3`+`71aa3a9`
+- [x] Atomic DRAM ceiling = 5.52 TB/s (3 patterns converge); 128-bit global atom NOT available on sm_103a (b128 = shared::cluster only); commit `71aa3a9`
+- [x] b128 atomic exch IS available on sm_103a (need .b128 reg type explicit); 4x payload/DRAM byte vs int32; commit `b856c33`
+- [x] B300 clock domains: SM 2032/1920 + Video/L2 1860 + HBM 3996; combined atomic SM-bound, uncombined L2/DRAM-bound; commit `0eb9ec0`
+- [x] Atomic re-analysis: prior "L2 atomic = 4.93 TB/s" was 98% L2-warm (only 82 GB/s DRAM); SAME SASS gives 1.6x range based on stride; L2 actual = 126 MiB; "32 atomic units" claim downgraded LOW conf; commits `292cfc9`+`5c5a885`
+- [x] FFMA + MUFU pipes run in parallel: MIXED time = MUFU-only time (12.61 vs 12.64 ms); FFMA "fills" within MUFU's slower window at 19.2 TF; commit `8012b98`
