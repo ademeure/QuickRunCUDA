@@ -109,11 +109,16 @@ vs legacy mma.sync. Then we know what we're benchmarking.
 
 ## Tier B — Interesting curiosities
 
-### B1. Inter-GPC clock drift over sustained operation
-A1/G1 showed 8 GPC boot groups. Once running for minutes, do GPCs
-drift apart? Could affect distributed-cluster algorithm correctness.
-**Test**: persistent kernel reading globaltimer per GPC for 5 minutes,
-look for skew growth.
+### B1. [x] RESOLVED — ZERO inter-GPC clock drift
+clock64 range across 148 SMs = constant 1.35e9 cy over 50 sequential samples.
+SM 0 and SM 147 both ticked exactly 19,603,969 cy over the same window — net
+drift = 0. All SMs run from synchronized clock; the 1.35e9 cy offset is a
+fixed boot-time constant from staggered GPC group startup.
+
+Implication: cluster-wide algorithms relying on globaltimer or clock64
+relative ordering are SAFE — no drift correction needed.
+
+Investigated this session, commit `54aadb2`.
 
 ### B2. L2 used as "tier-2 SHMEM" via persistent attribute
 We have 79 MB persisting region. Can we use it as a 79 MB shared
@@ -141,9 +146,15 @@ enable hardware-accelerated all-reduce primitives.
 
 ## Tier C — Smaller curiosities
 
-### C1. Memory power vs compute power decomposition
-NVML reports total board power. Memory + compute. What fraction is
-each? Run pure-HBM kernel vs pure-FFMA kernel and compare.
+### C1. [x] RESOLVED — HBM dominates power (520W ΔMEM vs 200W ΔCOMPUTE)
+Decomposition (200W idle baseline subtracted):
+   Pure FFMA:       +235 W (compute pipe ALU)
+   Pure HMMA:       +205 W (legacy tensor pipe)
+   Pure HBM read:   +520 W ← **2.5× compute!**
+   cuBLAS at TGP:   +740 W (HBM saturate + tcgen05 overlap)
+
+Memory dominates. The path to TGP is HBM saturation + async-overlapped compute.
+Investigated this session, commit `65f3795`. Full table in 16_power_clock.md.
 
 ### C2. cudaMallocAsync vs cudaMalloc fragmentation
 After many alloc/free, does the pool fragment? Test long-running
