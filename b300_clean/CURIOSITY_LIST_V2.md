@@ -262,9 +262,30 @@ Decomposition (200W idle baseline subtracted):
 Memory dominates. The path to TGP is HBM saturation + async-overlapped compute.
 Investigated this session, commit `65f3795`. Full table in 16_power_clock.md.
 
-### C2. cudaMallocAsync vs cudaMalloc fragmentation
-After many alloc/free, does the pool fragment? Test long-running
-sequences.
+### C2. [x] RESOLVED — cudaMallocAsync 2× faster sustained, NO fragmentation
+
+Single-call latency (fresh state):
+   size=1 KB:    cudaMalloc=54 us  cudaMallocAsync=3925 us  ← pool init cost
+   size=1 MB:    cudaMalloc=40 us  cudaMallocAsync=48 us
+   size=16 MB:   cudaMalloc=58 us  cudaMallocAsync=46 us
+   size=1024 MB: cudaMalloc=193us  cudaMallocAsync=1013 us  ← async slower for huge
+
+Sustained alloc/free, 1000× 16 MB:
+   cudaMalloc:               42 us/op (no pool, repeated kernel arg setup)
+   cudaMallocAsync (warm):   21 us/op  ← 2× faster after warmup
+
+Fragmentation test (alternating 1 MB + 100 MB, 100 cycles):
+   Initial free: 273485 MB
+   After:        273385 MB (lost only 100 MB to small allocs)
+   Subsequent 1 GB alloc: SUCCESS — no fragmentation observed
+
+PRACTICAL RECIPE:
+- Use cudaMallocAsync for repeated medium-size allocs (16 MB-class) → 2× speedup
+- For one-shot huge allocs (≥1 GB), use cudaMalloc (5× faster than async first call)
+- For tiny allocs (<1 KB), avoid cudaMallocAsync first-call cost (3.9 ms)
+- Fragmentation is NOT a practical concern with B300's 273 GB HBM
+
+Investigated this session, commit `7741308`.
 
 ### C3. [x] RESOLVED — cuBLAS warmup costs 64 ms total before steady-state
 
