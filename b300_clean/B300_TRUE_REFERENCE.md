@@ -46,6 +46,7 @@ CUDA 13.2 runtime / 13.0 driver (580.126.09).
 | **FP64 DFMA** | **1.20** | 100% of 1.20 spec | (2d64696) |
 | **FP16/BF16 mma.sync m16n8k16** | **569** | 7.4× FFMA | (a37d989) |
 | **BF16 cuBLAS GEMM N=8192** | **2242** | 90% of NVIDIA 2500 spec | (e752547) |
+| **NVFP4 e2m1 cuBLAS** (VEC16_UE4M3 scale, single-call N=8192) | **9109** | **91.1% of 10000 spec** — catalog confirmed (2a593bd) |
 | **FP8 e4m3 cuBLAS LtMatmul** (zero data, sustained via cudaGraph) | **4425** | 88.5% of 5000 spec, 30 sec @ 943 W | (06b0d8d) |
 | **FP8 e4m3 cuBLAS LtMatmul** (random data) | **3983** | 80% of spec — REALISTIC | (bf98e90) |
 | **BF16 mma.sync 8-chain** (multi-accumulator) | **~570** | matches catalog "burst 569" | (83ef1c6) — single-chain "1543" was over-counted; RETRACTED |
