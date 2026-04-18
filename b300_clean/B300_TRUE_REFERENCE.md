@@ -48,9 +48,18 @@ CUDA 13.2 runtime / 13.0 driver (580.126.09).
 | **FP8 e4m3 cuBLAS LtMatmul** (zero data) | **4400** | 88% of 5000 spec | (e752547) |
 | **FP8 e4m3 cuBLAS LtMatmul** (random data) | **3983** | 80% of spec — REALISTIC | (bf98e90) |
 
-**WARNING**: FP8 catalog claim "4491 TFLOPS" was zero-data. Random data
-hits 3983 TFLOPS (-9%). Even more brutal under power cap: at 600 W
-random=3087 TFLOPS (-43% vs zero-data unconstrained).
+**WARNING**: catalog claims like "FP8 4491 TFLOPS" were ALL zero-data.
+
+Data-dependent throughput (commit 6e40ef9, N=8192 cuBLAS):
+
+| Precision | zero/const | random | normal-ish | worst slowdown |
+|-----------|----------:|-------:|-----------:|---------------:|
+| FP16      | 2246      | 1905   | 1744       | -22% |
+| BF16      | 2246      | 1883   | 1850       | -18% |
+| FP8 e4m3  | 4393      | 3984   | 3951       | -10% |
+
+**For realistic training/inference workloads, use the realistic numbers**.
+Even more brutal under 600 W power cap: FP8 random = 3087 TFLOPS (-43%).
 
 ## 3. Coordination latency ladder — VERIFIED
 
