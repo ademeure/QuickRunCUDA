@@ -173,3 +173,49 @@ Practical: a 1 ms-cadence host monitor thread polling power+clock+temp adds ~360
 - `/root/github/QuickRunCUDA/investigations/nvml_overhead.cu` (commit ca3666c) — 0.12 µs per query (memory info 3.3 µs)
 - `/root/github/QuickRunCUDA/investigations/nanosleep.cu` (commit ddff4b8) — 35–60% undershoot for > 1 µs
 - `/root/github/QuickRunCUDA/B300_PIPE_CATALOG.md` §"Clock / power / thermal", §"Power Consumption Under Load", §"__nanosleep precision" — earlier numbers (some superseded)
+
+---
+
+## Power decomposition by pipe (HIGH, 2026-04-18)
+
+What kernel patterns hit which power levels at default boost (2032 MHz, no clock lock)?
+
+| Workload | Sustained power | Pipe(s) loaded | Notes |
+|----------|----------------:|:----------------|-------|
+| Idle | 200 W | none | NVML baseline |
+| Pure HMMA mma.sync (16 warps/SM) | 405 W | tensor (legacy) | 90.5% of BF16 spec |
+| HMMA + FFMA same warp | 424 W | tensor + ALU | +20W from FFMA |
+| Pure FFMA (8 chains, 512 thr/blk) | 435 W | FP32 ALU | 235W ΔALU |
+| **Pure HBM read (grid-stride int4)** | **720 W** | LSU + HBM3E | **520W ΔMEM!** |
+| HBM + HMMA on separate streams | 510 W | compete for SMs | LESS than HBM alone |
+| HMMA + scalar LDG (same warp) | 305 W | LDG stalls compute | LESS than HMMA alone |
+| Kitchen sink (4 ops in 8 warps) | 280 W | under-utilized | low power, low throughput |
+| **cuBLAS via cudaGraph** (prior) | **940 W** | tcgen05 + TMA + ... | path to TGP |
+
+**Key finding: HBM is the BIGGEST power consumer** — pure HBM read (720W) draws
+1.78× the power of pure HMMA (405W). Memory accounts for ~520W when fully
+saturated; compute pipes contribute 200-235W each.
+
+**Mixing memory + compute REDUCES power** in legacy mma.sync model:
+- HMMA + LDG: 305W (LDG stalls warps → compute idle)
+- HBM + HMMA streams: 510W (SMs split between roles)
+
+To reach the cuBLAS 940W TGP requires:
+1. Saturate HBM (≈ 520W mem)
+2. Simultaneously saturate compute (≈ 200W)
+3. Without serialization between the two
+
+This needs **async TMA + tcgen05** — TMA loads while tcgen05 computes,
+both pipes active in same block. Legacy mma.sync can't do this; it has no
+async memory primitive to feed it.
+
+So the path to TGP is intrinsically tied to tcgen05, NOT just "more pipes
+active in same block". Hypothesis (c) in S3 was wrong.
+
+Tests:
+- `investigations/ninja_pure_pipes_power.cu` (pure HBM, pure FFMA)
+- `investigations/ninja_hmma_sustained.cu` (pure HMMA at 16 warps/SM)
+- `investigations/ninja_hbm_plus_compute.cu` (HBM + HMMA streams)
+- `investigations/ninja_max_power_kitchen.cu` (4-role mix)
+- `investigations/ninja_hmma_dram.cu` (HMMA + LDG same warp, stall demo)
+
