@@ -154,11 +154,31 @@ We BEAT cudaMemset by 1%. Now can we make it leak its kernel?
 Try: cuModuleLoadDataEx with a known driver blob, cuFuncGetName on
 all internal functions, dlsym hacks.
 
-### B5. PDL (Programmatic Dependent Launch) — meaningful workload
-Catalog says PDL gave no measurable speedup. But what about for
-HBM-bound workloads where kernel B can prefetch while kernel A finishes?
-**Test**: kernel A = compute, kernel B = HBM read for next layer's input.
-With PDL, does B's prefetch start while A's tail is still running?
+### B5. [x] RESOLVED — PDL saves launch overhead (~2us/pair), NO SM overlap
+HMMA-then-HBM chain (each kernel uses all 148 SMs):
+   no PDL:  0.848 ms/pair
+   PDL:     0.845 ms/pair    → 0.4% savings (negligible)
+
+When both kernels saturate SMs, PDL provides no overlap. The hardware can't
+backfill SMs that are still busy with kernel A.
+
+Short kernel chain (64 thr/blk × 148 blocks, FFMA-only, varying N):
+   N=100   no PDL: 4.23 us/pair  PDL: 3.72 us/pair  save 0.51 us = 12%
+   N=1000  no PDL: 8.25 us/pair  PDL: 5.88 us/pair  save 2.37 us = 28%
+   N=10000 no PDL: 49.2 us/pair  PDL: 45.2 us/pair  save 4.0  us = 8%
+
+PDL only saves the LAUNCH OVERHEAD of B (~2-4 us) by overlapping B's launch
+prep with A's tail. Doesn't enable SM-level overlap for full-grid kernels.
+
+WHEN PDL HELPS:
+- Chains of short kernels (~5-50 us each) where launch overhead is significant
+- Real-world: layer-by-layer transformer inference with small per-layer ops
+
+WHEN PDL DOESN'T HELP:
+- Both kernels saturate SMs (no spare SMs for B to backfill)
+- Long kernels (>100 us) where launch overhead is negligible
+
+Investigated this session, commit `9e7c592`.
 
 ### B6. NVLink-broadcast atomics
 Cross-GPU atomic.sys.add to multiple peers via mapped memory. Could
