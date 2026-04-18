@@ -211,9 +211,41 @@ pure HBM (264 ns). The L2 keeps fetching+evicting. AVOID this WS range.
 
 Investigated this session, commit `034e2ff`.
 
-### B3. cuBLAS algo selection — how does it choose?
-For N=8192 FP8, cuBLAS picks one algo. For N=512 it picks another.
-Where's the crossover? Map out the algo space.
+### B3. [x] RESOLVED — cuBLAS uses algoId=66 for ALL BF16 sizes; tile varies
+
+ALL shapes (square, decode, tall-skinny) use single algoId=66 family.
+Only tile_id changes based on shape. Peak 90.5% spec at 8192³ via tile=23.
+
+Square shapes:
+   M=N=K  algoId  tile  TFLOPS  % spec
+   128    66      10    1.3    0.1%   ← launch overhead dominates
+   256    66      10    10.4   0.4%
+   512    66      13    83.3   3.3%
+   1024   66      18    499.5  20.0%
+   2048   66      23    1449   58.0%
+   4096   66      23    1862   74.5%
+   8192   66      23    2262   90.5%  ← peak (matches S1)
+   16384  66      513   2255   90.2%  (split-K for memory pressure)
+
+Decode (M=1, varying K, N=4096):
+   K=1024-16384: tile=312 or 10, all give 5-6 TFLOPS = HBM-bound
+   (must load weights once → bound by HBM bandwidth, NOT compute)
+
+Tall-skinny (varying M, N=K=8192):
+   M=16:   tile=47   94 TFLOPS (3.8%)
+   M=64:   tile=15   346 TFLOPS (13.9%)
+   M=256:  tile=20   1133 TFLOPS (45.3%)
+   M=1024: tile=23   1878 TFLOPS (75.1%)
+
+KEY INSIGHT: cuBLAS heuristic doesn't use multiple algo families on B300 — just
+ONE algo (66 = tcgen05 family per A5) with ~10 tile variants chosen by shape.
+
+Practical: for LLM inference, expect:
+- Prefill (M=8192+): 90% of spec (2.25 PF)
+- Decode (M=1): 5-6 TFLOPS HBM-bound (use streaming weights, KV cache)
+- Tall-skinny prefill (M=256): 45% of spec
+
+Investigated this session, commit `754fb69`.
 
 ### B4. cudaMemset SASS extraction — final attempt
 We BEAT cudaMemset by 1%. Now can we make it leak its kernel?
