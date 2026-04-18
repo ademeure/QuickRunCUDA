@@ -1,81 +1,74 @@
-// A5: enumerate ALL cuBLAS LtMatmul algos for FP8 N=8192, identify which use tcgen05
-// Hypothesis: tcgen05 algos hit 4400 TFLOPS, mma.sync legacy ones cap at ~570
-
+// A5: Enumerate cuBLAS algorithms for BF16 GEMM and identify fastest
 #include <cuda_runtime.h>
 #include <cublasLt.h>
 #include <cstdio>
-#include <vector>
-#include <algorithm>
 
-int main() {
-    int N = 8192;
+int main(int argc, char**argv) {
     cudaSetDevice(0);
-    cublasLtHandle_t lt; cublasLtCreate(&lt);
+    int M = 8192, N = 8192, K = 8192;
+    if (argc > 1) M = N = K = atoi(argv[1]);
 
+    cublasLtHandle_t lt; cublasLtCreate(&lt);
     void *d_a, *d_b, *d_c, *d_d, *d_ws;
-    cudaMalloc(&d_a, (size_t)N*N); cudaMemset(d_a, 0x42, (size_t)N*N);
-    cudaMalloc(&d_b, (size_t)N*N); cudaMemset(d_b, 0x42, (size_t)N*N);
-    cudaMalloc(&d_c, (size_t)N*N*2);
-    cudaMalloc(&d_d, (size_t)N*N*2);
-    size_t ws = 256ull * 1024 * 1024;
+    cudaMalloc(&d_a, (size_t)M*K*2);
+    cudaMalloc(&d_b, (size_t)K*N*2);
+    cudaMalloc(&d_c, (size_t)M*N*2);
+    cudaMalloc(&d_d, (size_t)M*N*2);
+    size_t ws = 1024ull*1024*1024;
     cudaMalloc(&d_ws, ws);
+    cudaMemset(d_a, 0x3c, (size_t)M*K*2);
+    cudaMemset(d_b, 0x3c, (size_t)K*N*2);
+    cudaStream_t s; cudaStreamCreate(&s);
+    cudaEvent_t e0, e1; cudaEventCreate(&e0); cudaEventCreate(&e1);
 
     cublasLtMatmulDesc_t desc;
     cublasLtMatmulDescCreate(&desc, CUBLAS_COMPUTE_32F, CUDA_R_32F);
-    cublasOperation_t opT = CUBLAS_OP_T, opN = CUBLAS_OP_N;
+    cublasOperation_t opT=CUBLAS_OP_T, opN=CUBLAS_OP_N;
     cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSA, &opT, sizeof(opT));
     cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSB, &opN, sizeof(opN));
-    cublasLtMatrixLayout_t a, b, c;
-    cublasLtMatrixLayoutCreate(&a, CUDA_R_16BF, N, N, N);
-    cublasLtMatrixLayoutCreate(&b, CUDA_R_16BF, N, N, N);
-    cublasLtMatrixLayoutCreate(&c, CUDA_R_16BF, N, N, N);
+
+    cublasLtMatrixLayout_t la, lb, lc;
+    cublasLtMatrixLayoutCreate(&la, CUDA_R_16BF, K, M, K);
+    cublasLtMatrixLayoutCreate(&lb, CUDA_R_16BF, K, N, K);
+    cublasLtMatrixLayoutCreate(&lc, CUDA_R_16BF, M, N, M);
 
     cublasLtMatmulPreference_t pref;
     cublasLtMatmulPreferenceCreate(&pref);
     cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &ws, sizeof(ws));
 
-    // Get up to 32 heuristic algos
-    cublasLtMatmulHeuristicResult_t heur[32];
-    int n_results = 0;
-    cublasLtMatmulAlgoGetHeuristic(lt, desc, a, b, c, c, pref, 32, heur, &n_results);
-    printf("# cuBLAS heuristic returned %d algorithms for FP8 e4m3 N=%d\n", n_results, N);
+    constexpr int MAX_ALGOS = 32;
+    cublasLtMatmulHeuristicResult_t heur[MAX_ALGOS];
+    int nr = 0;
+    cublasLtMatmulAlgoGetHeuristic(lt, desc, la, lb, lc, lc, pref, MAX_ALGOS, heur, &nr);
+    printf("# BF16 GEMM M=N=K=%d, %d algorithms returned by heuristic\n", M, nr);
+    printf("# rank  algoId  tile  stages  splitK  swizzle  ws_KB    waves   TFLOPS\n");
 
     float alpha = 1, beta = 0;
-    cudaEvent_t e0, e1; cudaEventCreate(&e0); cudaEventCreate(&e1);
-    long ops = 2L * N * N * N;
+    long ops = 2L * M * N * K;
 
-    printf("# rank | algo_id | tile_id | warps | time(ms) | TFLOPS\n");
-    for (int ai = 0; ai < n_results; ai++) {
-        // Get algo id and tile id from this algo
-        int algo_id = 0;
-        cublasLtMatmulAlgoConfigGetAttribute(&heur[ai].algo, CUBLASLT_ALGO_CONFIG_ID, &algo_id, sizeof(algo_id), nullptr);
-        int tile_id = 0;
-        cublasLtMatmulAlgoConfigGetAttribute(&heur[ai].algo, CUBLASLT_ALGO_CONFIG_TILE_ID, &tile_id, sizeof(tile_id), nullptr);
+    for (int i = 0; i < nr; i++) {
+        int algoId = -1, tileId = -1, stages = -1, splitK = -1, swizzle = -1;
+        cublasLtMatmulAlgoConfigGetAttribute(&heur[i].algo, CUBLASLT_ALGO_CONFIG_ID, &algoId, sizeof(algoId), nullptr);
+        cublasLtMatmulAlgoConfigGetAttribute(&heur[i].algo, CUBLASLT_ALGO_CONFIG_TILE_ID, &tileId, sizeof(tileId), nullptr);
+        cublasLtMatmulAlgoConfigGetAttribute(&heur[i].algo, CUBLASLT_ALGO_CONFIG_STAGES_ID, &stages, sizeof(stages), nullptr);
+        cublasLtMatmulAlgoConfigGetAttribute(&heur[i].algo, CUBLASLT_ALGO_CONFIG_SPLITK_NUM, &splitK, sizeof(splitK), nullptr);
+        cublasLtMatmulAlgoConfigGetAttribute(&heur[i].algo, CUBLASLT_ALGO_CONFIG_CTA_SWIZZLING, &swizzle, sizeof(swizzle), nullptr);
 
-        // Warmup
-        for (int i = 0; i < 3; i++) {
-            cublasLtMatmul(lt, desc, &alpha, d_a, a, d_b, b, &beta, d_c, c, d_d, c, &heur[ai].algo, d_ws, ws, 0);
-        }
-        cudaDeviceSynchronize();
-        cudaError_t err = cudaGetLastError();
-        if (err != cudaSuccess) {
-            printf("  %2d | %3d | %3d | -- | ERROR: %s\n", ai, algo_id, tile_id, cudaGetErrorString(err));
-            continue;
-        }
+        for (int j = 0; j < 3; j++) cublasLtMatmul(lt, desc, &alpha, d_a, la, d_b, lb, &beta, d_c, lc, d_d, lc, &heur[i].algo, d_ws, ws, s);
+        cudaStreamSynchronize(s);
 
-        // Time
         float best = 1e30f;
-        for (int i = 0; i < 10; i++) {
-            cudaEventRecord(e0);
-            cublasLtMatmul(lt, desc, &alpha, d_a, a, d_b, b, &beta, d_c, c, d_d, c, &heur[ai].algo, d_ws, ws, 0);
-            cudaEventRecord(e1); cudaEventSynchronize(e1);
+        for (int j = 0; j < 3; j++) {
+            cudaEventRecord(e0, s);
+            cublasLtMatmul(lt, desc, &alpha, d_a, la, d_b, lb, &beta, d_c, lc, d_d, lc, &heur[i].algo, d_ws, ws, s);
+            cudaEventRecord(e1, s); cudaStreamSynchronize(s);
             float ms; cudaEventElapsedTime(&ms, e0, e1);
             if (ms < best) best = ms;
         }
-        double tflops = ops / (best/1000) / 1e12;
-        printf("  %2d | %3d | %3d | %.4f ms | %.0f TFLOPS\n",
-               ai, algo_id, tile_id, best, tflops);
+        double tflops = ops / (best/1000.0) / 1e12;
+        printf("  %2d    %4d    %4d   %3d     %3d     %3d     %6zu   %.2f    %.1f\n",
+               i, algoId, tileId, stages, splitK, swizzle,
+               heur[i].workspaceSize / 1024, heur[i].wavesCount, tflops);
     }
-
     return 0;
 }
