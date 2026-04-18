@@ -247,10 +247,32 @@ Practical: for LLM inference, expect:
 
 Investigated this session, commit `754fb69`.
 
-### B4. cudaMemset SASS extraction — final attempt
-We BEAT cudaMemset by 1%. Now can we make it leak its kernel?
-Try: cuModuleLoadDataEx with a known driver blob, cuFuncGetName on
-all internal functions, dlsym hacks.
+### B4. [x] PARTIAL — cudaMemset is INVISIBLE to ncu (likely HW copy engine)
+
+Multiple extraction attempts FAIL:
+1. dlsym on libcudart.so for known kernel names: dlopen failed
+2. dladdr on cudaMemset host wrapper: Symbol "?" (no name in DSO)
+3. ncu --print-summary per-kernel: **"No kernels were profiled"** (zero kernels)
+
+The fact that ncu sees ZERO kernels for cudaMemset is the smoking gun.
+cudaMemset uses a HARDWARE PATH (copy engine DMA) NOT a kernel launch.
+Confirms prior catalog A7: cudaMemset is "SM-resident, NOT DMA" was wrong —
+it's actually copy-engine DMA, invisible to kernel-level profiling.
+
+Workload signature confirms HBM-bound (no SM activity):
+   1 KB:    0.3 GB/s
+   1 MB:    229 GB/s
+   16 MB:   2438 GB/s
+   256 MB:  6589 GB/s
+   1024 MB: **7269 GB/s = 99.4% of HBM peak (7.31 TB/s)**
+
+To extract any kernel, would need LD_PRELOAD interpose on cuLaunchKernel
+or kernel-mode hooks. Beyond scope of this rigor sweep.
+
+PRACTICAL: cudaMemset is at HBM SoL via HW path. Custom kernels can match
+but not exceed (the 1% beat in NINJA_ACHIEVEMENTS was within timing noise).
+
+Investigated this session, commit `f2469ff`.
 
 ### B5. [x] RESOLVED — PDL saves launch overhead (~2us/pair), NO SM overlap
 HMMA-then-HBM chain (each kernel uses all 148 SMs):
