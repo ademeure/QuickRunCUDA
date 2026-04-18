@@ -47,8 +47,10 @@ CUDA 13.2 runtime / 13.0 driver (580.126.09).
 | **FP16/BF16 mma.sync m16n8k16** | **569** | 7.4× FFMA | (a37d989) |
 | **BF16 cuBLAS GEMM N=8192** | **2242** | 90% of NVIDIA 2500 spec | (e752547) |
 | **2-GPU NVFP4 split (1 stream/GPU, no comm)** | **19163** | **95.8% of 2× spec** | (cbaadbc) — best aggregate FP throughput on this 2× B300 system |
-| Per-GPU NVFP4 in 2-GPU split (M×K=8192×16384 BF16 out) | 9582 | 95.8% of 10000 spec | (cbaadbc) |
-| **NVFP4 e2m1 cuBLAS** per-call best (random N=24576, single GPU) | 8424 | 84.2% of 10000 spec | (23be661) |
+| Per-GPU NVFP4 in 2-GPU split | 9582 | 95.8% of 10000 spec | (cbaadbc) |
+| **Single-GPU NVFP4 wide-N (M=8192,N=65536,K=16384)** | **10297** | **103% of 10 PFLOPS spec** | (3628a40) — exceeds B200 spec |
+| NVFP4 e2m1 cuBLAS square N=K=24576 (random) | 8424 | 84.2% of 10000 spec | (23be661) — square underutilizes |
+| NVFP4 K=96 sm_103 path (15 PFLOPS B300 1.5×) | inaccessible | path exists (UTCOMMA SASS) but cuBLAS 13.2 won't pick | (10f394b) |
 | NVFP4 e2m1 sustained (random N=16384, cudaGraph 15s) | 6554 | 65.5% (heavy throttle to 1057 MHz, 1186W instant peak) | (23be661) |
 | NVFP4 e2m1 per-call (const-byte, single-shot N=8192) | 9109 | 91.1% — best-case (2a593bd) |
 | **FP8 e4m3 cuBLAS LtMatmul** (zero data, sustained via cudaGraph) | **4425** | 88.5% of 5000 spec, 30 sec @ 943 W | (06b0d8d) |
