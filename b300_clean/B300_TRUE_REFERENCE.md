@@ -215,11 +215,22 @@ pure-read denominator). Bigger contributing factors are vectorization
 (LDG.E.U16 → LDG.E.128 = 8× fewer L1 transactions) AND register-keep,
 not register-keep alone.
 
-### Best BF16 axpy (7.02 TB/s = 91.5% spec — NINJA block tuning)
+### Best BF16 axpy (7.03 TB/s = AT SoL for 2R:1W access pattern)
 ```cuda
-// 131072 blocks of 256 threads (vs 592 in original). MORE small blocks wins.
+// 131072 blocks of 256 threads, uint4 vec, 8 BF16/thread.
+// Compiler emits 5×LDG.E.128.CONSTANT + 5×LDG.E.128 + 5×STG.E.128 (5x unroll).
 // (See investigations/ninja_axpy.cu — commit 866e951)
+// (See investigations/ninja_axpy_v2.cu / ninja_axpy_v3.cu — rigor verify)
 ```
+- 91.5% of pure-read peak (7672 GB/s) is the WRONG denominator.
+- Real ceiling for 2R:1W mix ≈ 7.0–7.05 TB/s (between A6's 7.31 R-only and 6.68 50:50).
+- Achieved 7.03 TB/s = **~99–101% of mixed-RW SoL** = AT SoL.
+- Tried v2 (st.cs streaming write), v3/v4 (ILP=2), v5 (ILP=4), v6 (persistent) —
+  all clustered 89.9–91.6% spec. NO knob improves on baseline.
+- Data-pattern independent: zero/0x42/random all = 7016–7026 GB/s (within 0.15%).
+- ncu cross-check: dram__bytes.sum.per_second = 7039 GB/s (vs 7026 wall-clock = 0.2% agree).
+- R:W ratio = 2.09:1 in ncu (matches expected 2:1).
+- **Confidence: HIGH** (4 indep methods: wall-clock × 3 data patterns + ncu DRAM).
 
 ### Best 256-bin BF16 histogram (6.57 TB/s = 90.1% of HBM peak)
 ```cuda
