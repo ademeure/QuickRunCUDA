@@ -24,7 +24,7 @@ CUDA 13.2 runtime / 13.0 driver (580.126.09).
 |---|---:|---:|---|
 | **HBM3E read** | **7.30** | 95% of 7672 spec | v8 + per-warp coalesced + non-persistent (a04d9c8) |
 | **HBM3E write** | **7.30** | 95% | same recipe (a04d9c8) |
-| **HBM3E write (1 KB bursts)** | **7.57** | **98.6%** | A2 — burst tuning (66a2853) |
+| **HBM3E write NINJA (1 v8 store/warp)** | **7.57** | **98.7%** ← SoL | NINJA recipe (e75c7e1) — beats cudaMemset by 5% |
 | **HBM3E concurrent R+W (best ratio)** | **7.31** | 95% | pure R or pure W (de3b4d5) |
 | **HBM3E concurrent R+W (50:50)** | **6.68** | 87% | minimum at any mix (de3b4d5) |
 | **L2 kernel-effective** | **23.85** | (incl. L1 reuse) | v8 + 8-ILP @ 96 MB workload (1e590cf) |
@@ -156,29 +156,39 @@ Even more brutal under 600 W power cap: FP8 random = 3087 TFLOPS (-43%).
 
 ## 8. Speed-of-Light recipes
 
-### Best HBM read or write throughput (7.30 TB/s = 95% peak)
+### Best HBM write throughput (7.57 TB/s = 98.7% spec) — NINJA recipe
 ```cuda
-__global__ void w_v8(int *data) {
+__launch_bounds__(256, 8) __global__ void w_ninja(int *data, int v) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int warp_id = tid / 32, lane = tid & 31;
-    int *warp_base = data + warp_id * (32 * 1024 / 4);  // 32 KB per warp
-    for (int it = 0; it < 32; it++) {
-        int *p = warp_base + (it * 32 + lane) * 8;
-        asm volatile("st.global.v8.b32 [%0], {%1,%1,%1,%1,%1,%1,%1,%1};"
-            :: "l"(p), "r"(value) : "memory");
-    }
+    int *p = data + (warp_id * 32 + lane) * 8;
+    asm volatile("st.global.v8.b32 [%0], {%1,%1,%1,%1,%1,%1,%1,%1};"
+        :: "l"(p), "r"(v) : "memory");
 }
-// Launch: <<<bytes / (256 * 1024), 256>>>   // non-persistent, exact coverage
+// Launch: <<<bytes / (256 * 32), 256>>>
+//   - Each warp does ONE v8 store = 1 KB
+//   - Massive warp parallelism replaces per-warp loop pipelining
+//   - Beats cudaMemset by 5%, beats prior 32-iter recipe by 2.4%
 ```
 
-### Best BF16 absmax (6.74 TB/s = 92.3% of HBM peak)
+### Best HBM read throughput (7.31 TB/s = 95.3% spec)
 ```cuda
-__global__ void absmax(const __nv_bfloat16 *x, float *out, int N) {
-    // 8-ILP: read 8 BF16 = uint4 = 16 B per thread, per-warp coalesced
-    // Local fmaxf chain → warp shfl reduce → atomicMax
-    // (See investigations/rigor_l2_bf16_absmax.cu)
-}
+// Same NINJA principle, IT=2 (2 KB per warp)
+// See investigations/ninja_read.cu
 ```
+
+Read peak (95.3%) < Write peak (98.7%) by 3.4 pp — fundamental to HBM3E
+read protocol roundtrip overhead.
+
+### Best BF16 absmax (6.92 TB/s = 94.8% of HBM read peak — NINJA upgraded)
+```cuda
+// Block-level reduce with optimal block count = 18944 blocks
+// Each warp reads 1024 B (matches HBM ninja burst size)
+// Single atomicMax per block (not per warp — atomic contention kills it)
+// (See investigations/ninja_absmax_v2.cu)
+```
+Improved from 6.74 TB/s by tuning block count and using 1-KB-per-warp
+HBM access pattern (matches the HBM read SoL recipe).
 
 ### Best 256-bin BF16 histogram (6.57 TB/s = 90.1% of HBM peak)
 ```cuda
