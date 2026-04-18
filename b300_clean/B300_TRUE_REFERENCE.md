@@ -41,13 +41,14 @@ CUDA 13.2 runtime / 13.0 driver (580.126.09).
 
 | Operation | Peak (TFLOPS) | % theoretical | Notes (commit) |
 |---|---:|---:|---|
-| **FP32 FFMA (sustained 1920 MHz)** | **62.17** | 85.5% | warps_active 54%; pipe FMA at 85.67% (e1a1220) |
-| FP32 FFMA (boost 2032 — rare) | 74.6 | 97% (catalog claim, hard to reproduce) | (1cd7f03) |
+| **FP32 FFMA peak** (boost 2032 MHz unlocked) | **74.62** | **96.92%** | NCHAIN=3 rotating, immediate constant, 256×8/SM (06b0d8d) |
+| FP32 FFMA (locked 1920 MHz) | 62.17 | 85.5% | (1920 boost-pin paradox; unlock w/ `nvidia-smi -rgc`) (e1a1220) |
 | **FP64 DFMA** | **1.20** | 100% of 1.20 spec | (2d64696) |
 | **FP16/BF16 mma.sync m16n8k16** | **569** | 7.4× FFMA | (a37d989) |
 | **BF16 cuBLAS GEMM N=8192** | **2242** | 90% of NVIDIA 2500 spec | (e752547) |
-| **FP8 e4m3 cuBLAS LtMatmul** (zero data) | **4400** | 88% of 5000 spec | (e752547) |
+| **FP8 e4m3 cuBLAS LtMatmul** (zero data, sustained via cudaGraph) | **4425** | 88.5% of 5000 spec, 30 sec @ 943 W | (06b0d8d) |
 | **FP8 e4m3 cuBLAS LtMatmul** (random data) | **3983** | 80% of spec — REALISTIC | (bf98e90) |
+| **BF16 mma.sync persistent** (sustained 30 sec) | **1543** | 2.7× catalog "burst 569" — corrected | (06b0d8d) |
 
 **WARNING**: catalog claims like "FP8 4491 TFLOPS" were ALL zero-data.
 
