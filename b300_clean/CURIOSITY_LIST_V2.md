@@ -48,14 +48,21 @@ HBM saturation, (c) Tensor core + SFU + LSU all firing simultaneously.
 **Test**: build a kernel that combines (FP8 GEMM via tcgen05) + (FP32 FFMA)
 + (HBM read) on different warps in the same block. Does power approach 1100W?
 
-### S4. Are 4 tensor cores per SM REALLY independent?
-On Hopper, the 4 TCs were per-SMSP. On B300, are they:
-- (a) 4 independent units, can fire 4 mma.sync simultaneously
-- (b) 1 wider unit that processes 4 warp-mma worth of data per cycle
-- (c) Something else (tcgen05-specific)
+### S4. [x] RESOLVED — 4 tensor cores per SM ARE per-SMSP independent
+Same warp-sweep as S1 directly answers this:
+  1 warp/SM (1 SMSP):  0.19 mma/SM/cy
+  2 warps/SM (2 SMSPs, 1 each): 0.37 mma/SM/cy (2× linear)
+  4 warps/SM (4 SMSPs, 1 each): 0.74 mma/SM/cy (4× linear)
+  8 warps/SM (4 SMSPs, 2 each): 1.47 mma/SM/cy (2× over 4 warps)
+  16 warps/SM (4 SMSPs, 4 each): 1.84 mma/SM/cy (saturated)
 
-**Test**: launch 4 warps per SM each issuing different mma.sync chains —
-measure aggregate TFLOPS/SM. Compare to single warp × 4 chains.
+PATH (a) CONFIRMED: 4 independent tensor units, one per SMSP. Each can issue
+mma.sync simultaneously and they scale linearly 1→4 with SMSP count.
+
+Per-SMSP tensor unit cap = 0.46 mma/cy (saturated with 4 warps per SMSP for
+pipeline depth). Aggregate per SM = 1.84 mma/cy = 4 × per-SMSP.
+
+Investigated this session, commit `fceb94d`.
 
 ## Tier A — High value, worth several days each
 

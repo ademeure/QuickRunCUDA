@@ -274,3 +274,90 @@ stmatrix is **~14× slower per instruction** than ldmatrix — write-side smem p
 | DSMEM 7-8× latency | YES (LD.E vs LDS) | NO | 04_dsmem_overhead.md |
 | ldmatrix x4 = 17.7 B/cy | YES (LDSM x4) | NO | 664a67b, 4ccda4f |
 | stmatrix x4 = 14.2 B/cy | YES (STSM x4) | NO | 664a67b, ede88fb |
+
+---
+
+## MIO Pipe Architecture — per-SMSP and per-SM caps (HIGH, 2026-04-18 session)
+
+The MIO ("Memory Input/Output") pipe per SM handles **STS, LDS, SHFL, ATOMS,
+REDUX (sum/and/or/xor), and BAR**. Discovered by combo experiments where any
+two MIO consumers cap at ~1 inst/SM/cy total in any mix.
+
+### Per-SMSP unit rates (high ILP, saturated)
+
+| Op            | per-SMSP cap   | per-SM cap     | SMSPs needed to saturate per-SM |
+|---------------|----------------|----------------|---------------------------------|
+| SHFL.bfly     | 16 thr-op/cy   | 32 (1 inst/cy) | 2                               |
+| SHFL.up/down  | 16 thr-op/cy   | 32             | 2                               |
+| SHFL.idx      | ~15 thr-op/cy  | 30 (5% slower) | 2                               |
+| LDS.32        | 16 thr-op/cy   | 32             | 2                               |
+| ATOM.INC      | 16 thr-op/cy   | 32             | 2                               |
+| STS.32        | 8  thr-op/cy   | 32             | 4                               |
+| CREDUX.MIN/MAX| 8  thr-op/cy   | 32             | 4 (separate pipe — see below)   |
+| REDUX.SUM/AND/OR/XOR | 8 thr-op/cy | **16 (0.5 inst/cy)** | 2 (tight cap) |
+
+Test: `investigations/ninja_ilp_sweep.cu` — clean ILP sweep at 1/2/4 SMSPs
+across all 6 ops. Time-scaling sanity check passes (linear in N_iters).
+
+### Vector LDS/STS — fewer SMSPs to saturate SMEM port
+
+|         | 1 SMSP   | 2 SMSPs  | 4 SMSPs  | % of 38.5 TB/s peak |
+|---------|----------|----------|----------|---------------------|
+| LDS.32  |  9.5 TB/s | 18.9 TB/s| 35.7 TB/s | 93%                |
+| LDS.64  | 18.5 TB/s | 33.9 TB/s| 37.5 TB/s | 97%                |
+| LDS.128 | **22.9** | **35.4** | **38.0** TB/s | **99%**         |
+| STS.32  |  9.2     | 18.5     | 36.9 TB/s | 96%                 |
+| STS.64  | 12.5     | 24.9     | 37.7 TB/s | 98%                 |
+| STS.128 | 15.1     | 29.3     | 32.4 TB/s | 84% (degraded — RF write port?) |
+
+**LDS.128 with just 2 SMSPs reaches 92% of peak.** Vector LDS lets fewer
+SMSPs saturate the SMEM port — important for kernels with limited warp count.
+
+Test: `investigations/ninja_smsp_vec.cu`.
+
+### MIO contention combos (4 SMSPs, 4 chains/warp)
+
+All combinations cap at ~30 thr-op/SM/cy = 1.0 inst/SM/cy:
+
+  STS-only            : 0.97 inst/SM/cy (32 thr-op/SM/cy)
+  ATOMS-only          : 0.97 inst/SM/cy
+  STS + SHFL          : 0.96 inst/SM/cy total (each ≈ 0.48)
+  ATOMS + SHFL        : 0.95 inst/SM/cy
+  ATOMS + STS         : 0.99 inst/SM/cy
+  ATOMS + STS + SHFL  : 0.93 inst/SM/cy
+  LDS + SHFL          : 0.94 inst/SM/cy
+
+Conclusion: STS, LDS, SHFL, ATOMS share ONE per-SM MIO port at 1 inst/cy.
+Tests: `investigations/ninja_smsp_combo.cu`, `ninja_smsp_mio.cu`.
+
+### REDUX vs CREDUX (SASS-level distinction)
+
+SASS reveals two distinct opcodes:
+  REDUX.SUM/AND/OR/XOR  — uses MIO (caps at 0.49 inst/SM/cy = 1 inst per 2 cy)
+  CREDUX.MIN/MAX        — uses DIFFERENT pipe (0.78 inst/SM/cy alone, >1 in combo)
+
+Verified: CREDUX.MIN + SHFL = 1.16 inst/SM/cy total > MIO ceiling 1.0.
+Test: `investigations/ninja_redux_credux.cu`.
+
+### Pipes orthogonal to MIO
+
+Tested with X+STS combo time vs max(t(X), t(STS)) and sum:
+
+| Op | t(X) | t(STS) | t(X+STS) | max | sum | verdict |
+|----|------|--------|----------|-----|-----|---------|
+| FFMA  | 0.21 | 0.81 | 0.81 ms | 0.81 | 1.02 | **INDEPENDENT** |
+| MUFU  | 5.60 | 0.81 | 5.87 ms | 5.60 | 6.41 | **INDEPENDENT** |
+| DFMA  | 15.33| 0.81 | 15.48 ms| 15.33| 16.14| **INDEPENDENT** |
+| HMMA  | 0.45 | 0.81 | 1.08 ms | 0.81 | 1.26 | PARTIAL (40% overlap) |
+
+FFMA, MUFU, DFMA: per-SMSP units, fully orthogonal to MIO.
+HMMA (raw mma.sync): partially shares with MIO (~60% serialization).
+Test: `investigations/ninja_pipe_matrix.cu`, `ninja_hmma_raw.cu`.
+
+### mma.sync warp-count saturation (S1+S4 resolved)
+
+Per-SMSP tensor units exist (4 per SM). Each saturates at ~0.46 mma/cy with
+4+ warps per SMSP for pipeline fill. Peak BF16 = **2.26 PFLOPS = 90.5% of
+NVIDIA's 2.5 PF spec** at 16 warps/SM (4 per SMSP). Refutes prior "23% of
+spec" claim. Test: `investigations/ninja_mma_warp_sweep.cu`.
+
