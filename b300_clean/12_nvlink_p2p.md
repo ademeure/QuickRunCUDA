@@ -190,15 +190,31 @@ Within 1% across `Add / Min / Max / Xor / Or / And / Exch / CAS` for both LOCAL 
 
 ---
 
-## 8. CUDA IPC handles (HIGH for own latencies, MED for cross-process)
+## 8. CUDA IPC handles (HIGH — now includes cross-process)
 
 | Operation | µs/call |
 |---|---:|
-| `cudaIpcGetMemHandle` | **7.75** |
+| `cudaIpcGetMemHandle` (server, 100-trial avg) | **0.12** (warmed; first-call ≈ 7.7 us) |
 | `cudaIpcGetEventHandle` | **1.00** |
-| `cudaIpcOpenMemHandle` (same process) | **fails** ("invalid device context"; designed for cross-process only) |
+| `cudaIpcOpenMemHandle` (cross-process, single shot) | **56.18** |
+| First D2H 4B read after open (cold) | **39.5** |
+| Sustained D2H 4B (warm) | **9.25** us/op |
+| Cross-process atomic ping-pong (`atomicExch` + spin) | **4.4 us/round** = ~2.2 us/transition |
+| PCIe Gen 6 x16 BW (D2H 256 MB IPC) | **57.3 GB/s** (matches non-IPC) |
+| PCIe small-transfer floor (D2H ≤ 16 KB) | **9 us latency** |
 
-`cudaDevAttrIpcEventSupport = 1`. Standard pattern: server A does `IpcGetMemHandle` → 64-byte handle → serialize over pipe/socket → server B does `IpcOpenMemHandle(..., cudaIpcMemLazyEnablePeerAccess)`. Both processes then read/write shared device memory coherently. **Cross-process latency unmeasured** in this repo (would need 2-process harness).
+**Cross-process atomic latency** is **~13× slower** than intra-process atomic (164 ns).
+Likely cost: cross-context L2 coherence + TLB. **No PCIe involved** for atomics — both
+contexts share the same GPU's L2.
+
+Standard pattern: server A does `IpcGetMemHandle` → 64-byte handle → serialize over
+pipe/socket → server B does `IpcOpenMemHandle(..., cudaIpcMemLazyEnablePeerAccess)`.
+Both processes then read/write shared device memory coherently.
+
+`cudaDevAttrIpcEventSupport = 1`.
+
+(See `investigations/ipc_server.cu`, `investigations/ipc_client.cu`,
+ `investigations/ipc_pcie_bw.cu`)
 
 ---
 
@@ -294,7 +310,7 @@ Within 1% across `Add / Min / Max / Xor / Or / And / Exch / CAS` for both LOCAL 
 
 ## 14. Open / unresolved
 
-- **Cross-process IPC latency** (open + first read) — needs 2-process harness; not measured here.
+- ~~Cross-process IPC latency~~ → MEASURED (see §8 update below)
 - **3+ GPU NVLink behavior** — only 2-GPU system tested (NV18 between 2 B300; 8-way DGX/HGX would need different test).
 - **NVLink contention with PCIe traffic** (e.g., NIC RDMA) — `cudaDeviceFlushGPUDirectRDMAWrites` measured (25 ns ToOwner / 886 ns ToAllDevices) but not under load.
 - **NCCL with NVLink-SHARP** (in-network reductions) — version 2.29.3 may use SHARP automatically; not isolated.
