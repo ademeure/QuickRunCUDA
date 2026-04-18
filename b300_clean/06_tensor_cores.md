@@ -25,7 +25,7 @@ All numbers measured on sm_103a, single chip (148 SMs), MMA-only (no DRAM). Same
 | INT8 via tcgen05 | `tcgen05.mma kind::i8` | **NOT SUPPORTED on sm_103a** (gated to sm_100a/100f/110a/110f) | — | HIGH | — |
 | FP8 — mma.sync legacy | `mma.sync m16n8k32.kind::f8f6f4` | **276** (emulated: F2FP.UNPACK + HMMA, NOT native QMMA) | ~6% of native FP8 | MEDIUM (DCE-suspect — see retirement #1) | 1920 |
 | FP4 — mma.sync legacy | — | **REJECTED on sm_103a** (only sm_120a Geforce) | — | HIGH | — |
-| FP64 (DMMA) | `mma.sync.m16n8k4.f64.f64.f64.f64` | **~2 TFLOPS** (catalog calls "DMMA"; spec says 0.54 PFLOPS sparse / ~1 dense) | ~throttled, B300 deprecates HPC FP64 | MEDIUM | ~2032 |
+| FP64 (DMMA) | `mma.sync.m16n8k4.f64.f64.f64.f64` (SASS `DMMA.8x8x4`) | **1.05 TFLOPS** (REFUTED catalog "~2 TF") — same as DFMA, same as cuBLAS DGEMM | DMMA goes through the same FP64 pipe as DFMA; no parallel tensor path on B300 | HIGH | 2032 |
 | **FP64 cuBLAS DGEMM** | `cublasDgemm` (CUDA 13.2 / cuBLAS 13.4) | **1.05 TFLOPS** (87% of 1.20 DFMA spec) — ALL configs identical | **No FP64 tensor speedup** (commit `126e052`): GemmEx + COMPUTE_64F + TENSOR_OP also 1.05 TF; B300 FP64 tensor effectively dead | HIGH | 2032 |
 
 **Pattern**: Within `tcgen05.mma`, throughput is exactly proportional to K dimension. TF32:FP16:FP8:FP4 = 1 : 2 : 4 : 8 (K=8, 16, 32, 64). Identical 128 cy/MMA across all formats at M=128, N=256.
