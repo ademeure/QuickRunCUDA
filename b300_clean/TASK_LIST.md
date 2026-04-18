@@ -106,3 +106,8 @@ Free rein on:
 - [x] L1 cache BW measured: 38.3 TB/s (ILP>=4 saturates LSU at 1 LDG/2cy/SMSP). Refines catalog 30-46 TB/s claim. Beware DCE: non-safe version "showed" 3619 TB/s; commit `04e3dc1`
 - [x] MUFU.EX2 peak: 9622 Gops/s pure ex2.approx.ftz. Catalog "600 Gops/s" was 16x undercount (warp-inst confusion); commit `5f70214`
 - [x] Persistent vs per-launch axpy: 3.6x speedup from per-block L1 retention (24.7 vs 7.0 TB/s effective; same DRAM 7.04 TB/s); commit `e825808`
+- [x] mma.sync BF16 peak: 577 TFLOPS at 2032 MHz boost = 93.7% theoretical (catalog "611 extrap" was wrong, NVML showed 2032 throughout); commit `930a0cc`
+- [x] CUDA Graph launch floor: 512 ns single-stream, 227 ns 8-stream = 4.4M kernels/s aggregate (24x faster than direct dispatch); commit `9a346a7`
+- [x] SMEM atomic peak: 9603 / 9624 Gops/s = 99.78% of architectural ceiling. NVML 2032MHz confirmed; ncu 1 ATOMS/cy/SM exact; commits `15a9339` + `f5f5e61` (refined)
+- [x] Memory latency ladder REVISED: L1 20ns / L2 152ns / DRAM 409ns at 2GB. Earlier "DRAM 157ns" was bug (warm pass got flushed between launches); commits `aac9a93` (WRONG) + `7fd1fac` (FIX)
+- [x] TF32 mma.sync peak: 289.6 TFLOPS = 94% theoretical, MED conf -> HIGH (matches catalog 288 within 0.5%); commit `1c35f51`
