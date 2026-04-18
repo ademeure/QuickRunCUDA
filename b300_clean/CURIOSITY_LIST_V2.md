@@ -130,10 +130,30 @@ Split a large GEMM (e.g. 32K × 32K BF16) so half the matrix is on each
 GPU. Each does its half-row × full-col, communicates partial result
 via NVLink, accumulates. What's the speedup vs single-GPU?
 
-### A5. Verify the BF16 tcgen05 path via cuBLAS algo selection
-cuBLAS picks an algorithm via heuristic. Force it to specific algorithms
-(sweep via `cublasLtMatmulAlgoCheck`) and identify which IDs use tcgen05
-vs legacy mma.sync. Then we know what we're benchmarking.
+### A5. [x] PARTIAL — All BF16 algos at M=N=K=8192 use algoId=66; best 89% spec
+For BF16 GEMM 8192³, heuristic returns 8 algos all with algoId=66:
+   rank  tile  stages  ws_KB   waves   TFLOPS  % of 2.5 PF spec
+    0     23     35       0   13.84    2237    89%  ← heuristic pick (best)
+    1    513     35       0    6.92    2184    87%
+    2     24     35       0   13.84    1931    77%
+    3     32     35       0   18.59    2173    87%
+    4    447     35       0    6.92    2181    87%
+    5    201     35       0   20.32    2164    87%
+    6     31     35       0   18.59    1854    74%
+    7    587     35       0    6.92    1547    62%
+
+Single algoId family (66) = unified BF16 GEMM SASS path. Variations are tile
+size only. Heuristic picked best (tile 23 = 89% peak).
+
+To CONFIRM tcgen05 vs legacy mma.sync would need SASS extraction (hard with
+closed cuBLAS). Indirect indicator: cuBLAS hits 89% = same as direct mma.sync
+(S1), so could be EITHER path. Power test (S3) shows cuBLAS draws 940W vs
+legacy mma.sync 425W → cuBLAS uses tcgen05 (more power per FLOP).
+
+So: cuBLAS BF16 GEMM at ≥4096³ uses tcgen05 family (algoId=66), achieves ~89%
+of NVIDIA spec via tile=23. Heuristic is reliable.
+
+Investigated this session, commit `e43f754`.
 
 ## Tier B — Interesting curiosities
 
