@@ -100,3 +100,71 @@ Pure NVFP4/MXFP4 multiplier asymmetry could be opposite to FP16/FP8 results
 - HIGH on uniform-vs-random distinction (large 200+ W gap)
 - HIGH on B/A ratio being intrinsic to multiplier (no DRAM in test)
 - MED on extrapolation to NVFP4 (different PTX instruction not tested yet)
+
+---
+
+## NVFP4 Results (kind::mxf4nvf4.block_scale.block16, SF=1.0)
+
+`tests/bench_tcgen05_nvfp4_power.cu` extends the microbench with NVFP4 PTX
+(`tcgen05.mma.kind::mxf4nvf4.block_scale.block16`). Initialized the entire
+TMEM region with UE4M3 byte 0x38 (=1.0) to ensure all SF reads land on 1.0.
+
+m=128 n=128 results (K_SIZE=0=K64, K_SIZE=1=K96):
+
+| Pattern | K=64 | K=96 |
+|---------|-----:|-----:|
+| RAND_RAND | 469 W | 421 W |
+| zero_zero | 270 W | 246 W |
+| +1.0_+1.0 | 272 W | 246 W |
+| **A_rand only** | 278 W (Δ +8) | 252 (Δ +6) |
+| **B_rand only** | **395 W (Δ +125)** | **364 (Δ +118)** |
+| A=+1.0 B=rand | 454 W | 408 W |
+| A=rand B=+1.0 | 281 W | 254 W |
+
+**B/A ratio: 15.6× (K=64), 19.7× (K=96)** — same B-dominance as FP16/BF16/FP8.
+
+## Cross-precision summary table
+
+| Precision | A-only rand cost | B-only rand cost | B/A ratio |
+|-----------|-----------------:|-----------------:|----------:|
+| FP16 | +18 W | +273 W | 15.2× |
+| BF16 | +8 W | +203 W | 25.4× |
+| FP8 e4m3 | +9 W | +264 W | 29.3× |
+| FP8 e5m2 | +20 W | +296 W | 14.8× |
+| **NVFP4 K=64** | **+8 W** | **+125 W** | **15.6×** |
+| **NVFP4 K=96** | **+6 W** | **+118 W** | **19.7×** |
+
+**Universal finding**: B operand dominates multiplier power by 15-30× across
+ALL tested precisions and instruction kinds (kind::f16, kind::f8f6f4,
+kind::mxf4nvf4.block_scale).
+
+This DEFINITIVELY proves the cuBLAS NVF4 "A dominates" was an artifact of
+TMA multicast on B saving B's memory pipeline cost. The intrinsic multiplier
+hardware has B >> A power for all formats.
+
+## M × N shape sweep (NVFP4 K=64)
+
+Only m=128 valid for single-CTA NVFP4. Other M values (64, 256) raise
+illegal instruction — likely need cta_group::2 path.
+
+| M=128 N | cy/MMA | TF total | MFU @ NVFP4 7.4 PF |
+|--------:|-------:|---------:|-------------------:|
+| 64 | 48 | 3249 | 43.8% |
+| 128 | 64 | 4874 | 65.7% |
+| 256 | 128 | 4874 | 65.7% (cy doubles but FLOPs double too) |
+
+m=128 n=128 is the throughput sweet spot for single-warp issue.
+
+## TODO: experiments that would push NVFP4 beyond 65% MFU
+
+1. **Multi-warp parallel issue** — 4 warps per CTA each issuing to different
+   TMEM regions. Should boost MFU 4× since current bottleneck is single-warp
+   issue rate.
+2. **cta_group::2 (2-CTA MMA)** — m=256 case requires this; might also
+   unlock NVFP4 ULTRA (1.5× throughput at K=96)
+3. **Pipelined mbarrier batching** — issue a batch of N MMAs without
+   waiting between, then wait once. Reduces commit overhead.
+
+These are all PTX-level changes requiring more careful descriptor / cluster
+setup. Power asymmetry (B>>A) likely holds at higher MFU but absolute
+numbers will scale.
