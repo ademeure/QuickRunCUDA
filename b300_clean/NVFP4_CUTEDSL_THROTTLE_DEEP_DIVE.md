@@ -354,3 +354,73 @@ For PRODUCTION code, neither matches cuBLAS catalog 10.8 PF — both are stuck
 in the 5-7 PF range at 1005 MHz, which extrapolates to 10-14 PF at boost
 WITHOUT throttling.
 
+
+---
+
+## Comprehensive 3-impl × 4-shape × 2-clock comparison (ZERO data, throttle-verified)
+
+All runs: data = zero (cudaMemset 0x00 for cuBLAS / CUTLASS, TensorFill(0) for
+CUTLASS C++ 89, TensorInitType.SCALAR(0) for CuTeDSL). Sustained 200-5000 iters
+per shape. Fine-grain 50ms power+clock sampling confirmed:
+- BOOST: 2032 MHz held throughout, no throttle, peaks 815W (cuBLAS 16K³),
+  788W (CuTeDSL), 501W (CUTLASS 89) — all under 1100 W TDP
+- 510 MHz: 510 MHz held, 144-192 W, no throttle
+
+### Boost zero-data table (TFLOPS):
+
+| Shape | CuTeDSL(2,1) | CuTeDSL(2,4) | CUTLASS 1SM | CUTLASS 2SM | cuBLAS | Best | MFU/15PF |
+|-------|-------------:|-------------:|------------:|------------:|-------:|-----:|---------:|
+| 8K² K=15K | 8618 | 7744 | 6056 | 8219 | **9987** | cuBLAS | 66.6% |
+| 16K³ | 5945 | 7851 | 4776 | 5733 | **9770** | cuBLAS | 65.1% |
+| 8K³ | 9118 | 7661 | 6387 | 8285 | **9377** | cuBLAS | 62.5% |
+| 4K³ | **6041** | 5164 | 3944 | 4474 | 5157 | CuTeDSL(2,1) | 40.3% |
+
+### -lgc 510 MHz zero-data table (TFLOPS):
+
+| Shape | CuTeDSL(2,1) | CuTeDSL(2,4) | CUTLASS 1SM | CUTLASS 2SM | cuBLAS | Best | MFU/spec@510 |
+|-------|-------------:|-------------:|------------:|------------:|-------:|-----:|-------------:|
+| 8K² K=15K | **3244** | 2563 | 1952 | 2855 | 3115 | CuTeDSL(2,1) | **86.1%** |
+| 16K³ | 3215 | 2638 | 1935 | 2893 | 3203 | CuTeDSL(2,1) | 85.4% |
+| 8K³ | **2870** | 2316 | 1806 | 2345 | 2706 | CuTeDSL(2,1) | 76.2% |
+| 4K³ | **1802** | 1492 | 1091 | 1294 | 1443 | CuTeDSL(2,1) | 47.8% |
+
+### MFU climb at low clock (boost vs 510, same impl/shape):
+
+For best-of-row at each clock:
+- 8K² K=15K: boost cuBLAS 66.6% → 510 CuTeDSL 86.1% (Δ 19.5pp)
+- 16K³: boost 65.1% → 510 85.4% (Δ 20.3pp)
+- 8K³: boost 62.5% → 510 76.2% (Δ 13.7pp)
+- 4K³: boost 40.3% → 510 47.8% (Δ 7.5pp)
+
+**With zero data + no throttle**, MFU still climbs 8-20pp from boost to 510 MHz.
+This rules out TDP throttle as the cause of the MFU-vs-clock effect documented
+earlier. Real cause must be a **non-clock-scaled wall-time overhead** in the
+mma pipeline:
+- TMA fill latency (sized in HBM cycles at 3996 MHz, independent of SM clock)
+- mbarrier coordination latency (NoC traversal, ~constant ns)
+- cluster-broadcast handshake (DSMEM mesh hop)
+
+At 2032 MHz, SM cycle = 0.49 ns. At 510 MHz, SM cycle = 1.96 ns. A fixed 100ns
+TMA stall = 204 SM cycles at boost vs 51 at 510. So the same wall-time stall
+is 4× more SM cycles at boost — exactly matching the 4× clock ratio.
+
+### Cross-impl rank changes by clock
+
+- **At boost**: cuBLAS dominates (3 of 4 shapes); CuTeDSL (2,1) wins only at 4K³ (small problem fits in fewer clusters)
+- **At 510 MHz**: CuTeDSL (2,1) dominates (4 of 4 shapes); cuBLAS drops to #2
+- **CUTLASS C++ 89**: consistently 15-30% behind cuBLAS at both clocks
+
+The crossover happens because cuBLAS's nvjet kernel uses tighter memory
+pipelining that needs high clock to keep utcmma fed. CuTeDSL's persistent kernel
+design with fewer SMs per cluster pays less in coordination overhead.
+
+### TF/W efficiency
+
+cuBLAS at boost zero data 8K² K=15K: 9987 TF / 815 W = **12.25 TF/W**.
+This matches catalog cuBLAS NVF4 11.5 TF/W within 6%. Confirms catalog
+number is reproducible WITH zero data (avoiding TDP throttle).
+
+For random data (catalog FP4 ratio quoted at ~5-12 TF/W), expect TDP throttle
+will reduce both TFLOPS and TF/W — random-data sustained boost should yield
+~7000 TF / 1095 W = 6.4 TF/W (matches my earlier CuTeDSL random measurement).
+
