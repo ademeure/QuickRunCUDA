@@ -75,3 +75,70 @@ clearly distinct from neighbor bits 13/15 at ~575/549W).
 - MED on the denorm-handling explanation for bit 14 (plausible but unverified)
 - MED on the super-additive single-bit sum (need force-multiple-bits test
   to verify combined behavior)
+
+---
+
+## A-operand per-bit decomposition (carefully replicating methodology)
+
+Same kernel extended to support A-bit forcing. B always random while one
+A bit forced to 0. 50M iters @ 1005 MHz.
+
+| Bit | Field | A_Δ | B_Δ (from above) | A:B ratio |
+|-----|-------|----:|-----------------:|----------:|
+| 0 | mant LSB | −9 | −7 | 1.29 |
+| 1 | mant | −9 | −11 | 0.82 |
+| 2 | mant | −18 | −20 | 0.90 |
+| 3 | mant | −15 | −35 | 0.43 |
+| 4 | mant | −15 | −22 | 0.68 |
+| 5 | mant | −13 | −15 | 0.87 |
+| 6 | mant MSB | −12 | −26 | 0.46 |
+| 7 | exp LSB | −10 | −31 | 0.32 |
+| 8 | exp | −11 | −36 | 0.31 |
+| 9 | exp | −10 | −31 | 0.32 |
+| 10 | exp | −13 | −29 | 0.45 |
+| 11 | exp | −13 | −29 | 0.45 |
+| 12 | exp | −9 | −26 | 0.35 |
+| 13 | exp | −5 | −32 | 0.16 |
+| **14** | **exp MSB** | **+4 (!)** | −13 | n/a (worse) |
+| **15** | **SIGN** | **−10** | **−56** | **0.18** |
+
+## Key per-operand power asymmetry
+
+1. **Sign bit asymmetry is DRAMATIC**: A sign saves only -10W, B sign saves -56W (5.6× ratio)
+2. **Exp bits 7-13: A averages -10W, B averages -31W** (~0.3× ratio)
+3. **Mantissa bits more similar**: A averages -13W, B averages -19W (0.7× ratio)
+4. **Bit 14 (exp MSB) anomaly is PRONOUNCED for A**: +4W (worse than baseline!) vs B's -13W
+
+## Super-additivity comparison
+
+| Operand | Sum of singles | Actual full-zero | Super-additive ratio |
+|---------|---------------:|-----------------:|---------------------:|
+| A | 168 W | ~10 W | **17×** (extreme overlap) |
+| B | 426 W | ~250 W | 1.7× (more independent) |
+
+## Mechanism: shared A pipe vs distributed B MACs
+
+The asymmetry mechanistically arises from the multiplier datapath structure:
+- **A operand**: shared/broadcast across 32 MAC units per cycle. Forcing
+  any A bit reduces switching in the (common) A register pipeline. Multiple
+  bit-forces overlap massively because they suppress the SAME shared state.
+- **B operand**: distributed — each MAC unit has its own B input register.
+  Forcing a B bit reduces switching in 32 parallel registers per cycle.
+  Different bit-forces affect partially-independent registers, so additivity
+  is closer to linear.
+
+This explains the previously-observed pattern where:
+- All-A-zero saves ~10W (single shared A pipe state goes static)
+- All-B-zero saves ~250W (32 parallel B-MAC states each save ~7W)
+
+The B operand is essentially "32 small multipliers", each contributing
+independently. The A operand is a "single broadcast signal" with one shared
+register stage that affects all MACs together.
+
+## Confidence
+
+- HIGH on A vs B sign-bit asymmetry being structural (sign Δ ratio 0.18×)
+- HIGH on A super-additivity ratio (17× implies massive shared-pipe state)
+- HIGH on bit-14 anomaly for both operands (replicated)
+- MED on the "broadcast vs distributed" mechanism explanation (consistent
+  with other observations but not directly verified via SASS/ncu)

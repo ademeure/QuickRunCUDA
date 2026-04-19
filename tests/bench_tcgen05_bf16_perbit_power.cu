@@ -1,9 +1,11 @@
 // BF16 per-bit decomposition: force ONE bit position constant, others random.
 // BF16 layout: bit 15=sign, bits 14:7=exp[7:0], bits 6:0=mant[6:0].
-// Mode = 0..15 selects which bit to force (constant 0).
-// Mode = 100 + i: force bit i constant 1.
-// Mode = 200: random (baseline).
-// Mode = 300: all-zero baseline.
+// Mode = 0..15 selects which B bit to force (constant 0).
+// Mode = 100 + i: force B bit i constant 1.
+// Mode = 200: B random (baseline).
+// Mode = 300: B all-zero.
+// Mode = 400 + i: force A bit i to 0 (B always random)
+// Mode = 500 + i: force A bit i to 1 (B always random)
 //
 // VERIFICATION: at startup, thread 0 of block 0 prints first 4 BF16 values
 // of B (hex + decoded sign/exp/mant) so we can sanity-check encoding.
@@ -22,10 +24,24 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
     __shared__ __align__(8)    unsigned long long mbar;
     __shared__ __align__(4)    unsigned tmem_slot;
 
+    // A pattern: random bytes, then force one bit position if mode 400+
     if (threadIdx.x < 32) {
         for (int i = 0; i < 64; i++) {
             unsigned idx = threadIdx.x + i*32;
-            smem_A[idx] = 0xDEADBEEFu ^ idx * 0xCAFEBABEu;
+            unsigned r_a = 0xDEADBEEFu ^ idx * 0xCAFEBABEu;
+            unsigned w_a;
+            if (mode >= 400 && mode <= 415) {
+                int b = mode - 400;
+                unsigned bm = (1u << b) | (1u << (b + 16));
+                w_a = r_a & ~bm;  // force A bit b to 0
+            } else if (mode >= 500 && mode <= 515) {
+                int b = mode - 500;
+                unsigned bm = (1u << b) | (1u << (b + 16));
+                w_a = (r_a & ~bm) | bm;  // force A bit b to 1
+            } else {
+                w_a = r_a;
+            }
+            smem_A[idx] = w_a;
         }
     }
 
@@ -39,15 +55,14 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
             } else if (mode == 300) {
                 w = 0;  // all zero
             } else if (mode >= 0 && mode <= 15) {
-                // Force bit `mode` to 0 (in each BF16, both halves of word)
                 unsigned bit_mask = (1u << mode) | (1u << (mode + 16));
                 w = r & ~bit_mask;
             } else if (mode >= 100 && mode <= 115) {
-                // Force bit (mode-100) to 1
                 int b = mode - 100;
                 unsigned bit_mask = (1u << b) | (1u << (b + 16));
                 w = (r & ~bit_mask) | bit_mask;
             } else {
+                // For mode >= 400 (A bit forcing), B is random
                 w = r;
             }
             smem_B[idx] = w;
