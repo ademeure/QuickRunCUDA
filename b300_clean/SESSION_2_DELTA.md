@@ -516,3 +516,26 @@ So the MIO architecture (STS/LDS/SHFL/ATOMS share per-SM port) is REAL
 and the original measurements from commit `c09c661` STAND.
 
 Confidence: HIGH (strict re-test matches prior measurement to <2%)
+
+## ncu confirms mma.sync ceiling is HARDWARE (not measurement)
+
+For the corrected strict-DCE BF16 mma.sync kernel (4 chains, 16 warps/SM):
+
+   sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active: **99.22%**
+   smsp__inst_executed_pipe_tensor.sum: 30.3M (matches kernel work)
+   gpc__cycles_elapsed.max: 419,703 cycles (= 207us @ 2.032 GHz, matches wall-clock)
+
+The legacy tensor pipe is 99.22% ACTIVE but completes 0.94 mma per active cycle.
+Each HMMA takes ~1.06 cycles to retire → architecturally capped, not bug.
+
+This makes the corrected mma.sync = 580 TF (94% legacy, 23% tcgen05-spec)
+finding HIGH-confidence:
+- Wall-clock measurement (0.207 ms)
+- ncu pipe_tensor 99.22% active
+- ncu inst count matches kernel expectation
+- SASS HMMA count (1280) matches expected work
+
+Three convergent sources confirm the architectural ceiling.
+
+The 4× gap to tcgen05 is REAL hardware, not measurement methodology.
+B300's tcgen05 pipe is ~4× faster per cycle than legacy mma.sync.
