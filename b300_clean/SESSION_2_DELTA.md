@@ -381,3 +381,38 @@ The cuBLAS 940W remains the path to TGP, and is even MORE clearly memory-+-
 tcgen05-bound. Legacy mma.sync = small power footprint AND small compute.
 
 Confidence: HIGH (strict anti-DCE confirmed; power sampled 200ms over 5s+ run)
+
+## DCE audit — which prior measurements survive?
+
+After S1 retraction, audited each chain-based measurement for DCE susceptibility:
+
+|   Op  | Original output guard | Strict re-test | Verdict |
+|-------|-----------------------|----------------|---------|
+| BF16 mma.sync | `c0[0]==0xDEAD && N<0` | 578 TF (was 2270) | ❌ DCE'd 4× |
+| TF32 mma.sync | similar single-output | 289 TF (was 289) | ✓ OK |
+| FFMA scalar 8-chain | `(a0+...+a7)==0 && N<0` | 70 TF (was 70) | ✓ OK |
+| HMMA power | (impossible-cond) | 255W (was 405W) | ❌ DCE'd 1.6× |
+| INT8 mma.sync | always-write | 37 TOPS | ✓ OK |
+| HBM read/write | always-write XOR | 720W | ✓ OK |
+| cuBLAS perf | external library | 2237 TF | ✓ OK |
+
+**Pattern**: if the output guard only references ONE chain's first element
+(like `c0[0]`), compiler aliases other chains. When the guard sums ALL
+chains' outputs (FFMA's `(a0+...+a7)==0`), all chains stay alive.
+
+DCE-affected (need correction):
+- BF16 mma.sync: 23% spec (not 90%)
+- HMMA power: 255W (not 405W)
+- Pipe matrix HMMA+STS combo: re-verify needed (used same pattern)
+- A1 FlashAttention (uses cuBLAS): unaffected
+
+DCE-safe:
+- TF32 mma.sync: 289 TF (catalog match holds)
+- FFMA: 70 TF = 91% spec
+- All HBM measurements (always-write XOR pattern)
+- All cuBLAS measurements (external)
+- INT8 mma.sync (always-write)
+
+LESSON: prefer `out[idx] = (sum of all accumulators)` over `if (cond) out[idx] = c0[0]`
+for anti-DCE. The latter only protects c0; compiler may alias c1, c2, ... .
+
