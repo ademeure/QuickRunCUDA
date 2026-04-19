@@ -357,3 +357,27 @@ CASCADING UPDATES NEEDED:
 
 Commit: `14bf71f`. Confidence: HIGH (SASS counts + strict-DCE
 test give convergent evidence for the retraction).
+
+## S3 power CASCADING UPDATE: HMMA actual = 255W (was 405W DCE'd)
+
+Re-tested HMMA sustained power with strict anti-DCE kernel (8 warps/SM, real
+work confirmed via S4 strict re-test = 580 TF actual).
+
+Sustained NVML power: **255 W** (vs prior S3 claim of 405W with DCE'd kernel)
+
+Updated power decomposition:
+   Idle:                              200 W
+   Pure FFMA (8 chains):              435 W (+235 W) [prior, FFMA chains likely OK]
+   **Strict HMMA 8 warps/SM (580 TF)**: **255 W (+55 W ΔTENSOR)** ← corrected
+   Pure HBM read (720 W):              720 W (+520 W ΔMEM) [unaffected]
+   cuBLAS via cudaGraph (940 W):       940 W (+740 W = TGP) [unaffected]
+
+Implications:
+- HBM dominates compute even MORE than previously thought (520W vs 55W ΔTENSOR)
+- Compute pipes (FP32 ALU, tensor) draw modest power; memory + tcgen05 the killers
+- The "+205W tensor" entry in D4 power table needs revision to "+55W"
+
+The cuBLAS 940W remains the path to TGP, and is even MORE clearly memory-+-
+tcgen05-bound. Legacy mma.sync = small power footprint AND small compute.
+
+Confidence: HIGH (strict anti-DCE confirmed; power sampled 200ms over 5s+ run)
