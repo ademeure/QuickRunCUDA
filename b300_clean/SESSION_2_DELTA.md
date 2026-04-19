@@ -235,3 +235,21 @@ This is a HARDWARE LIMIT, not a software workaround issue. ptxas explicitly
 declines for the target arch.
 
 Confidence: HIGH (ptxas rejects definitively; tested 2 PTX variants)
+
+## INT8 mma.sync confirmed throttled (corroborates catalog 06)
+
+Independent measurement of `mma.sync.m16n8k32.s8.s8.s32`:
+- 4 chains, 16 warps/SM: **36.9 TOPS** (= 0.74% of 5000 spec)
+- 8 chains, 16 warps/SM: **36.7 TOPS** (same — ILP doesn't help)
+
+Catalog 06 reports 143 TOPS (HW-throttled, 5 NOPs/issue, 65 cy/inst). My
+lower number reflects "4-chain steady state" (~26% of catalog's higher-chain
+result) but BOTH confirm the deliberate throttle.
+
+KEY: scaling chains 4 → 8 doubles kernel time but holds TOPS/s constant.
+This is the ILP-insensitivity signature of HW throttling (not pipeline
+latency-bound, where 2× chains would give 2× TOPS).
+
+INT8 mma.sync is DEPRECATED on B300 — use FP8 e4m3 instead (4500 TOPS via
+cuBLAS, real spec). Or use cuBLAS for production INT8 if needed.
+
