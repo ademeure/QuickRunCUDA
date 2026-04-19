@@ -539,3 +539,28 @@ Three convergent sources confirm the architectural ceiling.
 
 The 4× gap to tcgen05 is REAL hardware, not measurement methodology.
 B300's tcgen05 pipe is ~4× faster per cycle than legacy mma.sync.
+
+## Correction: 16+ warps/SM regression is NOT register spill (ncu disproves)
+
+ncu measured at 32 warps/SM:
+   launch__registers_per_thread: 38
+   smsp__inst_executed_op_local_ld.sum: **0**
+   smsp__inst_executed_op_local_st.sum: **0**
+   sm__pipe_tensor_cycles_active: 99.99%
+   smsp__warps_active: 43.30% (only ~half of warps issue per cycle)
+
+NO spill traffic. SASS HMMA count identical (1280) across all warp counts.
+The compiler isn't doing anything different — it's a runtime scheduling issue.
+
+So the "16+ warps/SM regression" claim's RF-spill reason was WRONG.
+Actual cause: pipe_tensor "active" includes stall cycles. Per-cycle MMA
+retirement drops from 0.467 mma/cy (4 warps) to 0.258 mma/cy (16+ warps).
+
+Likely culprits (need further test to nail down):
+1. Operand fetch back-pressure — too many warps competing for RF read ports
+2. Warp scheduling overhead with high occupancy  
+3. Context-switch cost between SMSPs at >1 warp per SMSP
+
+Practical guidance UNCHANGED: 4-8 warps/SM gives ~580 TF peak; >16 reduces
+throughput. But the MECHANISM is operand-fetch-bound, not RF-spill.
+
