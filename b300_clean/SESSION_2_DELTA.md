@@ -619,3 +619,29 @@ UPDATED practical guidance:
 - Avoid 32 warps/SM × 4 chains for direct mma.sync (4× wall-clock loss)
 - Mechanism unresolved; needs deeper investigation (later session)
 
+
+## 32×4 mechanism still unclear — teardown writes ruled out
+
+Tested: replace per-thread write with 1 write per block (via SMEM reduction).
+Result:
+   V1 per-thread write:    9.375 ms (159 TF)
+   V2 1 write per block:   9.385 ms (159 TF)
+
+ZERO difference. So per-thread output writes are NOT the cause.
+
+ncu still shows pipe_tensor 99% active for only 2.42 ms of 9.37 ms wall-clock.
+The remaining ~7 ms is something else entirely.
+
+Hypotheses (need future investigation):
+- ncu's gpc__cycles_elapsed metric may not capture the full kernel span
+- Some pre-compute warmup/scheduling cost only at max occupancy
+- Kernel launch dispatcher serializing 32-warp blocks differently
+- Block-resident state setup (RF init for 1024 threads)
+
+The empirical guidance is solid: AVOID 32 warps × 4 chains. But mechanism
+unresolved. Might just be an ncu measurement artifact giving misleading
+"99% pipe_tensor active" while wall-clock truth is the real metric.
+
+Confidence: HIGH for "32×4 IS slow" + "teardown writes NOT the cause"
+            UNRESOLVED for actual mechanism
+
