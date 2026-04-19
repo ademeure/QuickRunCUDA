@@ -590,3 +590,32 @@ UPDATED practical guidance for direct mma.sync:
 - 4-16 warps/SM × any chains: ~580 TF peak achievable
 - 32 warps/SM × ≤2 chains: also ~580 TF
 - 32 warps/SM × 4 chains: AVOID — 4× regression
+
+## 32×4 anomaly: wall-clock vs ncu disagree 4×
+
+Strange data on the k<1024, 4> regression case:
+   Wall-clock per launch: 9.374 ms (cudaEventElapsedTime)
+   ncu gpc__cycles_elapsed: 4,924,479 cy = 2.42 ms
+
+These DISAGREE by 4×. ncu shows pipe_tensor 99% active for 2.42 ms;
+wall-clock measures 9.37 ms total. So the kernel takes 9.37 ms wall but
+only does compute for 2.42 ms?
+
+ncu inst counts confirm only ~363M HMMAs executed (matches expected if
+pipe at 0.5 mma/cy × 4.9M cy × 148 SMs).
+
+Possible explanation: ncu's `gpc__cycles_elapsed` may capture only the
+"pipe-active" wall-clock window, not the full launch span including
+idle/sync periods.
+
+OR: kernel has long teardown (152K STG.E.32 writes + cleanup) not
+captured by ncu's tensor-active counters.
+
+Either way, the EFFECTIVE TFLOPS (159) is the wall-clock truth. ncu's
+99% pipe_tensor active is misleading for this configuration — pipe is
+intensely active for short bursts, then long idle.
+
+UPDATED practical guidance:
+- Avoid 32 warps/SM × 4 chains for direct mma.sync (4× wall-clock loss)
+- Mechanism unresolved; needs deeper investigation (later session)
+
