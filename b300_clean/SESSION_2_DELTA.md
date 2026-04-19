@@ -253,3 +253,34 @@ latency-bound, where 2× chains would give 2× TOPS).
 INT8 mma.sync is DEPRECATED on B300 — use FP8 e4m3 instead (4500 TOPS via
 cuBLAS, real spec). Or use cuBLAS for production INT8 if needed.
 
+
+## FP8 mma.sync measurement is UNRELIABLE — SASS ambiguity (NEW)
+
+Tried multiple variants of `mma.sync.m16n8k32.f32.e4m3.e4m3.f32`:
+- "Naive" (zero-init c): SASS shows only 16-22 HMMAs total (DCE)
+- Non-constant a/b inputs: still 22 HMMAs (compiler still folds)
+- Reports 7500-8200 TFLOPS = 150-165% of 5000 spec → IMPOSSIBLE
+
+KEY DIAGNOSIS via SASS inspection:
+   `HMMA.16816.F32 R28, R28, R4, RZ` — this is m=16,n=8,k=**16** (BF16 form)
+   NOT the m=16,n=8,k=32 FP8 form I requested in PTX!
+
+ptxas appears to silently map `mma.sync.m16n8k32.e4m3` to the same SASS
+opcode as BF16 m16n8k16 (same byte-rate per row: 32B). Whether the hardware
+internally interprets as FP8 or BF16 is unclear from SASS alone.
+
+CONCLUSION: legacy mma.sync FP8 path is fundamentally hard to measure
+reliably from PTX. The compiler folds aggressively AND the SASS encoding
+overlaps with BF16. Cannot trust direct-PTX FP8 numbers.
+
+PRACTICAL: For FP8 perf on B300, use cuBLAS exclusively (algoId=66 family,
+hits 4500 TF = 90% of 5000 spec per prior session). Direct PTX FP8 is a
+debugging quagmire.
+
+This is consistent with the FP4 finding: high-density precisions (FP8/FP4)
+are gated to tcgen05 / cuBLAS paths on B300; legacy mma.sync is for
+BF16/FP16/TF32.
+
+Confidence: HIGH for "SASS shows HMMA.16816 not 16832" diagnosis
+            HIGH for "use cuBLAS, not direct PTX" recommendation
+
