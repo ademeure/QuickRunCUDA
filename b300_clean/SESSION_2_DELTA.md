@@ -416,3 +416,37 @@ DCE-safe:
 LESSON: prefer `out[idx] = (sum of all accumulators)` over `if (cond) out[idx] = c0[0]`
 for anti-DCE. The latter only protects c0; compiler may alias c1, c2, ... .
 
+
+## Reconciliation with catalog 06 — both are right (different reference)
+
+Discovered after the retraction: **catalog 06_tensor_cores.md already has
+the correct mma.sync number** — 577 TF at 2032 MHz boost. Matches my new
+strict-DCE measurement of 578 TF EXACTLY.
+
+But catalog frames it as **93.7% of 616 TF LEGACY theoretical**, while
+CURIOSITY S1 framed it as **23% of 2500 TF tcgen05 spec**. Both are right!
+
+   577 TF measured ÷ 616 LEGACY mma.sync theoretical = 93.7% (catalog)
+   577 TF measured ÷ 2500 tcgen05 NVIDIA spec       = 23.1% (CURIOSITY)
+
+The 4× ratio (2500 vs 616) is the **hardware-architectural gap** between
+tcgen05 and legacy mma.sync pipes on B300. Both pipes saturate well at
+their respective ceilings.
+
+So the corrected picture:
+- legacy mma.sync pipe: caps at ~616 TF theoretical, achieves 93.7%
+- tcgen05 pipe: caps at 2500 TF theoretical, achieves 89-90% via cuBLAS
+- 4× hardware gap between them is THE architectural rationale for tcgen05
+
+My S1 "RESOLVED" finding was wrong because it claimed mma.sync hits
+2500-spec (which is tcgen05's spec). Catalog 06 was right all along —
+mma.sync hits its OWN spec (616) just fine.
+
+PRACTICAL takeaway for D4 / production:
+- BF16 inference on B300: USE cuBLAS (algoId=66 = tcgen05) for full 2500 TF
+- Direct mma.sync legacy is fine for custom kernels but caps at 616 TF
+- Don't mistake the two pipes' specs
+
+LESSON: when "refuting" a catalog number, check what reference the catalog
+is using BEFORE concluding it's wrong. The 23% claim and the 93.7% claim
+are the same physical measurement, just framed against different pipes.
