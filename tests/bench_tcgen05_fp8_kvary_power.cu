@@ -101,6 +101,72 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 int k = idx / 32;
                 unsigned char v = fp8_val(k % K_unique);
                 w = v | (v << 8) | (v << 16) | (v << 24);
+            } else if (mode >= 2700 && mode <= 2707) {
+                // PURE N-vary HIGH-ENTROPY (FP8 e4m3): N_unique = 1<<(mode-2700)
+                // K constant per row. FP8: 4 N per word, 32 word_packs across N=128.
+                int N_unique = 1 << (mode - 2700);
+                int n_pack = idx % 32;
+                int n_base = n_pack * 4;
+                auto h = [](int nn) -> unsigned char {
+                    unsigned hh = 0xC0FFEE13u ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    unsigned char v = (unsigned char)(hh & 0xFF);
+                    // Avoid Inf/NaN (exp=15) and subnormal (exp=0): exp bits 6:3
+                    unsigned char e = (v >> 3) & 0x0F;
+                    if (e == 0) e = 1;
+                    if (e == 15) e = 14;
+                    return (v & 0x87) | (e << 3);
+                };
+                unsigned char b0 = h((n_base + 0) % N_unique);
+                unsigned char b1 = h((n_base + 1) % N_unique);
+                unsigned char b2 = h((n_base + 2) % N_unique);
+                unsigned char b3 = h((n_base + 3) % N_unique);
+                w = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+            } else if (mode >= 2750 && mode <= 2799) {
+                // FINE FP8 N-vary: N_unique = mode-2750
+                int N_unique = mode - 2750;
+                if (N_unique < 1) N_unique = 1;
+                int n_pack = idx % 32;
+                int n_base = n_pack * 4;
+                auto h = [](int nn) -> unsigned char {
+                    unsigned hh = 0xC0FFEE13u ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    unsigned char v = (unsigned char)(hh & 0xFF);
+                    unsigned char e = (v >> 3) & 0x0F;
+                    if (e == 0) e = 1;
+                    if (e == 15) e = 14;
+                    return (v & 0x87) | (e << 3);
+                };
+                unsigned char b0 = h((n_base + 0) % N_unique);
+                unsigned char b1 = h((n_base + 1) % N_unique);
+                unsigned char b2 = h((n_base + 2) % N_unique);
+                unsigned char b3 = h((n_base + 3) % N_unique);
+                w = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+            } else if (mode >= 2900 && mode <= 2908) {
+                // SUB-TILE DEDUP TEST for FP8: 8 sub-tiles of 16 N each.
+                // FP8: each sub-tile = 4 word_packs (16 N values, 4 per word).
+                int K_break = mode - 2900;
+                int n_pack = idx % 32;
+                int sub_tile = n_pack / 4;       // 0..7 (each = 4 word_packs = 16 N)
+                int pos_in_tile = n_pack % 4;    // 0..3 (each = 4 N values)
+                int pattern_id = (sub_tile < (8 - K_break)) ? 0 : sub_tile;
+                auto h = [](int nn) -> unsigned char {
+                    unsigned hh = 0xC0FFEE13u ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    unsigned char v = (unsigned char)(hh & 0xFF);
+                    unsigned char e = (v >> 3) & 0x0F;
+                    if (e == 0) e = 1;
+                    if (e == 15) e = 14;
+                    return (v & 0x87) | (e << 3);
+                };
+                unsigned char b0 = h(pos_in_tile * 4 + 0 + pattern_id * 100);
+                unsigned char b1 = h(pos_in_tile * 4 + 1 + pattern_id * 100);
+                unsigned char b2 = h(pos_in_tile * 4 + 2 + pattern_id * 100);
+                unsigned char b3 = h(pos_in_tile * 4 + 3 + pattern_id * 100);
+                w = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
             } else {
                 w = r;
             }

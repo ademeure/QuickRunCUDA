@@ -94,6 +94,60 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 unsigned char nib = fp4_nib(k & (K_unique - 1));
                 unsigned char b = (nib << 4) | nib;  // both nibbles same in byte
                 w = b | (b<<8) | (b<<16) | (b<<24);
+            } else if (mode >= 2700 && mode <= 2710) {
+                // PURE N-vary HIGH-ENTROPY (NVFP4): N_unique = 1<<(mode-2700) = 1..1024
+                // K constant per row. NVFP4: 8 FP4 per word, 16 word_packs across N=128.
+                int N_unique = 1 << (mode - 2700);
+                int n_pack = idx % 16;
+                w = 0;
+                auto h = [](int nn) -> unsigned char {
+                    unsigned hh = 0xC0FFEE13u ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    return (unsigned char)((hh & 0x07) | ((hh >> 4) & 0x08));  // any FP4 (0..15)
+                };
+                for (int p = 0; p < 8; p++) {
+                    int n_pos = n_pack * 8 + p;
+                    unsigned char nib = h(n_pos % N_unique);
+                    w |= ((unsigned)(nib & 0x0F)) << (4*p);
+                }
+            } else if (mode >= 2750 && mode <= 2799) {
+                // FINE NVFP4 N-vary: N_unique = mode-2750 (1..49)
+                int N_unique = mode - 2750;
+                if (N_unique < 1) N_unique = 1;
+                int n_pack = idx % 16;
+                w = 0;
+                auto h = [](int nn) -> unsigned char {
+                    unsigned hh = 0xC0FFEE13u ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    return (unsigned char)((hh & 0x07) | ((hh >> 4) & 0x08));
+                };
+                for (int p = 0; p < 8; p++) {
+                    int n_pos = n_pack * 8 + p;
+                    unsigned char nib = h(n_pos % N_unique);
+                    w |= ((unsigned)(nib & 0x0F)) << (4*p);
+                }
+            } else if (mode >= 2900 && mode <= 2908) {
+                // SUB-TILE BREAKING for NVFP4: 8 sub-tiles of 16 N each (= 2 word_packs each).
+                // K_break unique sub-tiles, others share pattern 0
+                int K_break = mode - 2900;
+                int n_pack = idx % 16;
+                int sub_tile = n_pack / 2;       // 8 sub-tiles, each = 2 word_packs (16 N values)
+                int pos_in_tile = n_pack % 2;
+                int pattern_id = (sub_tile < (8 - K_break)) ? 0 : sub_tile;
+                w = 0;
+                auto h = [](int nn) -> unsigned char {
+                    unsigned hh = 0xC0FFEE13u ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    return (unsigned char)((hh & 0x07) | ((hh >> 4) & 0x08));
+                };
+                for (int p = 0; p < 8; p++) {
+                    int n_in_tile = pos_in_tile * 8 + p;
+                    unsigned char nib = h(n_in_tile + pattern_id * 100);
+                    w |= ((unsigned)(nib & 0x0F)) << (4*p);
+                }
             } else {
                 w = r;
             }
