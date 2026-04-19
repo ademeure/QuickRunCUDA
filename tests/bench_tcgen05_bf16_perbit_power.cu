@@ -53,6 +53,37 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
             } else if (mode == 1305) {
                 // A = NaN random mant (force exp=255, mant non-zero)
                 w_a = (r_a & 0x007F007Fu) | 0x7F807F80u | 0x00010001u;
+            } else if (mode == 1700) {
+                // A = constant +1.0
+                w_a = 0x3F803F80u;
+            } else if (mode >= 1701 && mode <= 1710) {
+                // A K-vary: K_unique values across K dim, same across M (broadcast test)
+                int K_unique_k = 1 << (mode - 1700);  // 2,4,8,...
+                int k = idx / 64;        // K index 0..15
+                int v_idx = k % K_unique_k;
+                auto val = [](int v) -> unsigned short {
+                    static const unsigned short vals[16] = {
+                        0x3F80, 0x4000, 0x40C0, 0x3FC0, 0xBF80, 0x4040, 0x4180, 0x3F00,
+                        0x4080, 0xBFC0, 0x4100, 0x3F40, 0x4200, 0xC080, 0x4140, 0x3FE0
+                    };
+                    return vals[v & 15];
+                };
+                unsigned short v = val(v_idx);
+                w_a = ((unsigned)v << 16) | v;
+            } else if (mode >= 1801 && mode <= 1810) {
+                // A N-vary: K_unique values across M dim (no effect on per-MAC temporal)
+                int K_unique_m = 1 << (mode - 1800);
+                int npair = idx % 64;    // pretending m varies along this dim
+                int v_idx = npair % K_unique_m;
+                auto val = [](int v) -> unsigned short {
+                    static const unsigned short vals[16] = {
+                        0x3F80, 0x4000, 0x40C0, 0x3FC0, 0xBF80, 0x4040, 0x4180, 0x3F00,
+                        0x4080, 0xBFC0, 0x4100, 0x3F40, 0x4200, 0xC080, 0x4140, 0x3FE0
+                    };
+                    return vals[v & 15];
+                };
+                unsigned short v = val(v_idx);
+                w_a = ((unsigned)v << 16) | v;
             } else {
                 w_a = r_a;
             }
