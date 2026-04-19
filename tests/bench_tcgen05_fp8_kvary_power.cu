@@ -144,6 +144,30 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 unsigned char b2 = h((n_base + 2) % N_unique);
                 unsigned char b3 = h((n_base + 3) % N_unique);
                 w = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+            } else if (mode >= 3100 && mode <= 3108) {
+                // PATTERN COUNT for FP8: rotating distinct sub-tile patterns 1..8
+                int N_distinct = mode - 3100;
+                if (N_distinct < 1) N_distinct = 1;
+                if (N_distinct > 8) N_distinct = 8;
+                int n_pack = idx % 32;
+                int sub_tile = n_pack / 4;
+                int pos_in_tile = n_pack % 4;
+                int pattern_id = sub_tile % N_distinct;
+                auto h = [](int nn) -> unsigned char {
+                    unsigned hh = 0xC0FFEE13u ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    unsigned char v = (unsigned char)(hh & 0xFF);
+                    unsigned char e = (v >> 3) & 0x0F;
+                    if (e == 0) e = 1;
+                    if (e == 15) e = 14;
+                    return (v & 0x87) | (e << 3);
+                };
+                unsigned char b0 = h(pos_in_tile * 4 + 0 + pattern_id * 100);
+                unsigned char b1 = h(pos_in_tile * 4 + 1 + pattern_id * 100);
+                unsigned char b2 = h(pos_in_tile * 4 + 2 + pattern_id * 100);
+                unsigned char b3 = h(pos_in_tile * 4 + 3 + pattern_id * 100);
+                w = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
             } else if (mode >= 2900 && mode <= 2908) {
                 // SUB-TILE DEDUP TEST for FP8: 8 sub-tiles of 16 N each.
                 // FP8: each sub-tile = 4 word_packs (16 N values, 4 per word).

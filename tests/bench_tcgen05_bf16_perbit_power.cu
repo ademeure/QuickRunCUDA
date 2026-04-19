@@ -374,6 +374,50 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 unsigned short ve = h(n_idx_e);
                 unsigned short vo = h(n_idx_o);
                 w = ((unsigned)vo << 16) | ve;
+            } else if (mode >= 3200 && mode <= 3208) {
+                // PATTERN COUNT v2 with DIFFERENT HASH (rule out hash-collision artifacts)
+                int N_distinct = (mode - 3200);
+                if (N_distinct < 1) N_distinct = 1;
+                if (N_distinct > 8) N_distinct = 8;
+                int npair = idx % 64;
+                int sub_tile = npair / 8;
+                int pos_in_tile = npair % 8;
+                int pattern_id = sub_tile % N_distinct;
+                int n_seed_e = pos_in_tile * 2 + pattern_id * 100;
+                int n_seed_o = pos_in_tile * 2 + 1 + pattern_id * 100;
+                // Murmur-like alternative hash
+                auto h2 = [](int nn) -> unsigned short {
+                    unsigned x = (unsigned)nn;
+                    x ^= x >> 17;
+                    x *= 0xED5AD4BBu;
+                    x ^= x >> 11;
+                    x *= 0xAC4C1B51u;
+                    x ^= x >> 15;
+                    x *= 0x31848BABu;
+                    x ^= x >> 14;
+                    return (unsigned short)(x & 0xFFFF);
+                };
+                unsigned short ve = h2(n_seed_e);
+                unsigned short vo = h2(n_seed_o);
+                w = ((unsigned)vo << 16) | ve;
+            } else if (mode >= 3300 && mode <= 3308) {
+                // PATTERN COUNT v3 with FIXED non-hash bytes (use pattern_id directly as repeating byte)
+                // Each sub-tile = 32 bytes of value (pattern_id*16 + pos) - deterministic, no hash
+                int N_distinct = (mode - 3300);
+                if (N_distinct < 1) N_distinct = 1;
+                if (N_distinct > 8) N_distinct = 8;
+                int npair = idx % 64;
+                int sub_tile = npair / 8;
+                int pos_in_tile = npair % 8;
+                int pattern_id = sub_tile % N_distinct;
+                // Each pattern = 32 BF16 values where bytes (pattern_id<<4) | pos
+                unsigned short ve = (unsigned short)(((pattern_id & 0xF) << 12) | ((pos_in_tile & 0x7) << 9) | 0x100);  // exp ~127
+                unsigned short vo = (unsigned short)(((pattern_id & 0xF) << 12) | ((pos_in_tile & 0x7) << 9) | 0x180);
+                // Force exp valid: use bits 7-14 = exp; let me reconstruct as normal value
+                // Just force exp=127 (0x3F80 base) and vary mantissa
+                ve = 0x3F00 | (pattern_id & 0x7F) | (pos_in_tile << 4);
+                vo = 0x3F00 | (((pattern_id+1) & 0x7F)) | (pos_in_tile << 4);
+                w = ((unsigned)vo << 16) | ve;
             } else if (mode >= 3100 && mode <= 3108) {
                 // PATTERN COUNT test: vary number of DISTINCT sub-tile patterns 1..8
                 // N_distinct = mode - 3100; sub_tile uses pattern_id = sub_tile % N_distinct
