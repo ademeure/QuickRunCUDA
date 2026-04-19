@@ -201,3 +201,49 @@ saved ~70W on the NVF4 sign bit. For BF16 paths, the equivalent benefit
 would come from reducing **B operand variability** (e.g., constant weights
 at runtime would benefit BF16 more than NVF4).
 
+
+---
+
+## CORRECTION: TMA multicast strategy explains the asymmetry reversal
+
+ncu deeper investigation reveals the BF16 vs NVF4 asymmetry is largely
+**driven by different TMA strategies**, not pure multiplier topology:
+
+| Metric | BF16 cuBLAS | NVF4 cuBLAS |
+|--------|------------:|------------:|
+| Kernel | nvjet_sm103_tst | cutlass3x_sm103_bstensorop |
+| utcmma count | 983,040 | 163,840 |
+| L1TEX wavefronts A | 62,914,560 | 15,728,640 |
+| L1TEX wavefronts B (2cta) | 62,914,560 (=A) | 15,728,640 (=A) |
+| TMA read bytes total | **12.08 GB** | **4.78 GB** |
+| TMA read bytes MULTICAST | **0** | **3.75 GB (78%)** |
+
+**Both kernels use utcmma (tcgen05.mma) — same multiplier hardware!**
+The asymmetry reversal comes from TMA multicast strategy:
+
+- **NVF4 path**: B is **multicast** from L2 to both M-CTAs in cluster (2,1)
+  → Single L2 read shared between 2 SMs
+  → B's L2-side activity is HALVED compared to A
+  → A's datapath/feed cost dominates
+
+- **BF16 path**: B is **NOT multicast** — each CTA in cluster (2,1) loads
+  its own B independently
+  → B is read from L2 TWICE per cluster step
+  → B's L2/TMA pipe activity is doubled
+  → B operand burden (memory + datapath) dominates
+
+The 2.5× total TMA traffic for BF16 (12.08 vs 4.78 GB) comes from this
+non-multicast pattern. BF16 elements (2 bytes each) may not satisfy
+multicast TMA alignment/size constraints that FP4 (0.5 bytes) does meet.
+
+Updated explanation:
+- Power-dominant operand isn't a pure datapath asymmetry
+- It's a function of: (multiplier-port datapath cost) + (memory pipeline activity)
+- For NVF4: multiplier datapath dominates → A wins (slightly mysterious)
+- For BF16: memory pipeline dominates → B wins (because B isn't multicast)
+
+This is actionable for kernel design:
+- If you want to minimize B's power burden in BF16, force multicast
+  (need to investigate why cuBLAS BF16 kernel chose not to)
+- If both A AND B were multicast (if cluster shape permitted), neither
+  side would dominate
