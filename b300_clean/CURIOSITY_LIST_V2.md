@@ -27,7 +27,33 @@ The 12% / 23% claim was a measurement artifact (low warp count, ILP).
 
 Investigated this session, commit `fceb94d`.
 
-### S2. [BREAKTHROUGH] tcgen05 alloc/dealloc WORKS — runtime fixed!
+### S2. [BREAKTHROUGH+] tcgen05 alloc + CUTLASS GEMM both WORK on B300
+
+UPDATE (2026-04-19): in addition to alloc/dealloc breakthrough, CUTLASS's
+minimal `01_mma_sm100.cu` tutorial RUNS correctly on B300 (only need to
+patch the version-check assertion `props.major != 10` → `if (0)`).
+
+Performance baseline (CUTLASS tutorial, FP16 GEMM 512×1024×256):
+   per launch: 126 ms  →  0.002 TFLOPS effective
+
+That's launch-overhead-dominated (huge per-launch cost from cluster setup +
+cooperative_copy + multiple SMEM↔TMEM transfers + wait_barrier for small
+work). NOT representative of tcgen05 throughput at all.
+
+To get real tcgen05 TFLOPS numbers, need:
+1. Scale up M/N/K significantly (8K+ each dim) so compute >> sync overhead
+2. Or use 70_blackwell_fp16_gemm.cu (full benchmark) — but this needs
+   deeper sm_103a template specialization patches than just version check
+3. Or use cuBLAS (which already uses tcgen05 per A5; hits 90% spec)
+
+Practical path:
+- For tcgen05 PERF: stick with cuBLAS (algoId=66 = tcgen05 path)
+- For tcgen05 EXPERIMENTATION: CUTLASS tutorial works as a sandbox
+
+---
+
+(original breakthrough text from prior iteration retained below)
+
 
 Two-fix recipe to get tcgen05 alloc/dealloc compiling AND running:
 1. Compile flag: `-gencode arch=compute_103a,code=sm_103a` (NOT just `-arch=sm_103a`)
