@@ -498,3 +498,55 @@ operand workload (ReLU, sigmoid, exponential, etc.).
 For workloads with structured sign patterns (e.g., quantized weights with
 sparse sign bits, or transformer Q/K which have positional sign symmetries),
 choosing structures with ≤16 unique signs per K row gives max savings.
+
+---
+
+## CORRECTION: BF16 sign-bit U-shape was a labeling error
+
+I mislabeled mode 4 ("N-uniform per K" = 1 unique sign per K row) as
+equivalent to "stride 128". They are NOT the same:
+- Mode 4: each K row has ONE single sign value used for all 128 N's (1 unique)
+- "Stride 128" in my mod scheme: sign[k][n] = sign[k][n%128] = sign[k][n] = pure random!
+
+So there's no actual stride-128 datapoint that "recovers" the savings —
+mode 4 sits at the OPPOSITE end of the entropy spectrum from random.
+
+### Corrected interpretation: SHARP CLIFF, not U-shape
+
+| Mode | Unique signs / K row | Power | Δ |
+|------|---------------------:|------:|--:|
+| 0: random | 128 (= max) | 606 | 0 |
+| 9: stride 2 | 2 | 578 | −28 |
+| 8: stride 4 | 4 | 549 | −57 |
+| 7: stride 8 | 8 | 548 | −58 |
+| 6: stride 16 | 16 | 552 | −54 |
+| **5: stride 32** | **32** | **596** | **−10 ← cliff!** |
+| **11: stride 64** | **64** | **596** | **−10** |
+| 4: single sign/row | 1 | 548 | −58 |
+
+True structure: **monotonic with entropy + sharp cliff at 16/32 boundary**.
+Sign entropy ≤ 16 unique per K row → max savings (~−55W).
+Sign entropy ≥ 32 unique per K row → back near random (−10W).
+
+### Updated mechanism: 16-element B chunk for sign processing
+
+The BF16 multiplier consumes B in 16-element chunks per cycle for the
+sign-bit logic. When all 16 elements within a chunk share signs from a
+small palette (≤16 unique total per K row), the per-cycle sign register
+toggle is suppressed.
+
+This is COMPLEMENTARY to the full-data 32-element cliff observed in the
+broader N-stride test:
+- Full-data sweep: 32-element MAC group cliff (combined data path)
+- Sign-bit-only sweep: 16-element chunk cliff (sign-specific logic)
+
+The hierarchical structure suggests:
+- 16-wide sign units (sign control logic groups of 16 MACs)
+- 32-wide data paths (overall MAC array width per cycle)
+
+### Lessons learned
+
+I should have used unambiguous labels (# unique signs per K row) from the
+start instead of "stride X". The mod-based "stride" semantics break down
+when the period equals or exceeds the range. Cross-checking by computing
+"unique sign count" would have caught this immediately.
