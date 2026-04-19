@@ -722,3 +722,93 @@ not B300's 15 PF spec. K=96 path remains elusive in measurable form.
 
 Investigation files: `investigations/wrap_sm103_nvf4_sweep.py`
 
+
+## CuTeDSL sm_103 NVF4 ULTRA — DEEP DIVE (full source/version review)
+
+### Sample identity
+- File: `/root/cutlass/examples/python/CuTeDSL/blackwell/sm103_dense_blockscaled_gemm_persistent.py`
+- 121,107 bytes; CUTLASS commit `d4bbf728 v4.4 tag release update.` (added in v4.4)
+- C++ counterparts: `examples/89_sm103_fp4_ultra_gemm/` and `examples/90_sm103_fp4_ultra_grouped_gemm/`
+
+### REQUIRED versions (from CHANGELOG)
+- **CUTLASS v4.4+** (sm_103/B300 support)
+- **CUDA Toolkit 13.1+** for CuTe DSL GB300 support (we have 13.2 ✓)
+- **CuTe DSL 4.4+** (`cutlass.__version__ = 4.4.2`)
+- Python 3.12 used here
+
+### EXPERIMENTAL warning (in source docstring)
+> "This example provides an experimental implementation of the SM103 batched 3xFP4
+> blockscaled GEMM kernel, please note that the APIs and implementation details
+> related to this kernel may change in future releases."
+
+### Confirmed K=96 ULTRA (per source!)
+`SM103MmaMXF4Op._verify()` and `SM103MmaMXF4NVF4Op._verify()`:
+```
+instruction_k = 96
+if self.shape_mnk[2] != instruction_k:
+    raise OpError(self, f"expects the instruction extent in the K-mode to be {instruction_k}")
+```
+**K=96 per mma instruction is HARDCODED.** This is the ULTRA path.
+
+C++ ex 89 tile: `<128, 256, 768>` (1SM) and `<256, 256, 768>` (2SM).
+768 = 8 × 96 = 8 mma instructions per K-tile.
+
+### Schedule policies (from dispatch_policy.hpp)
+The dispatch enumerates the full ULTRA family:
+- KernelTmaWarpSpecialized{1Sm,2Sm}BlockScaledMxNvf4UltraVs{16,32}Sm103[TmaPrefetch|DisablePrefetch]
+- Vs16 = NVF4 (sf_vec_size=16); Vs32 = MXF4 (sf_vec_size=32)
+- 1Sm vs 2Sm = use_2cta_instrs (mma_tiler_M=128 vs 256)
+- TmaPrefetch is the default schedule (per `using KernelTmaWarpSpecialized... = ...TmaPrefetch`)
+
+### Constraints (from class docstring)
+- A/B must have same dtype (Float4E2M1FN)
+- mma_tiler_M ∈ {128, 256}; mma_tiler_N ∈ {128, 256}
+- cluster_M/N power of 2, **total cluster ≤ 16**
+- cluster_M multiple of 2 if mma_tiler_M = 256 (use_2cta_instrs)
+- cluster_M/N ≤ 4 for SF multicasts (limited size of scale factors)
+- Contiguous dim of A/B/C must be 16-byte aligned (multiple of 32 elements for FP4)
+
+### Full sweep (CuTeDSL Python, 16K^3 NVF4, sf_dtype=e8m0)
+
+   mma_tiler  cluster   time      TFLOPS  % of 15 PF
+   (128,128)  (1,1)     2298 us   3828    25.5%
+   (128,128)  (1,2)     1759 us   5002    33.3%
+   (128,128)  (2,4)     2010 us   4377    29.2%
+   (128,256)  (1,2)     1576 us   5581    37.2%
+   (128,256)  (2,2)     1661 us   5297    35.3%
+   (256,128)  (2,1)     2765 us   3181    21.2%
+   (256,128)  (2,2)     3356 us   2621    17.5%
+   (256,128)  (2,4)     3582 us   2456    16.4%
+   (256,256)  (2,1)     1512 us   5816    38.8%
+   (256,256)  (2,2)     1220 us   7209    48.1%
+   **(256,256)  (2,4)     1134 us   7757    51.7%**  ← best
+   (256,256)  (4,4)     1211 us   7262    48.4%
+
+Best config: **2-CTA, mma_tile (256,256), cluster (2,4)** = 7757 TF = 51.7% of 15 PF.
+
+### NCU breakdown of best config
+- pipe_tensor_cycles_active: 73.34% (NOT saturated despite ULTRA path)
+- dram bandwidth: 2.73 TB/s (37% of HBM 7.31)
+- gpc cycles: 2.13M = 1.05 ms (matches wall-clock)
+- Peak power during run: ~250W (vs cuBLAS 940W)
+- **Downclock test (lock 1500 → effective 1920 MHz)**: SAME 7739 TF
+   → NOT clock-limited, NOT power-limited
+
+### C++ examples 89/90 — broken in this build
+- 89 builds with `--expt-relaxed-constexpr`
+- Runtime: `Pipeline init: Producer arrival count must be non-zero` assert in
+  `cutlass/pipeline/sm90_pipeline.hpp:808` — `Stages_=0` is invalid
+- Same failure at M=N=K=2048 default and at M=N=K=8192
+- Likely a configuration / unit-build issue specific to this CUTLASS install
+
+### Bottom line
+- **K=96 ULTRA path IS used by the CuTeDSL sample** (source-verified via SM103MmaMXF4NVF4Op._verify)
+- **Best measurable: 7757 TFLOPS = 51.7% of B300's 15 PF NVF4 spec** at 16K^3
+- Pipe is only 73% active — NOT saturating despite using the ULTRA mma
+- Likely persistent-kernel scheduling overhead
+- C++ examples 89/90 don't run cleanly in this CUTLASS 4.4.2 install (pipeline assert)
+
+So the K=96 ULTRA path EXISTS, RUNS, and gets ~half of 15 PF spec via this
+CuTeDSL sample. To exceed it would need either (a) better kernel implementation
+or (b) maybe the C++ examples 89/90 with the pipeline bug fixed.
+
