@@ -501,3 +501,64 @@ at 1005 MHz — at boost this would be ~72% with the model.
 - ~6% residual on boost suggests model captures dominant effect; secondary
   effects (HBM-latency-bound) account for residual
 - Independently confirmed by SM throughput climbing 67% → 75% as clock drops
+
+---
+
+## 🎯 Model VALIDATION: cuBLAS K-sweep hits predicted 73% ceiling
+
+K-sweep at boost zero data (M=N=8192):
+
+### cuBLAS NVF4
+
+| K | TFLOPS | %15PF | Notes |
+|---:|-------:|------:|-------|
+| 1536 | 4610 | 30.7% | overhead-dominated |
+| 3072 | 6089 | 40.6% | |
+| 6144 | 7171 | 47.8% | |
+| 9216 | 9808 | 65.4% | |
+| 12288 | 10284 | 68.6% | |
+| 15360 | 10021 | 66.8% | |
+| 18432 | 10183 | 67.9% | |
+| 24576 | 10171 | 67.8% | |
+| 30720 | 10799 | 72.0% | approaching ceiling |
+| **38400** | **11068** | **73.8%** | **PEAK = model prediction** |
+| 46080 | 10318 | 68.8% | HBM bound starts |
+| 53760 | 9548 | 63.7% | |
+| 61440 | 9185 | 61.2% | |
+| 76800 | 8052 | 53.7% | HBM-bound deep |
+
+### CuTeDSL cluster (2,1)
+
+| K | TFLOPS | %15PF |
+|---:|-------:|------:|
+| 1536 | 5290 | 35.3% |
+| 6144 | 8908 | 59.4% |
+| 9216 | 9333 | 62.2% |
+| 12288 | 9316 | 62.1% |
+| 15360+ | 8500-8900 | 57-59% (plateau) |
+
+CuTeDSL plateaus at ~62% MFU — lower ceiling than cuBLAS due to per-cluster
+coordination overhead being higher for the persistent kernel design.
+
+### Conclusion
+
+**The 19ns fixed-overhead clock-scaling model correctly predicted both:**
+1. The MFU climb at low clock (0.51 GHz: 93% predicted vs measured 86-88%)
+2. The boost ceiling (73% predicted vs cuBLAS measured **73.8%** at K=38400)
+
+The peak-then-decline shape with K is HBM-pressure dominated: too much K
+overwhelms L2 reuse. Optimal K for this M=N=8K shape is **~38400** which
+balances compute amortization (more K = more utcmma per tile = less overhead %)
+against memory pressure (more K = more A/B fetches per tile).
+
+### Practical recipe for max NVF4 throughput on B300 SXM6
+
+1. Use cuBLAS Lt (heuristic auto-picks the right kernel)
+2. ZERO data at boost: 11068 TF / 73.8% MFU at M=N=8192 K=38400
+3. Random data: TDP throttles → ~7000 TF / 47% MFU
+4. Tile = 256x256, cluster (2,4) auto-selected by cuBLAS
+5. Sustained iters > 1 sec for stable measurement
+
+The 11.07 PFLOPS = TRUE peak measured this session, +2% above prior catalog
+10.8 PF claim. Catalog was at smaller K (~16K?); K-sweep reveals true optimum.
+
