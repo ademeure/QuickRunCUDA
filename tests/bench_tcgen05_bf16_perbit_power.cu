@@ -1,0 +1,129 @@
+// BF16 per-bit decomposition: force ONE bit position constant, others random.
+// BF16 layout: bit 15=sign, bits 14:7=exp[7:0], bits 6:0=mant[6:0].
+// Mode = 0..15 selects which bit to force (constant 0).
+// Mode = 100 + i: force bit i constant 1.
+// Mode = 200: random (baseline).
+// Mode = 300: all-zero baseline.
+//
+// VERIFICATION: at startup, thread 0 of block 0 prints first 4 BF16 values
+// of B (hex + decoded sign/exp/mant) so we can sanity-check encoding.
+
+#define MMA_M 128
+#define MMA_N 128
+#define MMA_K 16
+#ifndef MODE
+#define MODE 200
+#endif
+
+extern "C" __global__ __launch_bounds__(32, 1)
+void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
+    __shared__ __align__(1024) unsigned smem_A[2048];
+    __shared__ __align__(1024) unsigned smem_B[2048];
+    __shared__ __align__(8)    unsigned long long mbar;
+    __shared__ __align__(4)    unsigned tmem_slot;
+
+    if (threadIdx.x < 32) {
+        for (int i = 0; i < 64; i++) {
+            unsigned idx = threadIdx.x + i*32;
+            smem_A[idx] = 0xDEADBEEFu ^ idx * 0xCAFEBABEu;
+        }
+    }
+
+    // B pattern: random bytes, then force one bit position
+    if (threadIdx.x < 32) {
+        for (int idx = threadIdx.x; idx < 1024; idx += 32) {
+            unsigned r = 0xDEADBEEFu ^ idx * 0x13579BDFu;
+            unsigned w;
+            if (mode == 200) {
+                w = r;  // pure random
+            } else if (mode == 300) {
+                w = 0;  // all zero
+            } else if (mode >= 0 && mode <= 15) {
+                // Force bit `mode` to 0 (in each BF16, both halves of word)
+                unsigned bit_mask = (1u << mode) | (1u << (mode + 16));
+                w = r & ~bit_mask;
+            } else if (mode >= 100 && mode <= 115) {
+                // Force bit (mode-100) to 1
+                int b = mode - 100;
+                unsigned bit_mask = (1u << b) | (1u << (b + 16));
+                w = (r & ~bit_mask) | bit_mask;
+            } else {
+                w = r;
+            }
+            smem_B[idx] = w;
+        }
+    }
+    if (threadIdx.x == 0) {
+        tmem_slot = 0xFFFFFFFFu;
+        asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;"
+            :: "r"((unsigned)__cvta_generic_to_shared(&mbar)));
+    }
+    __syncthreads();
+
+    // VERIFY: print first 4 BF16 values of B if verify flag set
+    if (verify && threadIdx.x == 0 && blockIdx.x == 0) {
+        for (int i = 0; i < 2; i++) {
+            unsigned w = smem_B[i];
+            unsigned bf16_lo = w & 0xFFFF;
+            unsigned bf16_hi = (w >> 16) & 0xFFFF;
+            printf("  B[idx=%d] word=0x%08x lo=0x%04x (s=%d e=%d m=0x%02x) hi=0x%04x (s=%d e=%d m=0x%02x)\n",
+                   i, w, bf16_lo,
+                   (bf16_lo >> 15) & 1, (bf16_lo >> 7) & 0xFF, bf16_lo & 0x7F,
+                   bf16_hi,
+                   (bf16_hi >> 15) & 1, (bf16_hi >> 7) & 0xFF, bf16_hi & 0x7F);
+        }
+    }
+
+    asm volatile("tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%0], 512;"
+        :: "r"((unsigned)__cvta_generic_to_shared(&tmem_slot)) : "memory");
+    asm volatile("tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;");
+    __syncthreads();
+    unsigned tmem_addr = tmem_slot;
+
+    unsigned idesc = (1U << 4) | (1U << 7) | (1U << 10)
+                   | (((unsigned)MMA_N >> 3) << 17)
+                   | (((unsigned)MMA_M >> 4) << 24);
+    auto desc_encode = [](unsigned long long x) -> unsigned long long {
+        return (x & 0x3FFFFULL) >> 4;
+    };
+    unsigned a_smem_addr = (unsigned)__cvta_generic_to_shared(smem_A);
+    unsigned b_smem_addr = (unsigned)__cvta_generic_to_shared(smem_B);
+    unsigned long long LBO = 16, SBO = 256;
+    unsigned long long a_desc = desc_encode(a_smem_addr) | (desc_encode(LBO) << 16) | (desc_encode(SBO) << 32);
+    unsigned long long b_desc = desc_encode(b_smem_addr) | (desc_encode(LBO) << 16) | (desc_encode(SBO) << 32);
+    unsigned disable_lane[4] = {0,0,0,0};
+
+    unsigned long long t0=0, t1=0;
+    if (threadIdx.x == 0) asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0));
+
+    if (threadIdx.x == 0) {
+        unsigned enable_d = 0;
+        for (int i = 0; i < iters; i++) {
+            asm volatile(
+                "{\n\t .reg .pred PRED;\n\t setp.ne.b32 PRED, %8, 0;\n\t"
+                "tcgen05.mma.cta_group::1.kind::f16 [%0], %1, %2, %3, {%4, %5, %6, %7}, PRED;\n\t}"
+                :
+                : "r"(tmem_addr), "l"(a_desc), "l"(b_desc), "r"(idesc),
+                  "r"(disable_lane[0]), "r"(disable_lane[1]), "r"(disable_lane[2]), "r"(disable_lane[3]),
+                  "r"(enable_d)
+                : "memory");
+            enable_d = 1;
+        }
+        asm volatile("tcgen05.commit.cta_group::1.mbarrier::arrive::one.b64 [%0];"
+            :: "r"((unsigned)__cvta_generic_to_shared(&mbar)) : "memory");
+        unsigned phase = 0;
+        asm volatile(
+            "{\n\t .reg .pred P;\n\t WAIT: mbarrier.try_wait.parity.shared::cta.b64 P, [%0], %1;\n\t"
+            "@P bra DONE;\n\t bra WAIT;\n\t DONE:\n\t}"
+            :: "r"((unsigned)__cvta_generic_to_shared(&mbar)), "r"(phase));
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1));
+    }
+    __syncthreads();
+    asm volatile("tcgen05.dealloc.cta_group::1.sync.aligned.b32 %0, 512;" :: "r"(tmem_addr));
+
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        ((unsigned long long*)C)[0] = t1 - t0;
+        printf("BF16 perbit mode=%d iters=%d cy/MMA=%.2f\n",
+               mode, iters, (double)(t1-t0)/iters);
+    }
+}
