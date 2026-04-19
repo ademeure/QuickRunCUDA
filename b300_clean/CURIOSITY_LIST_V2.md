@@ -470,7 +470,26 @@ A standard wrapper that:
 - Runs the kernel + ncu + SASS census
 - Reports a 3-method-reconciled result with confidence
 
-### D2. Persistent kernel template
+### D2. [x] RESOLVED — built investigations/persistent_kernel_template.cu
+
+Working template at `investigations/persistent_kernel_template.cu`:
+- 148 blocks (1 per SM) launched ONCE
+- Atomic counter for work distribution
+- Mapped memory for host-device sync (signal, done_count)
+- Coordinator thread polls work, broadcasts via SMEM
+- Block-wide reduction for output
+
+Demo (1024 work items × D=4096 sum-of-squares):
+   1st run:  3.45 ms (3.4 us/item)
+   2nd run:  3.39 ms (3.3 us/item)  ← NO relaunch overhead
+   Cold launch: 3.45 ms (62 us launch overhead vs warm)
+
+Use cases:
+- Streaming inference (many small kernels back-to-back)
+- Producer/consumer between GPUs
+- Server-mode compute
+
+Investigated this session, commit `02f5ec1`.
 Idiomatic, correct persistent kernel pattern: stop_flag in mapped mem,
 big inner loop, n_outer counter that's actually correct.
 
