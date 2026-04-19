@@ -413,3 +413,73 @@ population. Possibly: bit 14 specifically gates a dedicated logic path
 - HIGH on subnormal +20W penalty (replicated, well above noise)
 - MED on small-normal +18W tier interpretation (could be measurement effect)
 - LOW on the precise mechanism for bit-14 anomaly (unresolved)
+
+---
+
+## Inf/NaN bypass + B-all-constant taxonomy (REPLICATED)
+
+Replicated 3 runs per mode (50M iter each). Key data:
+
+| B pattern | Run 1 | Run 2 | Run 3 | Mean | σ | Note |
+|-----------|------:|------:|------:|-----:|--:|------|
+| random | 608 | 596 | 592 | 599 | 8 | baseline |
+| **all-zero** | 295 | 295 | 295 | **295** | **0** | full clock-gating |
+| **+Inf const** | 308 | 309 | 310 | 309 | 1 | Inf fast-path |
+| **NaN const** | 308 | 309 | 310 | 309 | 1 | NaN fast-path (= Inf) |
+
+### Refined model: constant value DOES matter for B (14 W gradient)
+
+- **B all-zero (295 W)**: multiplier truly idle (output always 0). Maximum
+  clock-gating possible. σ=0 because there's literally nothing happening.
+- **B all-Inf/NaN (309 W)**: Inf/NaN fast-path triggers but +14 W overhead
+  vs full clock-gating. The fast-path skips most of the multiplier datapath
+  but still has SOME logic active (Inf/NaN detect + output forwarding).
+- The fast-path is **real but not free**.
+
+### Decomposition: exp=255 random sign + mant adds back significant power
+
+Earlier mode 1155 (B exp=255, sign+mant random) gave 492 W = -107 W vs random.
+Now we know full all-Inf gives 309 W = -290 W.
+So random sign+mant on top of constant exp adds **+183 W** above the
+maximally-clock-gated state.
+
+Decomposing further:
+| Mode | Description | Power | Above all-Inf 309 |
+|------|-------------|------:|------------------:|
+| 1200 | all +Inf | 309 | 0 |
+| 1202 | ±Inf rand sign | 386 | +77 (sign rand) |
+| 1205 | NaN rand mant, sign=0 | 424 | +115 (mant rand) |
+| 1155 | exp=255 rand sign+mant | 492 | +183 (both rand, vs sum 192 = slight super-additive) |
+
+### Stunning observation: 0 W noise floor for all-zero
+
+B all-zero gives EXACTLY 295 W in all 3 runs (σ=0). Compare to baseline
+random which has σ=8. This is because:
+- Full multiplier clock-gating means there's no actual computational work
+  happening that could vary
+- The 295 W is purely the SM's overhead (clock distribution, idle SMEM
+  reads, mbarrier polling) which is deterministic
+- Random data introduces measurable variance because the actual
+  multiplications produce different switching patterns each run
+
+This noise floor result is itself a measurement validity check: when we
+can completely silence the multiplier, the only remaining variance is in
+the harness, which appears to be ~0 at this measurement granularity.
+
+### Updated hierarchy (B operand power, lowest to highest)
+
+1. **B all-zero**: 295 W (max clock-gating, σ=0)
+2. **B all-Inf/NaN**: 309 W (+14, Inf/NaN fast-path with overhead)
+3. **B exp=127, sign=0, mant=0** (predicted ~309): would test "is there
+   anything special about Inf vs normal-constant?"
+4. B exp=255 with random sign+mant: 488 W
+5. B random: 599 W
+
+### Confidence
+
+- HIGH on B all-zero σ=0 (3 runs identical to 295W)
+- HIGH on Inf/NaN fast-path having +14W overhead vs full clock-gating
+- HIGH on Inf vs NaN giving identical power (constant)
+- HIGH on the 183W cost of random sign+mant on top of exp=255
+- MED on whether normal-range constant (exp=127, all 0 mant+sign) matches
+  Inf savings (~309W) - need test

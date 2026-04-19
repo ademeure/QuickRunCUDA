@@ -41,11 +41,18 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
             if (mode >= 400 && mode <= 415) {
                 int b = mode - 400;
                 unsigned bm = (1u << b) | (1u << (b + 16));
-                w_a = r_a & ~bm;  // force A bit b to 0
+                w_a = r_a & ~bm;
             } else if (mode >= 500 && mode <= 515) {
                 int b = mode - 500;
                 unsigned bm = (1u << b) | (1u << (b + 16));
-                w_a = (r_a & ~bm) | bm;  // force A bit b to 1
+                w_a = (r_a & ~bm) | bm;
+            } else if (mode == 1300) {
+                w_a = 0x7F807F80u;  // A = +Inf
+            } else if (mode == 1303) {
+                w_a = 0x7FFF7FFFu;  // A = NaN max-mant
+            } else if (mode == 1305) {
+                // A = NaN random mant (force exp=255, mant non-zero)
+                w_a = (r_a & 0x007F007Fu) | 0x7F807F80u | 0x00010001u;
             } else {
                 w_a = r_a;
             }
@@ -99,8 +106,27 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 if (V > 255) V = 255;
                 unsigned exp_pat = (V & 0xFF) << 7;
                 unsigned exp_mask = 0x7F80u;
-                // Both halves of word
                 w = (r & ~(exp_mask | (exp_mask << 16))) | (exp_pat | (exp_pat << 16));
+            } else if (mode == 1200) {
+                // B = pure +Inf (sign=0, exp=255, mant=0)
+                w = 0x7F807F80u;
+            } else if (mode == 1201) {
+                // B = pure -Inf (sign=1, exp=255, mant=0)
+                w = 0xFF80FF80u;
+            } else if (mode == 1202) {
+                // B = +Inf with random sign (still Inf, just ±)
+                w = (r & 0x80008000u) | 0x7F807F80u;
+            } else if (mode == 1203) {
+                // B = NaN with mant=0x7F (max), sign=0, exp=255
+                w = 0x7FFF7FFFu;
+            } else if (mode == 1204) {
+                // B = NaN with mant=0x40 (mid), sign=0, exp=255
+                w = 0x7FC07FC0u;
+            } else if (mode == 1205) {
+                // B = NaN with random mant, sign=0, exp=255
+                w = (r & 0x007F007Fu) | 0x7F807F80u;
+                // ensure mant!=0 (force LSB) so it's NaN not Inf
+                w |= 0x00010001u;
             } else {
                 // For mode >= 400 (A bit forcing), B is random
                 w = r;
