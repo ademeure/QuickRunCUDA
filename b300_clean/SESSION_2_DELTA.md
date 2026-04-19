@@ -310,3 +310,50 @@ should be the BF16 rate (4096), giving ~3760 TF = 75% of spec.
 
 For PRODUCTION FP8 perf, cuBLAS algoId=66 (tcgen05) is authoritative at
 4500 TF = 90% spec. Direct PTX FP8 is in a gray zone.
+
+## 🚨 MAJOR RETRACTION (2026-04-19): S1 was DCE'd. mma.sync ≈ 23% spec, NOT 90%
+
+**S1's "mma.sync hits 90.5% of BF16 spec" claim is RETRACTED.**
+
+Side-by-side test (`investigations/ninja_bf16_DCE_correction.cu`):
+
+   V1 S1-style (constants, impossible-cond write):  0.219 ms = **2270 TF (90.8% spec)**
+   V2 STRICT anti-DCE (thread-derived + always-write): **0.858 ms = 578 TF (23.1% spec)**
+
+   SASS HMMA counts: V1 = 320, V2 = 1280  →  V1 was running 1/4 the work!
+
+The compiler aliased c0/c1/c2/c3 chains in V1 because:
+- All chains had identical constant inputs (0x3f80000* pattern)
+- Output guard was `if (c0[0] == 0xDEADBEEF && N < 0)` — impossible, so c1/c2/c3
+  outputs were never observably needed → DCE'd those chains
+- Effective work = 1 chain × 4 (claimed) → 4× over-reported throughput
+
+**THE ORIGINAL "23% of NVIDIA spec" CLAIM WAS CORRECT.** Legacy mma.sync on
+B300 caps at ~580 TF = 23% of 2500 BF16 spec, EXACTLY as the Tier S1 prompt
+in CURIOSITY_LIST stated before my "refutation".
+
+This RE-CONFIRMS:
+- cuBLAS algoId=66 (tcgen05 path) at 2237 TF = 90% spec was the only path
+  to nominal throughput
+- Legacy mma.sync is ~4× slower than tcgen05 — explaining the power gap (S3)
+- For BF16 inference perf: MUST use cuBLAS, not raw mma.sync
+
+TF32 RE-VERIFIED: strict anti-DCE kernel still gives 289 TF = 100% of catalog.
+TF32 is NOT affected by this DCE issue (constants probably differently
+interpreted by compiler for TF32 vs BF16 packing).
+
+LESSON: the rigor protocol's "ALWAYS SASS-verify the kernel" rule (#6) is
+LOAD-BEARING. SASS instruction count is the only definitive signal of how
+much work the compiler kept.
+
+CASCADING UPDATES NEEDED:
+- S1 entry in CURIOSITY_LIST_V2: revert "RESOLVED" to "REFUTED — original
+  23% claim STANDS"
+- S4 ("4 tensor cores per SM") may also need re-verification
+- D4_PRECISION_POWER_PERF_TABLE.md: BF16 mma.sync 90.5% → 23% (cuBLAS-only
+  for BF16 SoL)
+- Investigation kernels using S1-style impossible-condition guards may have
+  similar DCE issues — audit needed
+
+Commit: `14bf71f`. Confidence: HIGH (SASS counts + strict-DCE
+test give convergent evidence for the retraction).
