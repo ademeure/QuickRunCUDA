@@ -71,3 +71,75 @@ Sub-tile breaking shape differs per precision:
 2. **Prefer NVFP4 for power-constrained workloads** (random NVFP4 = BF16 const)
 3. **For BF16, group columns by 16 N at a time** so up to 4 unique groups
    share (saves ~310 W vs unsorted)
+
+---
+
+## Pattern-count rotation test (BF16 modes 3101-3108)
+
+`pattern_id = sub_tile % N_distinct` (rotating evenly across 8 sub-tiles).
+
+| N_distinct | Sequence            | Power (W) |
+|-----------:|:--------------------|----------:|
+|          1 | 0,0,0,0,0,0,0,0     |       301 |
+|          2 | 0,1,0,1,0,1,0,1     | **623**   |
+|          3 | 0,1,2,0,1,2,0,1     | **538**   |
+|          4 | 0,1,2,3,0,1,2,3     |       610 |
+|          5 | 0,1,2,3,4,0,1,2     |       607 |
+|          6 | 0,1,2,3,4,5,0,1     |       607 |
+|          7 | 0,1,2,3,4,5,6,0     |       606 |
+|          8 | 0,1,2,3,4,5,6,7     |       594 |
+
+### Anomaly: 2-pattern alternation MORE expensive than 3-pattern rotation
+
+- 2-pattern (0,1,0,1,...): 623 W (close to FULL random)
+- 3-pattern (0,1,2,0,1,2,0,1): 538 W (significantly cheaper!)
+- 4-pattern (0,1,2,3,0,1,2,3): 610 W (back to full)
+
+This INVALIDATES the "4-slot pattern cache" hypothesis. The pattern is
+something more nuanced.
+
+### Hypothesis: maybe related to SMEM bank conflict structure
+
+Possibly the HW reads B in stride-3 pattern, and rotation period 3 happens
+to align with the read sequence for natural dedup. Pattern of period 2 is
+the WORST case (maximum byte switching at stride-1).
+
+Result: **K_break test (with low-N matching) shows ≤4 patterns is free
+ONLY because the pattern at index 0..3 is the SAME** (sub_tile % 1).
+The "free" zone is sticky-activation, not slot-based caching.
+
+## Updated mechanistic model
+
+**STICKY ACTIVATION** model (refined):
+1. B operand SMEM-to-MAC port starts in low-power gated state.
+2. HW maintains a "running compare" of current sub-tile vs IMMEDIATE prior.
+3. On detecting a transition, port activates AND STAYS ACTIVE.
+4. Long contiguous-equal runs at LOW N positions save power BEFORE first
+   activation event.
+5. Once activated, rest of sweep is full power.
+
+Test cases supporting this:
+- K_break=4 (0,0,0,0,4,5,6,7): activation at sub_tile 4 → 4/8 active power = 342W (close to 1/2 of full)
+- K_break=3 (0,0,0,0,0,5,6,7): activation at sub_tile 5 → 3/8 active power = 302W (mostly free)
+- pcount_2 (0,1,0,1,...): activation at sub_tile 1 → 7/8 active = 623W (near full)
+- pcount_3 (0,1,2,0,...): activation at sub_tile 1 → 7/8 active = ??? (538W, less than expected)
+
+The pcount_3 case still doesn't fit cleanly. Possible explanation: activation
+involves loading the new sub-tile into a "current-pattern register" that itself
+toggles less when consecutive new patterns share bytes by accident with last.
+
+## Software optimization (refined)
+
+For BF16 GEMMs with non-uniform B:
+1. **Sort columns** so that the 32-byte pattern of consecutive sub-tiles
+   matches as long as possible from N=0 upward.
+2. After the unique zone starts, position doesn't matter (sticky activated).
+3. Best case: low-N has many same → sub-tile chunks; high-N can be arbitrary.
+4. Worst case: alternating distinct values (period-2 toggle) = full random power.
+
+## Open questions for future investigation
+
+- Exact mechanism for pattern-count anomaly (3-pattern < 2-pattern < 4-pattern)
+- Does cluster_group::2 (2-CTA MMA) change dedup behavior?
+- Are TMEM accumulator writes also dedup-aware?
+- Cross-check via NCU tensor-pipe utilization metrics.
