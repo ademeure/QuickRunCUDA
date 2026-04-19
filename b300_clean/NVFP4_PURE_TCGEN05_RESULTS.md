@@ -196,3 +196,56 @@ custom kernel that explicitly does NOT swap and measure if A dominates.
 The pure-tcgen05 microbench result remains robust and useful for predicting
 power impact when YOU control the multiplier inputs directly. Whether your
 "A" matches cuBLAS's tcgen05 "A" is a separate question.
+
+---
+
+## M×N power scaling (BF16 cta_group::1)
+
+Sweep at -lgc 1005 MHz, BF16, single-warp issuer per CTA, 50M iter sustained.
+
+### Baseline RR (rand) and ZZ (zero) — peak power scaling:
+
+| M | N | RR | ZZ | RR-ZZ Δ |
+|--:|--:|---:|---:|--------:|
+| 64 | 8 | 186 | 166 | +20 |
+| 64 | 32 | 249 | 186 | +63 |
+| 64 | 64 | 336 | 213 | +123 |
+| 64 | 128 | 404 | 234 | +170 |
+| 64 | 256 | 401 | 233 | +168 (sat) |
+| 128 | 8 | 213 | 175 | +38 |
+| 128 | 32 | 326 | 206 | +120 |
+| 128 | 64 | 466 | 246 | +220 |
+| 128 | 128 | 602 | 284 | **+318 (peak)** |
+| 128 | 256 | 584 | 283 | +301 (sat) |
+
+### A_only vs B_only Δ (vs ZZ baseline):
+
+| M | N | A_only Δ | B_only Δ | B/A ratio |
+|--:|--:|---------:|---------:|----------:|
+| 64 | 64 | +8 | +79 | 9.9× |
+| 64 | 128 | +6 | +112 | 18.7× |
+| 64 | 256 | +4 | +112 | 28× |
+| 128 | 32 | +13 | +75 | 5.8× |
+| 128 | 64 | +12 | +143 | 11.9× |
+| **128 | 128** | **+9** | **+205** | **22.8×** |
+| 128 | 256 | +4 | +196 | 49× |
+
+## Headline: A power is size-independent; B power scales with REUSE
+
+**A operand contribution stays flat (4-13 W) regardless of M or N.**
+**B operand contribution scales with N (= B is reused M times per inst).**
+
+Going m=64→128 (B size unchanged, B-reuse doubles): B delta jumps 112→205 W.
+This is a per-cycle data-toggle effect, not a load-count effect.
+
+Mechanism (hypothesis): For each MMA inst, B is read once into the multiplier
+operand-B port and used to multiply M different rows of A. As M grows, more
+MAC units fire B through, increasing per-cycle switching activity on the
+B-side multiplier interconnect.
+
+A is read once and used N times (less for small N). So A's reuse is high
+but each "use" is a single multiply (lower per-element activity).
+
+This per-MMA-cycle reuse asymmetry is the underlying cause of the B>>A
+power dominance observed in pure-tcgen05 microbenches across all 6 formats.
+
