@@ -564,3 +564,29 @@ Likely culprits (need further test to nail down):
 Practical guidance UNCHANGED: 4-8 warps/SM gives ~580 TF peak; >16 reduces
 throughput. But the MECHANISM is operand-fetch-bound, not RF-spill.
 
+
+## Refined: regression specifically at MAX warps × MAX chains
+
+Sweep (warps × chains, N=600 const):
+   4 × 4:  0.327 ms = 569 TF (0.462 mma/cy)  ← saturated
+   8 × 2:  0.332 ms = 562 TF                  ← saturated
+  16 × 1:  0.334 ms = 558 TF                  ← saturated
+  16 × 2:  0.678 ms = 550 TF (work 2× bigger so time 2× longer = OK)
+  **16 × 4:  1.284 ms = 580 TF**              ← NO regression here either
+  32 × 1:  0.647 ms = 576 TF                  ← still saturated at 32 warps
+  **32 × 4:  9.374 ms = 159 TF**              ← only HERE the regression hits
+
+So the per-cycle MMA rate stays at ~0.47 (saturated at HW ceiling) for all
+configs EXCEPT 32 warps × 4 chains = 1024 threads × 4 register chains.
+
+That specific config probably exceeds some internal capacity (RF read port
+bandwidth, scoreboard slots, etc.). Note: 32 thr × 1024 thr × 38 reg =
+38912 < 64K RF capacity — so still NOT register spill.
+
+Prior S4 "16+ warps regression" claim was actually a 32-warp measurement
+mislabeled; 16 warps with high chains is fine.
+
+UPDATED practical guidance for direct mma.sync:
+- 4-16 warps/SM × any chains: ~580 TF peak achievable
+- 32 warps/SM × ≤2 chains: also ~580 TF
+- 32 warps/SM × 4 chains: AVOID — 4× regression
