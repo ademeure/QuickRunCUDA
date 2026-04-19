@@ -664,3 +664,60 @@ For workloads where you control B sign distribution:
 - HIGH on stride 2 underperforming due to 100% flip rate
 - MED on exact chunk alignment threshold (32 elements per cycle, but
   effective alignment may be smaller)
+
+---
+
+## CORRECTION 2: my "stride 2" was actually block-uniform; new TRUE period-2 result
+
+User caught another labeling error: my mode 9 ("stride 2") used block-uniform
+encoding (each pair of N shares random sign), NOT periodic ABABAB.
+
+Re-tested with TRUE period-2 implementations:
+
+| Mode | What it really is | # unique signs (full B tensor) | Power | Δ |
+|------|-------------------|-------------------------------:|------:|--:|
+| 0 | random | 2048 (=K×N) | 604 | 0 |
+| 9 (mislabeled) | block-uniform BSZ=2 | 1024 | 595 | −9 |
+| 30 (NEW) | TRUE period-2 ABAB rand A,B per K | 32 (=2 per K × 16 K) | 566 | −38 |
+| **31 (NEW)** | FORCED +-+-+- (100% alternation) | 2 | **553** | **−51** |
+| 4 | single sign per K row | 16 | 558 | −46 |
+
+### Updated mental model: # unique sign PATTERNS across full B tensor over time
+
+Power savings correlate strongly with # distinct sign patterns repeated
+across the full B tensor:
+- 2 unique (mode 31): −51 W (forced +-, max savings)
+- 16 unique (mode 4): −46 W
+- 32 unique (mode 30): −38 W
+- 1024 unique (mode 9): −9 W
+- 2048 unique (mode 0): 0 W
+
+**Key insight: even FORCED 100% alternation pattern (+-+-+-...) saves max
+power because it's COMPLETELY DETERMINISTIC and consists of only 2 unique
+sign values across all cycles.** This destroys my previous "100% alternation
+is bad" hypothesis.
+
+The HW likely has some form of pattern caching / predictable-input
+clock-gating. Fewer unique patterns total → more cache hits / clock-gated
+cycles → less power.
+
+### Lessons learned (yet again)
+
+1. Always cross-validate "what stride X means" with concrete sign values
+2. # unique patterns ≠ # unique values per K row ≠ alternation rate
+3. The original mode-9 implementation was inconsistent with modes 5-8
+   (block-uniform vs periodic) — which broke my analysis.
+4. Need to be more rigorous about what each test mode actually generates.
+
+### NVFP4 stride results (DOC FOR FUTURE WORK)
+
+The earlier NVFP4 N-stride table is NOT trustworthy:
+- Within-word strides (1, 2, 4) had encoding bugs (FP4 has 8 nibbles/byte
+  and my mapping was imprecise)
+- Cross-pack strides (16, 32, 64) showed no clean pattern
+- Single-warp issue at only 65% NVFP4 MFU may not expose the asymmetry
+
+To redo NVFP4 properly:
+- Build sign-bit-only kernel (mask only bit 3 of each FP4, leave other 3
+  bits random) to isolate effect from encoding ambiguity
+- Or use cluster_group::2 to push MFU higher for cleaner signal

@@ -225,6 +225,22 @@ void kernel(float* A, float* B, float* C, int iters, int sign_mode, int u2) {
                     sign_bits = (re & 0x8000u) | ((ro & 0x8000u) << 16);
                     break;
                 }
+                case 30: {
+                    // TRUE period-2: ABABAB pattern (sign[n] = sign[n%2])
+                    // n_even%2 always 0 → source A; (n_even+1)%2 always 1 → source B
+                    unsigned r_a = 0xDEADBEEFu ^ (k * 2 + 0) * 0x13579BDFu;
+                    unsigned r_b = 0xDEADBEEFu ^ (k * 2 + 1) * 0x13579BDFu;
+                    unsigned s_e = r_a & 0x8000u;
+                    unsigned s_o = r_b & 0x8000u;
+                    sign_bits = s_e | (s_o << 16);
+                    break;
+                }
+                case 31: {
+                    // FORCED period-2 with guaranteed alternation: + - + - + - ...
+                    // sign[n=even] = 0 (positive); sign[n=odd] = 1 (negative)
+                    sign_bits = 0x80000000u;  // upper BF16 (n_odd) sign=1, lower (n_even) sign=0
+                    break;
+                }
                 default: sign_bits = r & SIGN_MASK; break;
             }
             // Combine: non-sign bits from r, sign from sign_bits
