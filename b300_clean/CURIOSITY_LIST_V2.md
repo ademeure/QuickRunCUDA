@@ -5,7 +5,20 @@ genuinely curious about, prioritized by potential impact and intellectual intere
 
 ## Tier S — Genuinely mysterious / would change my mental model
 
-### S1. [x] RESOLVED — mma.sync hits 90.5% of spec (NOT 23%)
+### S1. [RETRACTED] mma.sync ~23% spec (the original claim was correct)
+
+**RETRACTED 2026-04-19 (commit `45e5824`)**: prior "RESOLVED — 90.5% of spec"
+finding was DCE'd. SASS-verified strict anti-DCE re-test gives:
+   BF16 mma.sync peak: 578 TF = **23% of 2500 spec** (matches the ORIGINAL S1 claim)
+   The compiler aliased c0/c1/c2/c3 chains in the prior test (only 320 HMMAs
+   in SASS vs 1280 with strict). Time × HMMA-count both confirm 4× over-report.
+The CURIOSITY_LIST original "S1 23%" claim WAS RIGHT. cuBLAS algoId=66
+(tcgen05) is the only path to 90% spec. See SESSION_2_DELTA "MAJOR RETRACTION".
+
+(The detailed but WRONG breakthrough text below is preserved for the audit
+trail — SHOWS WHY rigor protocol rule #6 "ALWAYS SASS-verify" is load-bearing.)
+
+### S1-OLD-WRONG. [x] RESOLVED — mma.sync hits 90.5% of spec (NOT 23%)
 **REFUTED**: prior "570 TFLOPS = 23% of spec" claim was sub-optimal launch geom.
 
 True peak via raw mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32:
@@ -102,7 +115,26 @@ Investigated this session, commit `affce3d`.
 
 ### S3-original. (legacy text preserved)
 
-### S4. [x] RESOLVED — 4 tensor cores per SM ARE per-SMSP independent
+### S4. [x] CONFIRMED with strict anti-DCE (linear 1→4 SMSP scaling holds)
+
+Re-verified 2026-04-19 with strict anti-DCE kernel (`investigations/ninja_s4_recheck.cu`):
+   1 warp/SM (1 SMSP):  144 TF (5.8% spec)
+   2 warps/SM (2 SMSPs): 288 TF (11.5%) — exactly 2× ✓
+   4 warps/SM (4 SMSPs): 576 TF (23.0%) — exactly 4× ✓ ← per-SM mma.sync peak
+   8 warps/SM:           580 TF (23.2%, saturated)
+   16 warps/SM:          159 TF — DROPS! Register spill
+   32 warps/SM:          159 TF — same
+
+S4 LINEAR 1→4 SMSP SCALING HOLDS — 4 per-SMSP tensor units exist.
+But the TRUE per-SM mma.sync peak = 580 TF (23% spec), NOT 2270 TF as in
+the (now-retracted) S1 finding. cuBLAS path needed to reach 90% spec.
+
+NEW INSIGHT: 8 warps/SM is sweet spot; 16+ causes register spill regression
+(prior S1 "16 warps = 90.5% spec" was actually 16 warps × DCE'd = bogus high).
+
+Investigated this session, commit `b602fc8`.
+
+### S4-OLD. [x] RESOLVED — 4 tensor cores per SM ARE per-SMSP independent
 Same warp-sweep as S1 directly answers this:
   1 warp/SM (1 SMSP):  0.19 mma/SM/cy
   2 warps/SM (2 SMSPs, 1 each): 0.37 mma/SM/cy (2× linear)
