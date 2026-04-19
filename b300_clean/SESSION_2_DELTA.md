@@ -679,3 +679,46 @@ PTX instructions. Wall-clock = clock64 / clock_freq. ncu's other metrics
 For 32×4 mechanism still unresolved, but at least the SLOWNESS is
 confirmed via 3 methods now.
 
+
+## CuTeDSL sm_103 NVF4 ULTRA — measured (no K=96 advantage seen)
+
+Ran `/root/cutlass/examples/python/CuTeDSL/blackwell/sm103_dense_blockscaled_gemm_persistent.py`
+on B300. This is the sm_103-specific Blackwell ULTRA NVF4 example.
+
+Best results (NVF4: ab_dtype=Float4E2M1FN, sf_dtype=Float8E8M0FNU, sf_vec=16):
+
+  M     N     K     tile      cluster   tma_st  time      TFLOPS  % of 15PF
+  16384 16384 16384 (256,256) (2,4)     False   1135 us   7749    51.7%
+  8192  65536 16384 (256,256) (2,4)     False   2271 us   7747    51.6%
+  32768 32768 16384 (256,256) (2,4)     False   4779 us   7361    49.1%
+  16384 16384 16384 (256,256) (2,2)     False   1217 us   7227    48.2%
+  4096  4096  6144  (256,256) (2,4)     False     33 us   6183    41.2%
+
+ncu @ 16K^3 best:
+   sm__pipe_tensor_cycles_active: 73.34%  (NOT saturated!)
+   dram__bytes.sum.per_second:    2.73 TB/s (37% of HBM, low utilization)
+   gpc__cycles_elapsed:           2.13M cy = 1.05 ms (matches wall-clock)
+
+Power+clock during run:
+   Power: 200-250W mostly idle, brief 250W peak
+   Clock: 2032 MHz steady (no throttle)
+
+**Downclock test**: locked SM clock to 1500 (effective 1920 MHz floor):
+   Same 16K^3 NVF4: 1137 us = 7739 TF
+   IDENTICAL to 2032 MHz boost result → NOT clock-limited or power-limited
+
+So the CuTeDSL sm_103 ULTRA path achieves:
+- **7.7 PF** at 16K^3 = 51% of 15 PF B300 spec
+- LESS than catalog's direct-PTX 9.9 PF (kind::mxf4nvf4.block_scale.block16)
+- LESS than catalog's cuBLAS wide-N 10.3 PF
+- Pipe NOT saturated; not memory-bound; not clock-limited
+
+The bottleneck is internal to the persistent kernel scheduling / SMEM
+pipeline / barrier overhead — not power, not clock, not HBM, not pipe.
+
+NO measurement DEFINITIVELY shows K=96 ULTRA path beating K=64 theoretical
+(15 PF B300 spec). The 10.3 PF wide-N cuBLAS exceeds B200's 10 PF spec but
+not B300's 15 PF spec. K=96 path remains elusive in measurable form.
+
+Investigation files: `investigations/wrap_sm103_nvf4_sweep.py`
+
