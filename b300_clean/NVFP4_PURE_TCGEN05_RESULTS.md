@@ -721,3 +721,72 @@ To redo NVFP4 properly:
 - Build sign-bit-only kernel (mask only bit 3 of each FP4, leave other 3
   bits random) to isolate effect from encoding ambiguity
 - Or use cluster_group::2 to push MFU higher for cleaner signal
+
+---
+
+## NVFP4 SIGN-BIT clean test (replaces buggy stride results)
+
+Built `tests/bench_tcgen05_nvfp4_sign_power.cu` with sign-only-isolated B
+(other 3 FP4 bits always random). NVFP4 m=128 n=128 K=64 SF=1.0.
+
+### Clean results (sign-bit pattern modes)
+
+| Mode | Description | Power | Δ |
+|------|-------------|------:|--:|
+| 0 | BASELINE random sign | 470 | 0 |
+| **1** | **all-positive** | **406** | **−64 ← max** |
+| **2** | **all-negative** | **406** | **−64** |
+| **31** | **FORCED +- (2 unique pattern)** | **407** | **−63** |
+| 4 | single sign per K row | 443 | −27 |
+| 30 | TRUE period-2 random A,B | 446 | −24 |
+| 7 | period-8 | 443 | −27 |
+| 8 | period-4 | 456 | −14 |
+| 5 | period-32 | 460 | −10 |
+| 10 | period-64 | 424 | −46 |
+| 11 | period-128 (=random) | 435 | −35 (hash noise) |
+| 20 | block BSZ=2 | 504 | **+34 (WORSE)** |
+| 23 | block BSZ=16 | 494 | **+24 (WORSE)** |
+| 22 | block BSZ=8 | 435 | −35 |
+
+### Cross-format sign-bit savings comparison
+
+| Format | All-uniform Δ | Baseline | % savings |
+|--------|--------------:|---------:|----------:|
+| BF16 | −51 W | 604 W | 8.4% |
+| **NVFP4** | **−64 W** | **470 W** | **13.6%** |
+
+**NVFP4 sign-bit randomness costs proportionally MORE than BF16's** because
+FP4 sign is 1/4 of the bit pattern (vs 1/16 for BF16). ReLU activations
+save 13.6% of NVFP4 multiplier power vs 8.4% for BF16.
+
+### Key architectural differences from BF16
+
+1. **Periodic structure helps less in NVFP4**:
+   - BF16 period 4-16: −54 to −58 W (max savings band)
+   - NVFP4 period 4-16: only −14 to −27 W (much weaker effect)
+
+2. **Block-uniform actually WORSENS NVFP4 power** (mode 20, 23 show +24 to +34 W):
+   - Block boundaries with random sign blocks align BADLY with NVFP4 multiplier
+   - BF16 didn't show this effect — block-uniform was just less effective
+
+3. **FORCED +- still works** for both formats (−51 BF16, −63 NVFP4) — the
+   "predictable simple pattern" signal is universal.
+
+### Mechanism hypothesis
+
+The block-scale ULTRA path (TMEM-resident SF, 16-elem scale-block alignment)
+reorganizes B operand feeding through a different multiplier circuit than
+the kind::f16/f8f6f4 path. This circuit:
+- Has narrower operand chunks (block-size 16 alignment in the SF lookup)
+- Less benefit from spatial periodicity in B sign (signs handled per-SF-block)
+- More sensitive to misaligned block boundaries (the +24/+34W penalties)
+- Still benefits maximally from globally-uniform B (since SF logic can short-circuit)
+
+### Confidence
+
+- HIGH on all-uniform / forced +- savings (−63 to −64 W, max signal)
+- HIGH on NVFP4 vs BF16 difference in periodic-pattern response
+- HIGH on the +24/+34W block-uniform anomalies (real, not noise — both reproducible)
+- MED on the exact mechanism (need ncu pipe-level metrics that don't exist for
+  block-scale ULTRA path)
+- LOW on period-64 outlier (−46W, may be noise or real — needs replication)
