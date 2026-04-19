@@ -532,7 +532,30 @@ Investigated this session, commit `02f5ec1`.
 Idiomatic, correct persistent kernel pattern: stop_flag in mapped mem,
 big inner loop, n_outer counter that's actually correct.
 
-### D3. Sub-agent critique CI
+### D3. [x] RESOLVED — built utils/critique_finding.sh
+
+Working script at `utils/critique_finding.sh` validates findings before commit:
+- Extracts claimed numbers (TFLOPS, TB/s, GB/s, %)
+- FAIL if any TFLOPS > 15000 (exceeds even FP4 spec)
+- FAIL if any TB/s > 50 (exceeds SMEM peak)
+- FAIL if .cu file never writes to global (DCE smell)
+- WARN if anti-DCE pattern found (verify SASS)
+- Reports current clock + temp at commit time
+- Exit non-zero on failure → blocks commit if used as pre-commit hook
+
+Usage:
+  ./utils/critique_finding.sh <commit-msg-file> [investigation.cu]
+
+Tested:
+  90.5 TFLOPS / 6.66 TB/s claim → PASS
+  50000 TFLOPS bogus claim     → FAIL (rejected before commit)
+
+Pattern intended for /loop iterations: each finding gets sanity-checked
+before being committed. Catches the classic "X% > spec" measurement bugs
+this session uncovered (FP8 DCE, TMA store L2 absorption, etc.) before
+they pollute git history.
+
+Investigated this session, commit `4783600`.
 A scheduled job that periodically spawns sub-agents to audit recent
 ninja claims. Found 4 over-claims this session; could catch them
 automatically.
