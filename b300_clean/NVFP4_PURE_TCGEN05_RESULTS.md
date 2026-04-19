@@ -287,3 +287,45 @@ This strengthens the multiplier-port-asymmetry conclusion:
   (less per-byte activity)
 
 This is HARDWARE-ARCHITECTURE level, not format-specific.
+
+---
+
+## NVFP4 N-sweep at both K=64 and K=96 — confirms universality
+
+NVFP4 m=128 N-sweep (single-CTA only m=128 valid):
+
+### K_SIZE=0 (K=64):
+| M, N | ZZ | A_only Δ | B_only Δ | B/A |
+|------|---:|---------:|---------:|----:|
+| 128, 64 | 236 | +12 | +82 | 6.8× |
+| 128, 128 | 270 | +9 | +124 | 13.8× |
+| 128, 256 | 267 | +4 | +124 | 31× |
+
+### K_SIZE=1 (K=96):
+| M, N | ZZ | A_only Δ | B_only Δ | B/A |
+|------|---:|---------:|---------:|----:|
+| 128, 64 | 219 | +10 | +79 | 7.9× |
+| 128, 128 | 244 | +8 | +120 | 15× |
+| 128, 256 | 271 | +4 | +161 | 40× |
+
+**Same A-flat / B-scales-with-N pattern as BF16, FP8 e4m3.**
+
+NVFP4 K=96 at N=256 doesn't saturate B-Δ (161W vs K=64's 124W). K=96 utilizes
+the multiplier more per inst when N is large (more elements per cycle).
+
+## Final cross-precision summary (m=128 n=128, peak useful shape)
+
+| Precision | ZZ baseline | A-Δ | B-Δ | B/A ratio |
+|-----------|------------:|----:|----:|----------:|
+| FP16 (K=16) | 279 | +18 | +273 | 15.2× |
+| BF16 (K=16) | 284 | +9 | +205 | 22.8× |
+| FP8 e4m3 (K=32) | 289 | +11 | +266 | 24.2× |
+| FP8 e5m2 (K=32) | 289 | +20 | +296 | 14.8× |
+| NVFP4 K=64 | 270 | +9 | +124 | 13.8× |
+| NVFP4 K=96 | 244 | +8 | +120 | 15.0× |
+
+Universal multiplier asymmetry confirmed across **6 instruction variants
+spanning 3 PTX kinds** (kind::f16, kind::f8f6f4, kind::mxf4nvf4.block_scale).
+
+The B-reuse mechanism (B broadcast across M MAC units per cycle) explains
+the asymmetry mechanistically and predicts the observed scaling pattern.
