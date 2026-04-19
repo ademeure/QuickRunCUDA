@@ -27,36 +27,33 @@ The 12% / 23% claim was a measurement artifact (low warp count, ILP).
 
 Investigated this session, commit `fceb94d`.
 
-### S2. [PARTIAL] tcgen05 PTX compiles but runtime hangs (still unresolved)
+### S2. [BREAKTHROUGH] tcgen05 alloc/dealloc WORKS — runtime fixed!
 
-This iteration: minimal alloc/dealloc kernel attempts.
+Two-fix recipe to get tcgen05 alloc/dealloc compiling AND running:
+1. Compile flag: `-gencode arch=compute_103a,code=sm_103a` (NOT just `-arch=sm_103a`)
+2. ALL 32 threads of warp execute the alloc (.sync.aligned needs warp-aligned exec)
+3. Add `tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned` between alloc and dealloc
 
-Compile status:
-   nvcc -arch=sm_103a (default):  ptxas REJECTS — needs sm_103a explicit
-   nvcc -gencode arch=compute_103a,code=sm_103a: COMPILES ✓
+Working PTX pattern:
+```
+// All 32 threads of warp 0:
+asm volatile("tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%0], 32;"
+             :: "r"(smem_ptr));
+asm volatile("tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;");
+// ... do mma stuff ...
+asm volatile("tcgen05.dealloc.cta_group::1.sync.aligned.b32 %0, 32;"
+             :: "r"(tmem_addr));
+```
 
-Runtime status:
-   tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%0], 32:
-     HANGS (timeout after 10s) — same as historical failure
+Result: TMEM address returned = 0x0 (byte offset in TMEM), no hang, no error.
 
-PTX is parsed by ptxas in sm_103a mode. The alloc itself hangs, suggesting:
-1. Missing prerequisites: cluster size > 1, mbarrier setup, fence ordering
-2. Possibly needs warp specialization (producer warps for TMA, consumer for mma)
-3. CUTLASS examples are 1000s of lines — no minimal viable case found
+The historical "alloc hangs" failure was caused by single-thread guard
+(`if (threadIdx.x == 0) { ... }`) on a .sync.aligned instruction — the other
+31 lanes never reach the sync barrier. Move the asm OUTSIDE the if-guard.
 
-Path forward:
-- Study CUTLASS 4.0+ tcgen05 examples (they DO work)
-- Try cluster_size=2 with cta_group::1 (most common pattern)
-- Use cudaLaunchAttributeClusterDimension to set cluster
-- Add tcgen05.fence::after_thread_sync between alloc and use
+NEXT: try a minimal tcgen05.mma kernel building on this working alloc.
 
-This needs sustained focused effort. Confirmed:
-- algoId=66 in cuBLAS is the tcgen05 path (per A5)
-- cuBLAS hits 90% spec (S1) and draws 940W (S3) → tcgen05 IS measurable
-  via cuBLAS, just not as raw mma.sync substitute
-- Direct PTX would only matter for fused custom kernels (FlashAttention etc.)
-
-Investigated this session, commit `9598b3a`.
+Investigated this session, commit `c0c2d48`.
 
 ### S3. [PARTIAL] mma.sync alone CANNOT hit 940W TGP — needs tcgen05
 Hypothesis (c) FAILS for legacy mma.sync. Sustained power tests:
