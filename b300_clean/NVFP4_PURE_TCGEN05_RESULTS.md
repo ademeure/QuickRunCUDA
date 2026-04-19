@@ -168,3 +168,31 @@ m=128 n=128 is the throughput sweet spot for single-warp issue.
 These are all PTX-level changes requiring more careful descriptor / cluster
 setup. Power asymmetry (B>>A) likely holds at higher MFU but absolute
 numbers will scale.
+
+---
+
+## Correction: pure-tcgen05 vs cuBLAS gap NOT yet conclusively explained
+
+Earlier I claimed the cuBLAS NVF4 "A dominates" was "definitively explained
+by TMA multicast on B". That overreaches. The pure-tcgen05 result (B>>A in
+multiplier across 6 formats) is solid. But the gap to cuBLAS observation
+has multiple plausible causes:
+
+1. **cuBLAS may swap A↔B internally**. The user-facing API "A" matrix may
+   be fed as the tcgen05 multiplier's B operand (or vice versa). Common
+   optimization for matching SMEM layout. Need to check cuBLAS kernel
+   layout transformation logic to confirm.
+2. **TMA multicast pattern** (the original hypothesis) - B multicast saves
+   B's memory cost.
+3. **Per-operand SMEM dwell time** - B might be loaded once and re-read
+   many times while A is streamed; or vice versa.
+4. **Operand pipeline depth** - the cuBLAS kernel might have different
+   buffering depths for A vs B feeds, with different per-bit-toggle costs.
+
+To resolve: would need to either (a) trace cuBLAS kernel A/B SMEM addresses
+to determine if they're swapped vs API order, or (b) compare with a
+custom kernel that explicitly does NOT swap and measure if A dominates.
+
+The pure-tcgen05 microbench result remains robust and useful for predicting
+power impact when YOU control the multiplier inputs directly. Whether your
+"A" matches cuBLAS's tcgen05 "A" is a separate question.
