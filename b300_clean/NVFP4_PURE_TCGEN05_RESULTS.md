@@ -550,3 +550,60 @@ I should have used unambiguous labels (# unique signs per K row) from the
 start instead of "stride X". The mod-based "stride" semantics break down
 when the period equals or exceeds the range. Cross-checking by computing
 "unique sign count" would have caught this immediately.
+
+---
+
+## CRITICAL: Periodicity matters more than # unique signs
+
+Block-uniform sign mode (each block of B N's shares one random sign,
+blocks independent) gives DIFFERENT power vs period-X mode at same # unique:
+
+| # unique signs / K row | Period-X savings | Block-uniform savings |
+|-----------------------:|-----------------:|----------------------:|
+| 4 | −57 W | −25 W |
+| 8 | −58 W | (not tested) |
+| 16 | −54 W | −22 W |
+| 32 | −10 W | +11 W |
+| 64 | −10 W | −10 W |
+| 1 (uniform) | −58 W | −57 W |
+
+**Periodic structure saves ~2-3× more power than random-grouped structure
+at the same # unique sign count.**
+
+This means the multiplier-port datapath is sensitive to SPATIAL PERIODICITY,
+not just sign entropy. Likely mechanism:
+- Multiplier reads B in 32-element chunks per cycle (4 chunks × 16 K = 64 cy/MMA ✓)
+- Period ≤16 → every 32-elem chunk has IDENTICAL sign pattern → cycle-to-cycle
+  register state stable → minimal toggle activity
+- Period 32 → 32-elem chunks all read same 32-pattern → SHOULD save, but only
+  −10W measured (open puzzle, may be due to swizzle or non-sequential N order)
+- Block-uniform → each chunk reads different random 32-elem block → cycle-to-cycle
+  toggle every time → savings only from fewer unique within chunk
+
+### Open question: what makes period-X "structured" and block-uniform "random"?
+
+Both have the same # unique values per K row. The difference is that
+period-X has predictable repetition; block-uniform has random sign-block
+ordering. The HW seems to detect/benefit from the predictability.
+
+Possible mechanisms:
+1. The B port has internal value-prediction or operand-bypass for repeated
+   patterns; period detection benefits from spatial coherence.
+2. The multiplier datapath has clock-gating that triggers when consecutive
+   inputs match.
+3. The MAC array has a pipeline register stage that holds B from the
+   previous cycle; if the new B equals the old B, the register doesn't toggle.
+
+### Block-uniform BSZ=4 is WORSE than baseline (+11W)
+
+The BSZ=4 outlier (+11W) is unexpected. Possibly:
+- 32 random sign blocks of 4 N's each is the worst case for the multiplier's
+  16-element MAC chunk: every chunk sees ~4 different sign blocks within it
+- Alignment between block boundary (4) and chunk boundary (16 or 32) is bad
+
+### Confidence
+
+- HIGH: # unique signs is NOT the primary driver of power
+- HIGH: spatial periodicity matters separately
+- MED: 16-MAC-chunk hypothesis (consistent but not directly verified)
+- LOW: exact mechanism (clock-gating? value prediction? pipeline?)

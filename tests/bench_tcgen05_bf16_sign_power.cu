@@ -174,6 +174,57 @@ void kernel(float* A, float* B, float* C, int iters, int sign_mode, int u2) {
                     sign_bits = se | (so << 16);
                     break;
                 }
+                // Block-uniform sign: within each block of BSZ N positions,
+                // all share ONE single sign value. Different blocks have
+                // independent (random) sign. # unique signs per K row = N/BSZ.
+                case 20: {  // BSZ=2 → 64 unique signs
+                    int blk_e = n_even / 2;
+                    int blk_o = (n_even + 1) / 2;
+                    unsigned re = 0xDEADBEEFu ^ (k * 64 + blk_e) * 0x13579BDFu;
+                    unsigned ro = 0xDEADBEEFu ^ (k * 64 + blk_o) * 0x13579BDFu;
+                    sign_bits = (re & 0x8000u) | ((ro & 0x8000u) << 16);
+                    break;
+                }
+                case 21: {  // BSZ=4 → 32 unique
+                    int blk_e = n_even / 4;
+                    int blk_o = (n_even + 1) / 4;
+                    unsigned re = 0xDEADBEEFu ^ (k * 64 + blk_e) * 0x13579BDFu;
+                    unsigned ro = 0xDEADBEEFu ^ (k * 64 + blk_o) * 0x13579BDFu;
+                    sign_bits = (re & 0x8000u) | ((ro & 0x8000u) << 16);
+                    break;
+                }
+                case 22: {  // BSZ=8 → 16 unique
+                    int blk_e = n_even / 8;
+                    int blk_o = (n_even + 1) / 8;
+                    unsigned re = 0xDEADBEEFu ^ (k * 64 + blk_e) * 0x13579BDFu;
+                    unsigned ro = 0xDEADBEEFu ^ (k * 64 + blk_o) * 0x13579BDFu;
+                    sign_bits = (re & 0x8000u) | ((ro & 0x8000u) << 16);
+                    break;
+                }
+                case 23: {  // BSZ=16 → 8 unique
+                    int blk_e = n_even / 16;
+                    int blk_o = (n_even + 1) / 16;
+                    unsigned re = 0xDEADBEEFu ^ (k * 64 + blk_e) * 0x13579BDFu;
+                    unsigned ro = 0xDEADBEEFu ^ (k * 64 + blk_o) * 0x13579BDFu;
+                    sign_bits = (re & 0x8000u) | ((ro & 0x8000u) << 16);
+                    break;
+                }
+                case 24: {  // BSZ=32 → 4 unique
+                    int blk_e = n_even / 32;
+                    int blk_o = (n_even + 1) / 32;
+                    unsigned re = 0xDEADBEEFu ^ (k * 64 + blk_e) * 0x13579BDFu;
+                    unsigned ro = 0xDEADBEEFu ^ (k * 64 + blk_o) * 0x13579BDFu;
+                    sign_bits = (re & 0x8000u) | ((ro & 0x8000u) << 16);
+                    break;
+                }
+                case 25: {  // BSZ=64 → 2 unique
+                    int blk_e = n_even / 64;
+                    int blk_o = (n_even + 1) / 64;
+                    unsigned re = 0xDEADBEEFu ^ (k * 64 + blk_e) * 0x13579BDFu;
+                    unsigned ro = 0xDEADBEEFu ^ (k * 64 + blk_o) * 0x13579BDFu;
+                    sign_bits = (re & 0x8000u) | ((ro & 0x8000u) << 16);
+                    break;
+                }
                 default: sign_bits = r & SIGN_MASK; break;
             }
             // Combine: non-sign bits from r, sign from sign_bits
