@@ -208,3 +208,30 @@ For real workloads (GEMM with epilogue STS, attention with output write):
 PRACTICAL: don't spread STS across many chains; batch them. The pipe penalty
 is roughly 30% per "STS pulse" regardless of how it interleaves with HMMA.
 
+
+## FP4/FP6 mma.sync NOT available on sm_103a (NEW finding)
+
+ptxas error confirms FP4/FP6 is exclusively tcgen05 territory:
+
+```
+ptxas error : Instruction 'mma with FP6/FP4 floating point type'
+              not supported on .target 'sm_103a'
+              for shape '.m16n8k64'
+```
+
+Tested PTX forms (all REJECTED):
+- `mma.sync.aligned.m16n8k64.row.col.f32.e2m1.e2m1.f32` (no .kind) → "kind::f8f6f4 required"
+- `mma.sync.aligned.m16n8k64.row.col.kind::f8f6f4.f32.e2m1.e2m1.f32` → not on sm_103a
+
+So for FP4 access on B300:
+- **Legacy mma.sync**: NO. Caps at FP8 (e4m3, e5m2) for sm_103a.
+- **tcgen05.mma.kind::f8f6f4**: required. Has full CUTLASS dependency.
+- **cuBLAS**: practical path. K=96 hits 10800 TF = 72% of 15000 spec (prior session).
+
+UPDATE to D4 power/perf table: confirm "FP4 cuBLAS = 10800 TF" is the only
+production-accessible FP4 number on B300. Direct PTX is gated to tcgen05.
+
+This is a HARDWARE LIMIT, not a software workaround issue. ptxas explicitly
+declines for the target arch.
+
+Confidence: HIGH (ptxas rejects definitively; tested 2 PTX variants)
