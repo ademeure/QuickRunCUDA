@@ -27,17 +27,36 @@ The 12% / 23% claim was a measurement artifact (low warp count, ILP).
 
 Investigated this session, commit `fceb94d`.
 
-### S2. Direct tcgen05 PTX — actually make it compile and run
-We tried earlier and failed (alloc/dealloc hung; mma errored). cuBLAS
-demonstrably uses it (achieves 4400 TFLOPS FP8). The PTX exists. The
-issue was likely missing TMA setup + cluster size + memory descriptor.
-Working tcgen05 microbench would let us:
-- Verify NVIDIA's published 5000/2500/10000 TFLOPS spec (FP8/BF16/FP4)
-- Bypass cuBLAS overhead
-- Measure tcgen05 sustained at full power (962W?)
+### S2. [PARTIAL] tcgen05 PTX compiles but runtime hangs (still unresolved)
 
-**Test**: write minimal tcgen05.kind::f8f6f4 kernel using TMA + cluster,
-measure single-call TFLOPS, compare to cuBLAS.
+This iteration: minimal alloc/dealloc kernel attempts.
+
+Compile status:
+   nvcc -arch=sm_103a (default):  ptxas REJECTS — needs sm_103a explicit
+   nvcc -gencode arch=compute_103a,code=sm_103a: COMPILES ✓
+
+Runtime status:
+   tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%0], 32:
+     HANGS (timeout after 10s) — same as historical failure
+
+PTX is parsed by ptxas in sm_103a mode. The alloc itself hangs, suggesting:
+1. Missing prerequisites: cluster size > 1, mbarrier setup, fence ordering
+2. Possibly needs warp specialization (producer warps for TMA, consumer for mma)
+3. CUTLASS examples are 1000s of lines — no minimal viable case found
+
+Path forward:
+- Study CUTLASS 4.0+ tcgen05 examples (they DO work)
+- Try cluster_size=2 with cta_group::1 (most common pattern)
+- Use cudaLaunchAttributeClusterDimension to set cluster
+- Add tcgen05.fence::after_thread_sync between alloc and use
+
+This needs sustained focused effort. Confirmed:
+- algoId=66 in cuBLAS is the tcgen05 path (per A5)
+- cuBLAS hits 90% spec (S1) and draws 940W (S3) → tcgen05 IS measurable
+  via cuBLAS, just not as raw mma.sync substitute
+- Direct PTX would only matter for fused custom kernels (FlashAttention etc.)
+
+Investigated this session, commit `9598b3a`.
 
 ### S3. [PARTIAL] mma.sync alone CANNOT hit 940W TGP — needs tcgen05
 Hypothesis (c) FAILS for legacy mma.sync. Sustained power tests:
