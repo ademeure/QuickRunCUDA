@@ -196,9 +196,9 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 };
                 w = ((unsigned)val(v_idx_o) << 16) | val(v_idx_e);
             } else if (mode >= 1600 && mode <= 1610) {
-                // K_unique values cycle ACROSS K positions, fixed across N (per-MAC TEMPORAL VARYING)
+                // K-vary
                 int K_unique_k = 1 << (mode - 1600);
-                int k = idx / 64;          // K index 0..15
+                int k = idx / 64;
                 int v_idx = k % K_unique_k;
                 auto val = [](int v) -> unsigned short {
                     static const unsigned short vals[16] = {
@@ -208,7 +208,25 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                     return vals[v & 15];
                 };
                 unsigned short v = val(v_idx);
-                w = ((unsigned)v << 16) | v;  // both BF16 in word same value
+                w = ((unsigned)v << 16) | v;
+            } else if (mode >= 1900 && mode <= 1910) {
+                // KN-vary: each (k, n_pair) gets its own value from table, cycling K_unique
+                // Each K-MAC sees DIFFERENT value across K (K-vary), AND different MACs see different values (N-vary)
+                int K_unique = 1 << (mode - 1900);
+                int k = idx / 64;
+                int npair = idx % 64;
+                int n_even = npair * 2;
+                auto val = [](int v) -> unsigned short {
+                    static const unsigned short vals[16] = {
+                        0x3F80, 0x4000, 0x40C0, 0x3FC0, 0xBF80, 0x4040, 0x4180, 0x3F00,
+                        0x4080, 0xBFC0, 0x4100, 0x3F40, 0x4200, 0xC080, 0x4140, 0x3FE0
+                    };
+                    return vals[v & 15];
+                };
+                // FIXED: Use (k + n_even) since k*128 collapsed mod K_unique=16
+                unsigned short ve = val((k + n_even) % K_unique);
+                unsigned short vo = val((k + n_even + 1) % K_unique);
+                w = ((unsigned)vo << 16) | ve;
             } else {
                 // For mode >= 400 (A bit forcing), B is random
                 w = r;
