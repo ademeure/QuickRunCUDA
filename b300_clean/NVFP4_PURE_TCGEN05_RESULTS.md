@@ -249,3 +249,41 @@ but each "use" is a single multiply (lower per-element activity).
 This per-MMA-cycle reuse asymmetry is the underlying cause of the B>>A
 power dominance observed in pure-tcgen05 microbenches across all 6 formats.
 
+
+---
+
+## Cross-precision verification: FP8 e4m3 confirms B-reuse mechanism
+
+FP8 e4m3 M×N sweep at -lgc 1005 MHz, single-warp issuer, 50M iters:
+
+| M, N | ZZ | A_only Δ | B_only Δ | B/A ratio |
+|------|---:|---------:|---------:|----------:|
+| 64, 64 | 214 | +9 | +106 | 11.8× |
+| 64, 128 | 237 | +6 | +151 | 25.2× |
+| 128, 64 | 250 | +12 | +178 | 14.8× |
+| **128, 128** | 289 | **+11** | **+266** | **24.2×** |
+| 128, 256 | 288 | +7 | +255 | 36.4× |
+
+Identical pattern to BF16:
+- A operand contribution stays nearly FLAT (6-12W) regardless of size
+- B operand contribution scales LINEARLY with M (B reuse rate)
+- Both saturate at N>=128 (multiplier issue rate maxed)
+
+Cross-precision absolute B-only at m=128 n=128:
+| Precision | B-only Δ | Note |
+|-----------|---------:|------|
+| BF16 (K=16) | +205 W | |
+| FP8 e4m3 (K=32) | +266 W | +30% (2× elements per cycle) |
+| NVFP4 (K=64) | +125 W | (single-warp limited at 65% MFU) |
+
+**The B-reuse-drives-power mechanism is universal** across BF16, FP8, NVFP4
+when measured at single-CTA tcgen05.mma direct PTX. The exact magnitude
+depends on per-cycle element count (precision × K).
+
+This strengthens the multiplier-port-asymmetry conclusion:
+- B operand sits on the "multiplicand" port that fires across M MAC units
+  per cycle (more parallel switching activity per B byte loaded)
+- A operand sits on the "multiplier" port read once per multiplier element
+  (less per-byte activity)
+
+This is HARDWARE-ARCHITECTURE level, not format-specific.
