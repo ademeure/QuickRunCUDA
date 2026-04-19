@@ -483,3 +483,77 @@ the harness, which appears to be ~0 at this measurement granularity.
 - HIGH on the 183W cost of random sign+mant on top of exp=255
 - MED on whether normal-range constant (exp=127, all 0 mant+sign) matches
   Inf savings (~309W) - need test
+
+---
+
+## 3-TIER constant-B power model (REPLICATED, clean)
+
+Tested all common B-constant values (10+ specific values) at 50M iter,
+3 runs each. EXTRAORDINARILY clean - σ ≤ 1W per tier.
+
+| B value | Specific bits | Power | Tier |
+|---------|---------------|------:|------|
+| all-zero | 0x0000 | 294 | **A: clock-gated** |
+| +1.0 | s=0 e=127 m=0 | 299 | B |
+| +2.0 | s=0 e=128 m=0 | 299 | B |
+| +6.0 | s=0 e=129 m=0x40 | 299 | B |
+| +1.5 | s=0 e=127 m=0x40 | 299 | B |
+| -1.0 | s=1 e=127 m=0 | 299 | B |
+| smallest normal | s=0 e=1 m=0 | 298 | B |
+| largest normal | s=0 e=254 m=0x7F | 299 | B |
+| **subnormal** | s=0 e=0 m=0x40 | **299** | **B (!)** |
+| +Inf | s=0 e=255 m=0 | 308 | **C: Inf/NaN** |
+| NaN | s=0 e=255 m=0x7F | 308 | C |
+
+### Three distinct power tiers
+
+- **Tier A (294 W)**: All-zero ONLY. True clock-gating.
+- **Tier B (299 W = +5W vs A)**: Any non-zero non-Inf constant.
+  - Mantissa value irrelevant
+  - Sign value irrelevant
+  - Exponent value irrelevant (subnormal e=0 included if mant constant)
+  - +5W is the basic "non-zero constant has SOME state" overhead
+- **Tier C (308 W = +9W vs B = +14W vs A)**: Inf or NaN constant.
+  - Detector logic active
+
+### IMPORTANT correction to prior 3-tier exp model
+
+The earlier "+20W subnormal penalty" (mode 900: exp=0 random mant = 510W)
+was NOT due to subnormal handling per se. It was due to RANDOM MANTISSA with
+subnormal exponent.
+
+Constant subnormal (mode 1407, e=0 mant=0x40) sits at 299W = Tier B normal.
+
+So the corrected mechanism:
+- Random within subnormal range: ~+20W (subnormal handling logic stays
+  active because of value VARIATION)
+- Constant subnormal value: no penalty — just regular Tier B
+
+### Updated comprehensive power model for B operand
+
+1. **All-zero**: 294W (Tier A, full gating)
+2. **Any non-zero non-Inf constant**: 299W (Tier B, +5W)
+3. **Inf or NaN constant**: 308W (Tier C, +14W)
+4. **exp constant + random mant + random sign** (e.g. exp=127): 488W
+5. **Random within subnormal exp**: 510W (+~20W for variation in subnormal range)
+6. **Random within Inf/NaN range** (exp=255 random mant): 492W (in normal Tier C
+   range, fast-path active for many but variation costs)
+7. **Random everything**: 599-606W
+
+### Decomposition validity
+
+- Cost of "constant non-zero" vs "constant zero": +5W
+- Cost of "Inf/NaN detector overhead" vs "regular non-zero": +9W
+- Cost of "random sign" on top of constant exp+mant: +77W
+- Cost of "random mant" on top of constant exp+sign: +115W
+- Cost of "random sign+mant" on top of constant exp: +183W (slight super-add)
+- Cost of "random everything" on top of constant: +305W (= total random penalty)
+
+### Confidence
+
+- HIGH on 3-tier structure (10+ values tested, 3 replicates per tier)
+- HIGH on subnormal-constant being in Tier B not separate (replicated 3x)
+- HIGH on Inf/NaN +9W vs other constants
+- HIGH on subnormal-with-random-mant being penalty (510W consistent)
+- The earlier "subnormal penalty" framing was misleading - it was actually
+  "random variation within subnormal range" penalty

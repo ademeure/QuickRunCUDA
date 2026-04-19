@@ -125,8 +125,31 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
             } else if (mode == 1205) {
                 // B = NaN with random mant, sign=0, exp=255
                 w = (r & 0x007F007Fu) | 0x7F807F80u;
-                // ensure mant!=0 (force LSB) so it's NaN not Inf
                 w |= 0x00010001u;
+            } else if (mode == 1400) {
+                // B = constant +1.0 (s=0 e=127 m=0)
+                w = 0x3F803F80u;
+            } else if (mode == 1401) {
+                // B = constant +2.0 (s=0 e=128 m=0)
+                w = 0x40004000u;
+            } else if (mode == 1402) {
+                // B = constant +6.0 (s=0 e=129 m=0x40)
+                w = 0x40C040C0u;
+            } else if (mode == 1403) {
+                // B = constant +1.5 (s=0 e=127 m=0x40)
+                w = 0x3FC03FC0u;
+            } else if (mode == 1404) {
+                // B = constant -1.0 (s=1 e=127 m=0)
+                w = 0xBF80BF80u;
+            } else if (mode == 1405) {
+                // B = constant +smallest-normal (s=0 e=1 m=0) ~ 2^-126
+                w = 0x00800080u;
+            } else if (mode == 1406) {
+                // B = constant +largest-normal (s=0 e=254 m=0x7F) ~ 2^127
+                w = 0x7F7F7F7Fu;
+            } else if (mode == 1407) {
+                // B = constant subnormal (s=0 e=0 m=0x40) ~ 2^-127 if subnormal
+                w = 0x00400040u;
             } else {
                 // For mode >= 400 (A bit forcing), B is random
                 w = r;
