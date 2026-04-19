@@ -4,20 +4,27 @@ Comprehensive synthesis of measured peak compute, achieved BW, sustained power,
 and TFLOPS/W for every major B300 precision and operation type. All numbers
 measured at 2032 MHz boost (default) on B300 SXM6 sm_103a, no clock lock.
 
-## Compute peaks (mma.sync direct + cuBLAS)
+## Compute peaks (mma.sync direct + cuBLAS) — CORRECTED 2026-04-19
 
 | Precision | Path | Measured TFLOPS | NVIDIA Spec | % Spec | Power | TFLOPS/W |
 |-----------|------|---------------:|------------:|-------:|------:|---------:|
-| FP32 FFMA  | scalar 8-chain     | **70.6**   |    76 |   93%  | 435 W | **0.16** |
+| FP32 FFMA  | scalar 8-chain (DCE-safe) | **70.6**   |    76 |   93%  | 435 W | **0.16** |
 | FP64 DFMA  | scalar 4-chain     | **1.0**    |   1.2 |   84%  | (~250 W est) | 0.004 |
-| BF16 mma.sync | m16n8k16 4-chain | **2309**   |  2500 |   92%  | 405 W | **5.7** |
-| BF16 cuBLAS  | algoId=66 (8K³)   | **2237**   |  2500 |   89%  | (similar) | 5.5 |
-| BF16 mma.sync (S1 peak) | m16n8k16 16 warps/SM | **2262** | 2500 | 90.5% | 405 W | **5.6** |
-| FP8 cuBLAS  | tcgen05 (prior)    | **~4500**  |  5000 |   90%  | 940 W | **4.8** |
+| TF32 mma.sync | m16n8k8 4-chain | **289.5**  |  288 (catalog) |  101%  | n/a | n/a |
+| **BF16 mma.sync (CORRECTED)** | m16n8k16 strict anti-DCE | **578**   |  2500 |  **23%**  | **255 W** | **2.3** |
+| BF16 cuBLAS  | algoId=66 (8K³, tcgen05) | **2237**   |  2500 |   89%  | 940 W (cudaGraph) | **2.4** |
+| INT8 mma.sync | m16n8k32 (HW-throttled) | **37 TOPS** | 5000 | 0.7% | n/a | n/a |
+| FP8 cuBLAS  | tcgen05 (prior session) | **~4500**  |  5000 |   90%  | 940 W | **4.8** |
 | FP4 cuBLAS  | tcgen05 K=96 (prior) | **10800** | 15000 |  72%  | 940 W | **11.5** |
+| FP8 mma.sync direct | (SASS aliases to BF16) | UNRELIABLE | 5000 | — | — | use cuBLAS |
+| FP4 mma.sync direct | NOT SUPPORTED on sm_103a | — | 15000 | — | — | use cuBLAS |
 
-Sources: S1 (mma.sync), B3 (cuBLAS sweep), prior commits in NINJA_ACHIEVEMENTS.md
-+ b300_clean/04_fp32_peak.md, 06_tensor_cores.md.
+⚠ **2026-04-19 RETRACTION**: BF16 mma.sync prior entry (2262 TF / 90.5%)
+was DCE'd. Correct value via strict anti-DCE = **23% spec via direct mma.sync**;
+**90% spec only via cuBLAS algoId=66 (tcgen05)**.
+
+Sources: S1-RETRACTED+S4-CONFIRMED (mma.sync), B3 (cuBLAS sweep),
+b300_clean/04_fp32_peak.md, 06_tensor_cores.md, SESSION_2_DELTA.md.
 
 ## Memory bandwidth
 
@@ -25,7 +32,8 @@ Sources: S1 (mma.sync), B3 (cuBLAS sweep), prior commits in NINJA_ACHIEVEMENTS.m
 |-----------|------------:|-----:|-------:|------:|
 | HBM read  (grid-stride int4) | **7.31 TB/s** | 7.67 | 95.3% | 720 W |
 | HBM write (cudaMemset DMA)   | **7.27 TB/s** | 7.67 | 94.8% | (~600 W est) |
-| L2 read   (64 MB WS, warm)   | **26.7 TB/s** | 38   | 70%   | (~400 W est) |
+| L2 read   (64 MB, L1+L2 effective) | **26.7 TB/s** | 38   | 70%   | (~400 W est) |
+| **L2 read pure (ncu lts__t_bytes)** | **21.0 TB/s** | 21 catalog | 100% | (~300 W) | (B2 correction)
 | SMEM LDS  (LDS.128, 4 SMSPs) | **38.0 TB/s** | 38.5 | 99%   | (low) |
 | SMEM STS  (STS.32, 4 SMSPs)  | **37.5 TB/s** | 38.5 | 97%   | (low) |
 | NVLink P2P (single-dir, 1 GB) | **773 GB/s** | 783  | 99%   | — |
@@ -38,8 +46,8 @@ Idle baseline: 200 W
 | Workload | Power | Δ from idle |
 |----------|------:|------------:|
 | Pure FFMA (8 chains)         | 435 W | +235 W (compute pipe) |
-| Pure HMMA legacy (16 warps/SM) | 405 W | +205 W (tensor) |
-| HMMA + FFMA same warp        | 424 W | +224 W (compute + ALU) |
+| **HMMA legacy strict anti-DCE 8 warps/SM (580 TF actual)** | **255 W** | **+55 W (tensor) — CORRECTED** |
+| HMMA + FFMA same warp (DCE'd) | 424 W | +224 W [needs strict re-test] |
 | HMMA + LDG (LDG stalls!)     | 305 W | +105 W |
 | Kitchen sink (4 roles)       | 280 W | +80 W |
 | **Pure HBM read**            | **720 W** | **+520 W (memory dominates!)** |
