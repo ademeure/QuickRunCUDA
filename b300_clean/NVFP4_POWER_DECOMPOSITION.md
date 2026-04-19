@@ -140,3 +140,64 @@ Excluding 1 of 16 values → ZERO measurable power change. Bit-switching dominat
 - HIGH on A operand port datapath asymmetry (verified by ncu equal memory traffic)
 - MED on the linear-additivity model (slight super-additivity remains unexplained)
 - LOW on whether this generalizes beyond M=N=8K K=15K (didn't sweep shapes)
+
+---
+
+## BF16 cuBLAS comparison — operand asymmetry REVERSES
+
+Tested same M=N=8192 K=15360 with cuBLAS BF16 (HMMA legacy path).
+
+ncu confirms BF16 cuBLAS uses **identical cluster shape to NVF4**:
+- Kernel: `nvjet_sm103_tst_256x256_64x4_2x1_2cta_v_bz_TNT`
+- Cluster Size: 2 (= cluster (2,1))
+- Block Size: 256, Grid: 1024
+- 2-CTA MMA mode
+
+### BF16 power table @ -lgc 1005 MHz
+
+| Pattern | TFLOPS | MFU @ 1005 | Power (trim) |
+|---------|-------:|-----------:|-------------:|
+| zz (zero) | 1178 | 95.2% | 417 W |
+| pp (+1.0) | 1177 | 95.1% | 439 W |
+| nn (-1.0) | 1177 | 95.1% | 443 W |
+| 33 (+3.0) | 1177 | 95.1% | 431 W |
+| 0x55 / 0xaa | 1177 | 95.1% | 444-445 W |
+| **rr (random)** | **1165** | **94.2%** | **805 W** |
+
+Random penalty: +388 W (vs NVF4's +412 W — close).
+
+### BF16 per-tensor isolation (REVERSED from NVF4!)
+
+| Pattern | Power | Δ vs zzzz | Δ vs rrrr |
+|---------|------:|----------:|----------:|
+| zzzz baseline | 417 W | 0 | -388 |
+| **A=rand only** | 498 W | +81 W | -307 |
+| **B=rand only** | **648 W** | **+231 W** | **-157** |
+| rrrr baseline | 805 W | +388 | 0 |
+| A=zero (B rand) | 647 W | +230 | -158 |
+| **B=zero (A rand)** | **495 W** | **+78** | **-310** |
+
+| Path | A rand cost | B rand cost | Dominant operand |
+|------|------------:|------------:|------------------|
+| **NVF4 UTCMMA** | 204-256 W | 64-120 W | **A (~2-3× B)** |
+| **BF16 HMMA** | 81-158 W | 231-310 W | **B (~2.0-2.9× A)** |
+
+### Architectural conclusion
+
+Same cluster shape (2,1) both paths → operand-port asymmetry is NOT
+geometry-induced. It's a hardware property of the multiplier circuit:
+
+- B300 SM has at least two distinct tensor-core multiplier datapaths
+  (HMMA legacy + UTCMMA modern)
+- They have **OPPOSITE operand-port power asymmetries**
+- HMMA: B port dominates (loaded-once, broadcast-reuse pattern in older
+  multiplier may have larger sense amps on B side)
+- UTCMMA: A port dominates (newer multiplier reorganization with TMA
+  feeding A more aggressively, possibly through an asymmetric tcgen05
+  pipeline stage)
+
+This is a useful insight for software optimization: post-ReLU activations
+saved ~70W on the NVF4 sign bit. For BF16 paths, the equivalent benefit
+would come from reducing **B operand variability** (e.g., constant weights
+at runtime would benefit BF16 more than NVF4).
+
