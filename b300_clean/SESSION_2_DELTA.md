@@ -450,3 +450,47 @@ PRACTICAL takeaway for D4 / production:
 LESSON: when "refuting" a catalog number, check what reference the catalog
 is using BEFORE concluding it's wrong. The 23% claim and the 93.7% claim
 are the same physical measurement, just framed against different pipes.
+
+## Pipe matrix HMMA findings ALSO retracted (2026-04-19)
+
+Re-tested with strict anti-DCE. Both HMMA chain-count AND HMMA+STS combos
+were affected by the same DCE issue.
+
+### HMMA chain scaling — strict anti-DCE
+
+|chains| time   | TFLOPS | % LEGACY |
+|------|-------:|-------:|---------:|
+| 1    | 0.226 ms | 550 TF | 89.4% |
+| 2    | 0.444   | 559   | 90.7% |
+| 3    | 0.645   | 577   | 93.7% |
+| 4    | 0.858   | 579   | 94.0% |
+
+CORRECT picture: HMMA chains DO add work and time (nearly linear scaling).
+Per-instruction throughput stays at 89-94% of legacy regardless of chain
+count. Prior "1 chain ≡ 4 chains in time" was DCE artifact.
+
+### HMMA+STS combos — strict anti-DCE
+
+|H | S | time   | max(H,S) | overhead |
+|--|---|-------:|---------:|---------:|
+|1 | 0 | 0.225 ms |     —    |     —     |
+|4 | 0 | 0.858   |     —    |     —     |
+|0 | 1 | 0.106   |     —    |     —     |
+|0 | 4 | 0.408   |     —    |     —     |
+|1 | 1 | 0.254   | 0.225    | +13%      |
+|4 | 1 | 0.885   | 0.858    | +3% (STS nearly FREE!) |
+|1 | 4 | 0.544   | 0.408    | +33%      |
+|4 | 4 | 0.968   | 0.858    | +13%      |
+
+CORRECT picture: HMMA and STS pipes are MOSTLY INDEPENDENT (3-33% overlap
+overhead, depending on which dominates). Adding 1 STS to a 4-chain HMMA
+loop costs only +3% time — STS truly piggybacks on HMMA's idle cycles.
+
+This is OPPOSITE of prior "40% partial overlap" claim and the bizarre
+"chain count doesn't matter" finding. Both were DCE artifacts.
+
+REAL guidance for kernels mixing HMMA + SMEM stores:
+- 1 STS per HMMA-pulse: nearly free (<13% overhead)
+- 4 STS per HMMA-pulse: noticeable (+33% if HMMA short)
+- HMMA chains add proportional work — there's no "free" extra chain
+
