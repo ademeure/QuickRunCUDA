@@ -494,3 +494,25 @@ REAL guidance for kernels mixing HMMA + SMEM stores:
 - 4 STS per HMMA-pulse: noticeable (+33% if HMMA short)
 - HMMA chains add proportional work — there's no "free" extra chain
 
+
+## MIO unification VERIFIED stands (strict anti-DCE)
+
+Re-tested STS+SHFL combo with always-write:
+   STS only:    0.207 ms
+   SHFL only:   0.209 ms
+   STS+SHFL:    0.423 ms ≈ STS+SHFL summed (0.416 ms)
+
+Combo time = approximate SUM of alones → STS and SHFL run SEQUENTIALLY
+through the shared MIO port. They cannot overlap.
+
+This CONFIRMS the MIO unification finding from prior iteration. The STS
+volatile write kept the SHFL chain alive (chain-output-aliased DCE issue
+didn't apply here because vsmem[] writes use v).
+
+Practical: kernels mixing SMEM ops compete for MIO. Don't expect parallelism
+between STS/LDS/SHFL/ATOMS — they take turns on the per-SM port.
+
+So the MIO architecture (STS/LDS/SHFL/ATOMS share per-SM port) is REAL
+and the original measurements from commit `c09c661` STAND.
+
+Confidence: HIGH (strict re-test matches prior measurement to <2%)
