@@ -374,6 +374,42 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 unsigned short ve = h(n_idx_e);
                 unsigned short vo = h(n_idx_o);
                 w = ((unsigned)vo << 16) | ve;
+            } else if (mode >= 3000 && mode <= 3007) {
+                // POSITION-INVARIANCE TEST: 4 sub-tiles unique, 4 shared (=pattern_id 0)
+                // Different placements:
+                // 3000: shared at positions [0,2,4,6], unique at [1,3,5,7] (alternating)
+                // 3001: shared at [1,3,5,7], unique at [0,2,4,6] (alternating, opposite phase)
+                // 3002: shared at [0,1,2,3], unique at [4,5,6,7] (clustered, equiv to 2904)
+                // 3003: shared at [4,5,6,7], unique at [0,1,2,3] (clustered, mirror)
+                // 3004: shared at [0,1,4,5], unique at [2,3,6,7] (paired)
+                // 3005: shared at [2,3,6,7], unique at [0,1,4,5] (paired, mirror)
+                // 3006: shared at [0,1,2,4], unique at [3,5,6,7] (asymmetric A)
+                // 3007: shared at [3,4,5,7], unique at [0,1,2,6] (asymmetric B)
+                int npair = idx % 64;
+                int sub_tile = npair / 8;
+                int pos_in_tile = npair % 8;
+                int placement_mask;
+                if (mode == 3000) placement_mask = 0b10101010;
+                else if (mode == 3001) placement_mask = 0b01010101;
+                else if (mode == 3002) placement_mask = 0b11110000;
+                else if (mode == 3003) placement_mask = 0b00001111;
+                else if (mode == 3004) placement_mask = 0b11001100;
+                else if (mode == 3005) placement_mask = 0b00110011;
+                else if (mode == 3006) placement_mask = 0b11101000;
+                else placement_mask = 0b00010111;  // 3007
+                int is_unique = (placement_mask >> sub_tile) & 1;
+                int pattern_id = is_unique ? sub_tile : 0;
+                int n_seed_e = pos_in_tile * 2 + pattern_id * 100;
+                int n_seed_o = pos_in_tile * 2 + 1 + pattern_id * 100;
+                auto h = [](int nn) -> unsigned short {
+                    unsigned hh = 0xC0FFEE13u ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    return (unsigned short)(hh & 0xFFFF);
+                };
+                unsigned short ve = h(n_seed_e);
+                unsigned short vo = h(n_seed_o);
+                w = ((unsigned)vo << 16) | ve;
             } else if (mode >= 2900 && mode <= 2908) {
                 // SUB-TILE DEDUP TEST: 8 sub-tiles of 16 N each.
                 // K_break = mode - 2900 sub-tiles use UNIQUE pattern; rest use SHARED pattern 0.

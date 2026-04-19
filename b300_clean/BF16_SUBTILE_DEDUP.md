@@ -98,3 +98,51 @@ where:
 4. **Combined K-cycle and sub-tile interaction**: K-vary HIGH ENTROPY +
    varying sub-tile uniformity.
 5. **Discover the 4-slot "cache"**: does it scale with M? With cluster?
+
+---
+
+## Position-invariance test (modes 3000-3007): POSITION MATTERS
+
+All have 4 unique sub-tiles + 4 shared, only placement varies:
+
+| Mode | Mask | Sequence | Power (W) |
+|-----:|:-----|:---------|----------:|
+| 3000 | 0xAA | 0,1,0,3,0,5,0,7 | **614** (worst) |
+| 3001 | 0x55 | 0,0,2,0,4,0,6,0 | 503 |
+| 3002 | 0xF0 | 0,0,0,0,4,5,6,7 | **342** (best!) |
+| 3003 | 0x0F | 0,1,2,3,0,0,0,0 | **611** (mirror of 3002, but full cost!) |
+| 3004 | 0xCC | 0,0,2,3,0,0,6,7 | 542 |
+| 3005 | 0x33 | 0,1,0,0,4,5,0,0 | 486 |
+| 3006 | 0xE8 | 0,0,0,3,0,5,6,7 | 459 |
+| 3007 | 0x17 | 0,1,2,0,4,0,0,0 | 557 |
+
+### Key observation: 3002 vs 3003 mirror asymmetry
+
+- **3002 (4 same FIRST, then 4 unique)**: 342 W (saves nearly all)
+- **3003 (4 unique FIRST, then 4 same)**: 611 W (no savings!)
+
+These have the SAME number of unique sub-tiles AND the SAME number
+of adjacent-equal pairs (3 adj-eq each), but power differs by 269 W.
+
+### Best-fit model (so far): "STICKY ACTIVATION"
+
+The B operand port appears to start in a "low-power gated" state
+and gets ACTIVATED upon encountering the first non-shared sub-tile.
+Once activated, it STAYS ACTIVATED — even if subsequent sub-tiles
+revert to a previously-seen pattern.
+
+Predictions vs actual:
+- 3000 (activates at t=1, runs full to t=7): predict 8 active = 605 W; actual 614 W ✓
+- 3001 (activates at t=2): predict 6 active = ~518 W; actual 503 W ✓
+- 3002 (activates at t=4): predict 4 active = ~474 W; actual 342 W (better)
+- 3003 (activates at t=1): predict 7 active = ~566 W; actual 611 W ✓
+- 3005 (activates at t=1): predict 7 active = 566 W; actual 486 W (off)
+
+Sticky activation model fits 4 of 8 well; 3002 and 3005 underestimate
+power saving. Likely there's an additional secondary gating mechanism
+when the MMA runs N-direction sub-tile sweeps in chunks.
+
+Key implication: **the order of N values matters for power consumption**.
+Software that wants to minimize tensor core power can pre-sort B
+values such that the most-repeating sub-tile pattern appears at low
+N indices.
