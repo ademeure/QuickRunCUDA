@@ -177,3 +177,34 @@ register-staged rows in RF. Default occupancy spills 64-reg/thread to L1
 Generated 2026-04-18/19 across multiple /loop iterations. All findings
 backed by `investigations/ninja_*.cu` files. See CURIOSITY_LIST_V2.md
 for full per-item details and commit hashes.
+
+## HMMA+STS contention deep-dive (commit pending)
+
+The pipe matrix said "HMMA+STS = PARTIAL 40% overlap" — turns out the model
+is more nuanced. Combo time depends ONLY on STS count, NOT HMMA chains:
+
+| Workload | Time | Notes |
+|----------|-----:|-------|
+| HMMA chains=1 | 0.219 ms | Already saturates tensor pipe |
+| HMMA chains=2 | 0.219 ms | Same — pipe is full |
+| HMMA chains=4 | 0.219 ms | Same |
+| STS only count=1 | 0.106 ms | |
+| STS only count=4 | 0.408 ms | 4× linear |
+| HMMA=1 + STS=1 | 0.285 ms | overhead +66 us vs max |
+| HMMA=4 + STS=1 | 0.285 ms | SAME — extra HMMA chains free |
+| HMMA=4 + STS=4 | 0.542 ms | overhead +134 us vs max |
+| HMMA=1 + STS=4 | 0.542 ms | SAME — proves chain count doesn't matter |
+
+KEY INSIGHT: **HMMA chain count is IRRELEVANT to combo time**. With just
+1 HMMA chain × 16 warps/SM, the tensor pipe is already saturated. Adding
+more chains doesn't add work; adding more STS takes SMSP issue cycles
+that would otherwise issue HMMAs.
+
+For real workloads (GEMM with epilogue STS, attention with output write):
+- The STS overhead is bounded by STS count, not by HMMA depth
+- 1 STS per inner step costs ~66 us extra per launch ≈ 30% slowdown
+- 4 STS per inner step costs ~134 us extra ≈ 33% slowdown
+
+PRACTICAL: don't spread STS across many chains; batch them. The pipe penalty
+is roughly 30% per "STS pulse" regardless of how it interleaves with HMMA.
+
