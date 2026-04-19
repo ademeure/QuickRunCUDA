@@ -329,3 +329,64 @@ spanning 3 PTX kinds** (kind::f16, kind::f8f6f4, kind::mxf4nvf4.block_scale).
 
 The B-reuse mechanism (B broadcast across M MAC units per cycle) explains
 the asymmetry mechanistically and predicts the observed scaling pattern.
+
+---
+
+## B replication pattern sweep — uncovered the 32-element MAC group structure
+
+BF16 m=128 n=128 K=16 microbench with controlled replication patterns in B
+(A always random, REP_MODE selects how B values repeat):
+
+### K-direction replication (B[k]==B[k+stride] in K direction):
+| Mode | Power | Δ vs random |
+|------|------:|------------:|
+| BASELINE rand | 606 W | 0 |
+| K-pair | 599 | −7 |
+| K-quad | 588 | −18 |
+| K-half | 579 | −27 |
+| K-all (all 16 K-rows identical) | 581 | −25 |
+
+K-replication has **TINY effect** — even all-K-identical only saves ~25W.
+
+### N-direction replication (B[n]==B[n+stride] in N direction):
+| Mode | Power | Δ vs random |
+|------|------:|------------:|
+| N-pair (stride 2) | 594 | −12 |
+| N-quad (stride 4) | 580 | −26 |
+| N-stride 8 | 585 | −21 |
+| N-stride 16 | 592 | −14 |
+| **N-stride 32** | **480** | **−126** ← CLIFF |
+| **N-stride 64** | **391** | **−215** |
+| N-all (stride 128) | 366 | −240 |
+| K-half + N-stride 64 (combined) | **349** | **−257** ← min |
+
+### Mechanistic discovery: 32-element MAC group structure
+
+Sharp cliff between N-stride-16 (592W) and N-stride-32 (480W) — 112W drop
+in a single step.
+
+This reveals **B is broadcast across 32 parallel MAC units per cycle** in
+the multiplier datapath (matches B300 SMSP width = 32 lanes). When all
+32 N positions within one MAC group share the same B value, the 32 MACs
+see identical operand → massive switching reduction.
+
+Strides <32 keep within-group N distinct → no benefit.
+Strides ≥32 align with MAC group boundary → power drops dramatically.
+
+Continued doubling stride (64, 128) gives further savings as multiple
+MAC groups also align.
+
+K-direction replication doesn't help because K is the inner-loop dim
+that's pipelined cycle-by-cycle without inter-cycle operand reuse
+detection in the B port.
+
+### Practical implication
+
+For workloads where you control B's structure (e.g., tiled MoE expert
+matrix, structured sparsity, repeated weight patterns), **N-aligned-32
+replication patterns give significant power savings**. K-direction
+patterns barely matter for power.
+
+This also explains why our earlier per-tensor isolation showed B power
+scales with M (more M = more reuse across MAC units of same B). It's
+literally the broadcast-to-32-MACs effect being amplified by M iterations.
