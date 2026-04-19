@@ -607,3 +607,60 @@ The BSZ=4 outlier (+11W) is unexpected. Possibly:
 - HIGH: spatial periodicity matters separately
 - MED: 16-MAC-chunk hypothesis (consistent but not directly verified)
 - LOW: exact mechanism (clock-gating? value prediction? pipeline?)
+
+---
+
+## Why does stride-2 (2 unique signs) save LESS than stride-4 (4 unique)?
+
+This was confusing — fewer unique signs intuitively should help more.
+Resolution: **alternation rate matters separately from unique count**.
+
+### Adjacent-N sign-flip rate per stride mode
+
+For period-X stride, each 2 adjacent N positions have sign flip with
+probability:
+- Stride 2: ABABAB → if A≠B, flip at every position = **100% flip rate**
+- Stride 4: ABCD repeated → ~50% flip rate (random ABCD)
+- Stride 8/16: ~50% flip rate
+- Period 1 (single sign): 0% flip rate
+- Block-uniform large block: 0% within block, 50% at block boundaries
+
+### Updated mental model: TWO factors, not one
+
+Power savings depend on:
+1. **Adjacent-N sign flip rate** (high = bad for the sum-tree's sign-handling
+   logic that computes conditional negation before accumulator add)
+2. **32-element chunk alignment** (period ≤16 means chunks identical
+   cycle-to-cycle → stable register state)
+
+Combined effect:
+
+| Mode | Flip rate | Chunk align | Net Δ |
+|------|----------:|------------:|------:|
+| Stride 2 | 100% (bad) | OK (period 2) | −28 W (mixed) |
+| Stride 4-16 | 50% (OK) | OK (period ≤16) | −54 to −58 W (both good) |
+| Stride 32-64 | 50% (OK) | bad (chunks unique) | −10 W (mixed) |
+| Period 1 / mode 4 | 0% (best) | trivially OK | −57 W (both good) |
+| Block-uniform BSZ=4 | ~50% (boundary noise) | bad | +11 W (worst) |
+| Block-uniform BSZ=64 | small (in-block 0%) | partial | −49 W (good-ish) |
+
+This explains:
+- Stride 2 underperforms due to 100% flip rate
+- Stride 4-16 best because both factors aligned
+- Stride 32+ regress because chunks become non-aligned
+- Block-uniform messy because random block boundaries cause inconsistent alignment
+
+### Practical implication
+
+For workloads where you control B sign distribution:
+- **Avoid stride-2 alternation** (100% flip rate is worst case)
+- **Single sign per K row** is optimal (mode 4: −57 W = ReLU equivalent)
+- **Period-4-to-16 patterns also near-optimal** (~−55 W)
+- **Random-grouped block patterns** (block-uniform) only marginally help unless block ≥64
+
+### Confidence
+
+- HIGH on flip-rate vs chunk-align as TWO separate factors
+- HIGH on stride 2 underperforming due to 100% flip rate
+- MED on exact chunk alignment threshold (32 elements per cycle, but
+  effective alignment may be smaller)
