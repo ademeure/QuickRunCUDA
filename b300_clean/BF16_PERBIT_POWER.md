@@ -352,3 +352,64 @@ For workloads:
 
 Avoid pushing data into subnormal range if power-optimizing — actually
 HURTS rather than helps despite "smaller values" intuition.
+
+---
+
+## Refined: 3-tier exponent power model (not just subnormal vs normal)
+
+Fine-grained boundary sweep with replication (noise σ≈1-2W from 3-run replicates):
+
+| Exp value | Power (run avg) | Δ vs rand baseline 606 |
+|----------:|----------------:|-----------------------:|
+| 0 (subnormal/zero) | 503-512 → ~503 | −103 |
+| 1 (smallest normal) | 502 | −104 |
+| 2-16 (small normal) | 498-503 | −106 |
+| **127 (~1.0)** | **482-486 → ~483** | **−123 ← OPTIMUM** |
+| 253 | 490 | −116 |
+| 254 (largest normal) | 489 | −117 |
+| **255 (Inf/NaN)** | **483-488 → ~484** | **−122 ← matches optimum** |
+
+### Three tiers, not two
+
+1. **Subnormal (exp=0)**: ~+20 W penalty vs optimum. Multiplier processes
+   through gradual underflow path → extra cycles of denorm logic active.
+2. **Small-normal (exp=1-16)**: ~+18 W penalty vs optimum. Possibly
+   precision-related logic for "near-underflow" still partially activated.
+   This is NEW — wasn't visible in the coarse sweep.
+3. **Normal optimum (exp ~32-254)**: ~−123 W max savings. Standard
+   multiplier path.
+4. **Inf/NaN (exp=255)**: ~same savings as optimum! HW likely has fast-detect
+   that bypasses the normal multiplier compute path → no penalty.
+
+### The Inf/NaN fast-path discovery
+
+Inf/NaN handling could naively be expected to ADD power (special case logic
+firing). Instead, it MATCHES the optimum. This strongly suggests the HW has
+a **fast-detect Inf/NaN bypass** that short-circuits to the output without
+running the full multiplier datapath. Same kind of savings as forcing a
+constant value through the multiplier.
+
+### Implication for prior bit-14 analysis
+
+When bit 14 (exp MSB) alone is forced to 0:
+- Random other exp bits → exp uniformly distributed in [0, 127]
+- Of these: exp=0 (1/128 = 0.8%) gets max subnormal penalty
+- exp=1-16 (16/128 = 12.5%) get mild "small-normal" penalty
+- exp=17-127 (111/128 = 87%) get optimum savings
+
+Average penalty per element: 0.008 × 20 + 0.125 × 18 + 0.87 × 0 ≈ +2.4 W
+penalty vs full-optimum exp range. Small effect — but bit 14 alone shows
+−13 to −15 W savings vs other exp bits' −30 W. The ~17 W gap is hard to
+explain with this 2.4 W population statistics.
+
+So the bit-14 anomaly may have a different mechanism than just subnormal
+population. Possibly: bit 14 specifically gates a dedicated logic path
+(e.g., FP-format-class detector) that costs power when always-low.
+
+### Confidence
+
+- HIGH on Inf/NaN matching optimum (3 replicates, ~1W variance)
+- HIGH on 3-tier structure (multiple datapoints in each tier)
+- HIGH on subnormal +20W penalty (replicated, well above noise)
+- MED on small-normal +18W tier interpretation (could be measurement effect)
+- LOW on the precise mechanism for bit-14 anomaly (unresolved)
