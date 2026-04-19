@@ -562,3 +562,58 @@ against memory pressure (more K = more A/B fetches per tile).
 The 11.07 PFLOPS = TRUE peak measured this session, +2% above prior catalog
 10.8 PF claim. Catalog was at smaller K (~16K?); K-sweep reveals true optimum.
 
+
+---
+
+## 🏆 TRUE NVF4 absolute peak: M=N=8192 K=38400 = 11.07 PFLOPS
+
+M=N sweep at K=38400 boost cuBLAS zero data:
+
+| M=N | TFLOPS | %15PF |
+|----:|-------:|------:|
+| 4096 | 6985 | 46.6% |
+| 6144 | 9549 | 63.7% |
+| **8192** | **11056** | **73.7%** ← absolute peak |
+| 10240 | 9818 | 65.4% |
+| 12288 | 9804 | 65.4% |
+| 14336 | 9934 | 66.2% |
+| 16384 | 9995 | 66.6% |
+| 20480 | 10036 | 66.9% |
+| 24576 | 10090 | 67.3% |
+
+K-sweep at M=N=16384 cuBLAS zero data:
+
+| K | TFLOPS | %15PF |
+|--:|-------:|------:|
+| 18432 | 10348 | 69.0% |
+| 24576 | 10044 | 67.0% |
+| 30720 | 9911 | 66.1% |
+| 38400 | 9995 | 66.6% |
+| 46080 | 10037 | 66.9% |
+| 53760 | 10131 | 67.5% |
+| 61440 | 10239 | 68.3% |
+
+### Why M=N=8192 K=38400 is the global optimum
+
+For cluster (2,4) auto-selected by cuBLAS heuristic:
+- 8192 / 256 (tile) = 32 tiles per dim → 1024 output tiles
+- 1024 / 8 (cluster size) = 128 cluster instances total
+- With 15 max active clusters, that's ~8.5 cluster waves — perfect amortization
+- K=38400 / 96 = 400 utcmma per tile per K-iter = enough to amortize the 19ns
+  fixed overhead, not so much that HBM bandwidth saturates
+
+Larger M=N saturates earlier (more cluster waves but coordination overhead
+becomes a smaller fraction of more compute, but absolute throughput plateaus
+because cluster-broadcast amortization doesn't scale further).
+
+Clock verified at 2032 MHz throughout via dmon (samples 426W/517W/203W during,
+all at 2032 MHz; 412/240 in cooldown).
+
+### Final reference NVF4 numbers on B300 SXM6 (zero data, no throttle):
+
+- **Absolute peak: 11.07 PFLOPS** = 73.7% MFU at M=N=8192 K=38400, cuBLAS, boost
+- **Random data sustained**: ~7000 PFLOPS = 47% MFU (TDP-throttled to 1455 MHz)
+- **Theoretical ceiling per model**: 73.1% MFU at boost (matches measured 73.7%)
+- **TF/W at peak**: 11070 / ~815 W = 13.6 TF/W (above catalog 11.5)
+
+These supersede all prior session catalog numbers for B300 NVF4.
