@@ -279,3 +279,78 @@ CUDA_VISIBLE_DEVICES=0 python3 /tmp/sm103_perf.py \
 - This doc: `b300_clean/NVFP4_CUTEDSL_THROTTLE_DEEP_DIVE.md`
 - Earlier related: `B300_TRUE_REFERENCE.md` D-section, `CURIOSITY_LIST_V2.md`, `D4_PRECISION_POWER_PERF_TABLE.md`
 - Prior commits: `bf46464` (initial throttle finding); this update extends with matrix-shape sweep + zero-data + king-shape 91% MFU
+
+---
+
+## CUTLASS C++ sample 89 (sm103_fp4_ultra_gemm) — comparison
+
+Build: `/root/cutlass/build/examples/89_sm103_fp4_ultra_gemm/89_sm103_fp4_ultra_gemm`
+Source: `/root/cutlass/examples/89_sm103_fp4_ultra_gemm/89_sm103_fp4_ultra_gemm.cu`
+
+**Status: works out of the box** (despite earlier session note claiming
+"Pipeline init: Producer arrival count must be non-zero" runtime assert —
+that was apparently fixed in the CUTLASS 4.4.2 build I have).
+
+The sample reports two MMA configs per run: **1SM MMA** (single-CTA tcgen05)
+and **2SM MMA** (paired-CTA tcgen05, matches CuTeDSL's `cluster_shape_mn=(2,N)`).
+
+### Same shape as CuTeDSL test (M=N=8192 K=15360, -lgc 1005 MHz, ncu actual=972 MHz)
+
+| Config | Duration (ncu) | TFLOPS | MFU @ 972 MHz | SM thpt | L1/TEX | L2 | DRAM |
+|--------|---------------:|-------:|--------------:|--------:|-------:|---:|-----:|
+| CUTLASS 89 default 1SM | 387 us | 5320 | **74.1%** | 82.0% | 79.0% | 58.5% | 32.5% |
+| CUTLASS 89 default 2SM | 389 us | 5300 | **74.3%** | 82.2% | 79.1% | 58.9% | 33.6% |
+| CUTLASS 89 cluster (2,4) 2SM | 372 us | 5544 | **77.7%** | (not measured) | | | |
+| **CuTeDSL cluster (2,1)** | (wall) | **6087** | **82.1%** | (per prev sweep) | | | |
+
+CuTeDSL still beats CUTLASS C++ 89 by ~8pp MFU (82% vs 74%) on the same shape.
+The CUTLASS sample uses ALL 148 SMs (cycles_active 97%) but with worse
+compute density per cycle — utcmma rate 423 M/s vs CuTeDSL 640 M/s.
+
+### Host overhead in CUTLASS 89's benchmark loop
+
+```cpp
+for (int iter = 0; iter < options.iterations; ++iter) {
+    CUTLASS_CHECK(gemm.initialize(arguments, workspace));  // host work each iter!
+    CUTLASS_CHECK(gemm.run());
+}
+```
+
+Result: 5000-iter at 16K² K=15360 takes **43.3s wall-clock** but only
+**16.7s reported kernel** = **39% busy / 61% host overhead**. dmon's
+1Hz polling almost always lands in the host-overhead window, showing
+spurious 204W (looks like idle but is between launches). To get true
+sustained kernel power on this sample you'd need to patch out
+`gemm.initialize()` from the loop.
+
+### Cluster sweep at 1005 MHz, M=N=8192 K=15360 (best of 1SM/2SM)
+
+Note: cluster (1,*) all return "Error Internal at: 503". cluster (8,*) and (*,8) silently empty.
+Working cluster shapes: cluster_m ∈ {2,4}, cluster_n ∈ {1,2,4}.
+
+| Preferred cluster | TFLOPS (2SM MMA) |
+|-------------------|-----------------:|
+| (2,4) | **5544** |
+| (4,4) | 5495 |
+| (4,1) | (need to retest with proper parser) |
+| (default = 1,1?) | 5300 |
+
+Notes:
+- Numbers reported in `GFLOPS` field; TFLOPS = GFLOPS/1e6
+- ncu kernel name shows mainloop tile is `<128, 256, 768>` (768 = 8 × K=96), schedule
+  policy `MainloopSm103TmaUmmaWarpSpecializedBlockScaled<4,7,3,1,...>`
+- Sample exposes `--cluster_fallback_m/--cluster_fallback_n` — if preferred cluster
+  doesn't fit (occupancy / SHMEM limit), schedule falls back
+
+### Verdict
+
+CUTLASS C++ 89 sample is **correct and runs**, but is **slower than CuTeDSL
+example by ~8-15pp MFU** on K-deep matmuls because:
+- CuTeDSL persistent kernel design enables better cluster-broadcast data reuse
+  (37% DRAM vs 33% — close, but CuTeDSL's 67% SM-throughput hides it better)
+- CUTLASS 89 has high host-loop overhead in the benchmark wrapper (61% wall time)
+
+For PRODUCTION code, neither matches cuBLAS catalog 10.8 PF — both are stuck
+in the 5-7 PF range at 1005 MHz, which extrapolates to 10-14 PF at boost
+WITHOUT throttling.
+
