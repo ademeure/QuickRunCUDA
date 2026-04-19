@@ -142,3 +142,74 @@ register stage that affects all MACs together.
 - HIGH on bit-14 anomaly for both operands (replicated)
 - MED on the "broadcast vs distributed" mechanism explanation (consistent
   with other observations but not directly verified via SASS/ncu)
+
+---
+
+## Cumulative + grouped bit forcing (verifying super-additivity)
+
+Built cumulative forcing modes 600-615 (bits 0..N) and 700-715 (bits N..15)
+plus grouped subsets 800-805 (mant/exp/sign combinations).
+
+### Cumulative force results
+
+| Forced bits | Power | Cumulative Δ |
+|-------------|------:|-------------:|
+| baseline | 607 | 0 |
+| 0..0 | 597 | −10 |
+| 0..3 | 543 | −64 |
+| 0..6 (full mantissa) | 491 | −116 |
+| 0..10 | 458 | −149 |
+| 0..13 | 453 | −154 |
+| 0..14 (full no-sign) | 360 | −247 |
+| 0..15 (all) | 296 | −311 |
+| sign only (15) | 545 | −62 |
+| 14..15 | 528 | −79 |
+| 7..15 (sign+exp) | 437 | −170 |
+| 0..15 (all) | 296 | −311 |
+
+### Grouped field analysis
+
+| Field set | Δ | Predicted by sum | Super-additive ratio |
+|-----------|--:|-----------------:|---------------------:|
+| mant only (0-6) | −117 | - | - |
+| exp only (7-14) | −98 | - | - |
+| sign only (15) | −63 | - | - |
+| **mant + exp** | **−247** | −215 | **1.15×** |
+| exp + sign | −169 | −161 | 1.05× |
+| mant + sign | −173 | −180 | 0.96× (slight sub!) |
+| **mant + exp + sign** | **−311** | −278 | **1.12×** |
+| Sum of all 16 single bits | (sum=−426) | - | 1.37× (vs total) |
+
+### Interpretation
+
+1. **Field-level model is reasonable** (1.12× super-additive). Most
+   interactions captured by mant/exp/sign grouping.
+2. **Bit-level sum is far over-estimated** (1.37× super-additive). Within-field
+   bit interactions are stronger than between-field.
+3. **Mantissa dominates field-level** (-117W) despite having only 7 bits
+   (vs 8 exp). Per-bit averages: mant = -17W/bit, exp = -12W/bit.
+4. **Bit 14 in-context anomaly**: alone gives -15W, but in cumulative force
+   from 0..13 → 0..14 gives -93W incremental. Likely denorm-handling
+   threshold flip when exp ALL zeroed.
+5. **Mant+sign slightly SUB-additive** (-173 measured vs -180 predicted) -
+   sign and mantissa share some pipeline state.
+
+### Practical recipe
+
+For fixed-magnitude representations (like quantized weights):
+- Forcing JUST sign (ReLU): -62 W (10% of penalty)
+- Forcing sign + mantissa: -173 W (28%)
+- Forcing exp + sign (low-magnitude bias): -170 W (28%)
+- Forcing all but sign: -247 W (40%)
+- Full zero: -311 W (100%)
+
+The biggest power-savings-per-bit-of-info-lost is the sign bit. After that,
+mantissa LSBs save little per bit; exp MSBs save a lot per bit but disrupt
+representation range.
+
+### Confidence
+
+- HIGH on cumulative monotonic trend (16 datapoints each direction)
+- HIGH on field-grouping additivity (1.12× super-additive consistent)
+- HIGH on bit-14 in-context anomaly (replicates the singles outlier)
+- MED on the denorm-handling explanation (plausible but unverified at HW level)

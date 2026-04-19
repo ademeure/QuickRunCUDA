@@ -6,6 +6,14 @@
 // Mode = 300: B all-zero.
 // Mode = 400 + i: force A bit i to 0 (B always random)
 // Mode = 500 + i: force A bit i to 1 (B always random)
+// Mode = 600..615: force B bits 0..i (cumulative low-to-high, 0=just bit 0, 15=all bits)
+// Mode = 700..715: force B bits 15..(15-i) (cumulative high-to-low, 0=just sign, 15=all)
+// Mode = 800: force B mantissa only (bits 0-6)
+// Mode = 801: force B exp only (bits 7-14)
+// Mode = 802: force B mant+exp (bits 0-14)
+// Mode = 803: force B sign only (= mode 15)
+// Mode = 804: force B sign+exp (bits 7-15)
+// Mode = 805: force B sign+mant (bits 0-6,15)
 //
 // VERIFICATION: at startup, thread 0 of block 0 prints first 4 BF16 values
 // of B (hex + decoded sign/exp/mant) so we can sanity-check encoding.
@@ -61,6 +69,30 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 int b = mode - 100;
                 unsigned bit_mask = (1u << b) | (1u << (b + 16));
                 w = (r & ~bit_mask) | bit_mask;
+            } else if (mode >= 600 && mode <= 615) {
+                // Cumulative low-to-high: force bits 0..(mode-600) to 0
+                int top_bit = mode - 600;
+                unsigned single_half = (1u << (top_bit + 1)) - 1;  // bits 0..top_bit set
+                unsigned bit_mask = single_half | (single_half << 16);
+                w = r & ~bit_mask;
+            } else if (mode >= 700 && mode <= 715) {
+                // Cumulative high-to-low: force bits (15-(mode-700))..15 to 0
+                int n_bits = (mode - 700) + 1;
+                unsigned single_half = ~((1u << (16 - n_bits)) - 1) & 0xFFFFu;  // top n_bits set
+                unsigned bit_mask = single_half | (single_half << 16);
+                w = r & ~bit_mask;
+            } else if (mode == 800) {
+                w = r & ~0x007F007Fu;  // mant only (bits 0-6)
+            } else if (mode == 801) {
+                w = r & ~0x7F807F80u;  // exp only (bits 7-14)
+            } else if (mode == 802) {
+                w = r & ~0x7FFF7FFFu;  // mant+exp (bits 0-14)
+            } else if (mode == 803) {
+                w = r & ~0x80008000u;  // sign only (bit 15)
+            } else if (mode == 804) {
+                w = r & ~0xFF80FF80u;  // sign+exp (bits 7-15)
+            } else if (mode == 805) {
+                w = r & ~0x807F807Fu;  // sign+mant (bits 0-6, 15)
             } else {
                 // For mode >= 400 (A bit forcing), B is random
                 w = r;
