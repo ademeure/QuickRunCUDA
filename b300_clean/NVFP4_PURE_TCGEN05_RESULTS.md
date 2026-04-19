@@ -390,3 +390,58 @@ patterns barely matter for power.
 This also explains why our earlier per-tensor isolation showed B power
 scales with M (more M = more reuse across MAC units of same B). It's
 literally the broadcast-to-32-MACs effect being amplified by M iterations.
+
+---
+
+## NVFP4 N-stride sweep — DIFFERENT pattern from BF16!
+
+NVFP4 m=128 n=128 K=64 with N-stride B replication, SF=1.0 always:
+
+| Stride | Power | Δ vs rand |
+|--------|------:|----------:|
+| 1 (rand) | 471 | 0 |
+| 2 | 461 | −10 |
+| 4 (effective 8 due to FP4 packing) | 424 | −47 ← dip |
+| 8 | 474 | +3 |
+| 16 | 472 | +1 |
+| 24 | 488 | +17 |
+| 32 | 474 | +3 |
+| 48 | 485 | +14 |
+| 64 | 476 | +5 |
+| 96 | 444 | −27 |
+| 128 | 392 | −79 ← min |
+
+### NVFP4 has NO 32-element MAC cliff like BF16!
+
+| Format | Stride 32 Δ | Stride 128 Δ |
+|--------|------------:|-------------:|
+| BF16 | −126 W (CLIFF) | −240 W |
+| NVFP4 | +3 W (no cliff!) | −79 W (3× less than BF16) |
+
+Massive structural difference between BF16 and NVFP4 multiplier paths:
+- **BF16**: B is broadcast to 32-element MAC groups; replication within a
+  group gives cliff savings.
+- **NVFP4**: No clear MAC group structure visible at any tested stride.
+  The block-scale machinery (TMEM SF lookup, 16-element scale-block
+  alignment) likely reorganizes B feeding — fewer B operands broadcast
+  simultaneously across wide MAC arrays.
+
+This means NVFP4 is **less amenable to power optimization via structured
+N-replication** in B. The block-scale ULTRA path's SF dependency may
+inherently break the parallel-broadcast structure that BF16 uses.
+
+### Implications
+
+For workloads with structured B (MoE, CUDA Graphs of repeated computations):
+- BF16/F16 paths: aligning B to 32-element groups gives 20%+ power savings
+- NVFP4 path: only full N replication (or near-full) gives meaningful savings
+- For mixed-precision designs where you have a choice, BF16 may be
+  power-optimizable in ways NVFP4 isn't
+
+### Confidence
+
+- HIGH on the BF16 32-element cliff (clean monotonic step)
+- HIGH on NVFP4 having no equivalent cliff (10 strides tested, none match)
+- MED on the exact mechanism (need ncu pipe-level metrics to confirm)
+- Within-word FP4 stride encodings (modes 1-3) have some packing imprecision
+  — stride 4 was effectively stride 8. Cross-pack strides (mode 4+) are accurate.
