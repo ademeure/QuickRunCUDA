@@ -78,12 +78,34 @@ Investigated this session, commit `fceb94d`.
 
 ## Tier A — High value, worth several days each
 
-### A1. FlashAttention-style attention kernel SoL
-Real-world: head_dim=128, seqlen=8192, batch×heads=32. Currently we
-have softmax (91% of R+W ceiling). FlashAttention adds the QKV GEMMs
-and online softmax. What's the achievable SoL?
-**Test**: implement minimal FlashAttention v2-style kernel for 1 head;
-compare to xFormers/FlashAttention library; find the gap.
+### A1. [x] PARTIAL — Per-head baseline via cuBLAS+softmax (no fused tiling)
+
+For T=4096, D=128 (single head BF16):
+   Q×K^T (M=N=4096, K=128):     0.0090 ms = **477 TFLOPS (19% spec)**
+   Softmax (T×T = 32 MB):       0.0424 ms = HBM-bound R+W
+   P×V    (M=4096, N=128, K=4096): 0.0070 ms = 610 TFLOPS (24% spec)
+   ────────────────────────────────────────────────
+   Single head total:           0.058 ms → 147 TFLOPS effective
+
+**KEY: small-K GEMMs are the bottleneck.** Both Q×K^T (K=128) and P×V (N=128)
+have one tiny dimension. cuBLAS only hits 19-24% of spec for these shapes.
+
+True FlashAttention SoL > this baseline by:
+1. Eliminating softmax HBM round-trip (~0.042 ms saved per head)
+2. Online softmax keeps P in registers (32 MB → 0 HBM)
+3. Tiled execution doesn't waste tensor capacity on K=128
+
+Estimated FlashAttention SoL improvement: ~2-3× over this baseline (from
+softmax fusion + better tensor utilization). Reaching ~30-50% of spec.
+
+For BIG attention (T=16K, D=128), GEMMs are still rect-skinny → memory
+bound. FlashAttention's true win is at long sequences + small D.
+
+A full minimal FlashAttention v2 implementation with online softmax would
+need ~500 lines and is a multi-day project. This baseline establishes the
+floor (cuBLAS 147 TF/head) and the gap to true SoL (~30-50% spec).
+
+Investigated this session, commit `5291e81`.
 
 ### A2. [x] RESOLVED — Fused kernel hits 89% HBM (RMS+bias); GeLU bottleneck
 
