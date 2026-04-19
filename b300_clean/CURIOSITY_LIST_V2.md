@@ -278,7 +278,7 @@ Investigated this session, commit `54aadb2`.
 BW (best of 5, ~3-10 ms launches with inner-loop reads):
    WS=  8 MB:    20.5 TB/s
    WS= 32 MB:    26.0 TB/s   ← L2 sweet spot
-   WS= 64 MB:   **26.7 TB/s** ← peak L2 read BW (3.66× HBM 7.3 TB/s)
+   WS= 64 MB:   **26.7 TB/s** ← effective (L1+L2 combined; L2-pure = 21 TB/s per ncu)
    WS= 79 MB:    19.8 TB/s   (persistent cap; partial eviction in 126 MB L2)
    WS=128 MB:    14.2 TB/s   (mixed, near L2 capacity)
    WS=256 MB+:    7.0 TB/s   (pure HBM)
@@ -640,3 +640,21 @@ These three together would give us complete tensor-core visibility on B300.
 - TMA bulk for peak throughput (proven slower than v8 inline)
 
 Those are AT SoL. No further effort needed.
+
+### B2-CORRECTION (2026-04-19): "26.7 TB/s L2" was actually L1+L2
+
+ncu cross-check on the WS=64 MB kernel:
+   l1tex__t_bytes.sum: 68.68 GB  → 27.3 TB/s effective (matches my "26.7" ±2%)
+   lts__t_bytes.sum:   67.64 GB  → 21.0 TB/s pure L2 BW (matches catalog)
+   dram__bytes_read:    6.49 GB  → only 10% of reads miss to DRAM
+
+So my B2 "26.7 TB/s L2" claim was actually **L1+L2 effective throughput**.
+Pure L2 BW (when L1 misses) = 21 TB/s as catalog 21 TB/s C5 says.
+
+The grid-stride re-read pattern over 64 MB across 148 SMs naturally caches
+hot lines in L1 (256 KB/SM), giving the L1+L2 boost. For workloads that
+DON'T re-read the same data within an SM, expect 21 TB/s, not 27 TB/s.
+
+Practical guidance updated:
+- L2 hit BW (cold L1): 21 TB/s = 2.9× HBM
+- L2+L1 hit BW (warm L1): 27 TB/s = 3.7× HBM
