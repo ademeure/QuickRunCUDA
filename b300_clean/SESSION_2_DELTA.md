@@ -645,3 +645,37 @@ unresolved. Might just be an ncu measurement artifact giving misleading
 Confidence: HIGH for "32×4 IS slow" + "teardown writes NOT the cause"
             UNRESOLVED for actual mechanism
 
+
+## Triangulation: in-kernel clock64 RESOLVES the ncu/wall-clock discrepancy
+
+Added a third measurement method — in-kernel `clock64()` between mma loops:
+
+| Config | Wall-clock | clock64 max | ncu gpc cycles |
+|--------|-----------:|-------------:|---------------:|
+| 16w/SM × 4 chains | 1.284 ms | 2.46M cy = **1.210 ms** | (1.21 ms expected) |
+| 32w/SM × 4 chains | 9.373 ms | 18.7M cy = **9.227 ms** | 4.9M cy = 2.42 ms ← WRONG |
+
+**clock64 confirms wall-clock truth.** The kernel TRULY takes 18.7M SM cycles
+per SM. ncu's `gpc__cycles_elapsed.max` was misleading — only counted ~26% of
+the actual span.
+
+So the real per-SM MMA rate at 32w/SM × 4 chains:
+   2.45M mmas / 18.7M cycles = **0.131 mma/cy** (vs 0.467 nominal)
+
+The pipe is genuinely 3.6× SLOWER per cycle in this config. ncu's
+"99% pipe_tensor active" was a metric scope artifact.
+
+KEY METHODOLOGICAL LESSON: when wall-clock and ncu disagree, add a third
+INDEPENDENT measurement (in-kernel clock64) before trusting either. This
+session has now triangulated:
+- Wall-clock cudaEventElapsedTime
+- ncu gpc__cycles_elapsed
+- In-kernel clock64
+
+clock64 is the gold standard — it counts the actual SM cycles between two
+PTX instructions. Wall-clock = clock64 / clock_freq. ncu's other metrics
+(pipe_tensor active%) may have scope limitations.
+
+For 32×4 mechanism still unresolved, but at least the SLOWNESS is
+confirmed via 3 methods now.
+
