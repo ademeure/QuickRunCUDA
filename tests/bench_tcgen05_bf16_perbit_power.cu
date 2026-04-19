@@ -150,6 +150,34 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
             } else if (mode == 1407) {
                 // B = constant subnormal (s=0 e=0 m=0x40) ~ 2^-127 if subnormal
                 w = 0x00400040u;
+            } else if (mode >= 1500 && mode <= 1510) {
+                // K_unique values cycle across N positions, fixed across K (per-MAC temporal constant)
+                int K_unique = 1 << (mode - 1500);
+                int n_even = (idx % 64) * 2;
+                int v_idx_e = n_even % K_unique;
+                int v_idx_o = (n_even + 1) % K_unique;
+                auto val = [](int v) -> unsigned short {
+                    static const unsigned short vals[16] = {
+                        0x3F80, 0x4000, 0x40C0, 0x3FC0, 0xBF80, 0x4040, 0x4180, 0x3F00,
+                        0x4080, 0xBFC0, 0x4100, 0x3F40, 0x4200, 0xC080, 0x4140, 0x3FE0
+                    };
+                    return vals[v & 15];
+                };
+                w = ((unsigned)val(v_idx_o) << 16) | val(v_idx_e);
+            } else if (mode >= 1600 && mode <= 1610) {
+                // K_unique values cycle ACROSS K positions, fixed across N (per-MAC TEMPORAL VARYING)
+                int K_unique_k = 1 << (mode - 1600);
+                int k = idx / 64;          // K index 0..15
+                int v_idx = k % K_unique_k;
+                auto val = [](int v) -> unsigned short {
+                    static const unsigned short vals[16] = {
+                        0x3F80, 0x4000, 0x40C0, 0x3FC0, 0xBF80, 0x4040, 0x4180, 0x3F00,
+                        0x4080, 0xBFC0, 0x4100, 0x3F40, 0x4200, 0xC080, 0x4140, 0x3FE0
+                    };
+                    return vals[v & 15];
+                };
+                unsigned short v = val(v_idx);
+                w = ((unsigned)v << 16) | v;  // both BF16 in word same value
             } else {
                 // For mode >= 400 (A bit forcing), B is random
                 w = r;

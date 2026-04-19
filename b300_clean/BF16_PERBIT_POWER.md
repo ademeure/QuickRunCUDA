@@ -557,3 +557,76 @@ So the corrected mechanism:
 - HIGH on subnormal-with-random-mant being penalty (510W consistent)
 - The earlier "subnormal penalty" framing was misleading - it was actually
   "random variation within subnormal range" penalty
+
+---
+
+## DEFINITIVE: Per-MAC-temporal constancy is the dominant mechanism
+
+Tested two orthogonal value-distribution patterns:
+
+### N-direction K_unique (per-MAC sees SAME value across K, different across N)
+| K_unique | Power | Δ vs Tier B 299W |
+|---------:|------:|-----------------:|
+| 1 | 299 | 0 |
+| 4 | 299 | 0 |
+| 16 | 302 | +3 |
+
+### K-direction K_unique (per-MAC sees DIFFERENT values across K, same across N)
+| K_unique | Power | Δ vs Tier B |
+|---------:|------:|------------:|
+| 1 | 299 | 0 (= constant) |
+| 2 | 332 | **+33** |
+| 4 | 327 | +28 |
+| 8 | 336 | +37 |
+| **16** | **346** | **+47** |
+
+### Baselines
+- All-zero: 295 W (Tier A)
+- Random: 597 W (max entropy)
+
+### The unified mechanism
+
+The multiplier's "constancy detection" is **PER-MAC TEMPORAL** — each
+individual MAC unit's input value across the K iterations of an MMA
+instruction.
+
+- N-direction variation: each MAC sees its own constant → all MACs gated → Tier B
+- K-direction variation: per-MAC inputs change cycle-to-cycle → MACs ungated
+  - Even 2 unique K values costs +33W
+  - 16 unique K values costs +47W
+  - Random K (max entropy): +300W
+- Per-MAC same value: gated regardless of N-distribution
+
+### This explains the complete model
+
+- **All-zero (294W)**: trivial constant per-MAC, plus zero-output gating
+- **Any non-zero constant (299W)**: per-MAC constant across K, slight
+  non-zero overhead (+5W)
+- **Inf/NaN constant (308W)**: constant + Inf/NaN detector (+14W)
+- **K-vary moderate (~330W)**: small per-MAC temporal variation (+30W)
+- **K-vary 16 unique (346W)**: more temporal variation (+47W)
+- **Random (597W)**: max per-MAC temporal variation (+300W)
+
+The "operand-A vs operand-B asymmetry" we observed earlier also fits: A is
+broadcast across many MACs (all share same A value) while B is distributed
+(each MAC sees its own B). When A is constant, only ONE register state
+goes static (the broadcast network). When B is constant, MANY MAC-local
+registers go static. So B-side savings dominate.
+
+### Practical recipe for low-power BF16 GEMM
+
+1. Make B's K-dimension as repetitive as possible
+   - Constant B per K row: 299W (-300W vs random)
+   - 2-4 distinct K values: 332-327W (-265W vs random)
+   - Random K: 597W (no savings)
+2. Make B all-zero where possible (e.g., zero-initialized accumulators):
+   294W (additional -5W for "true" gating)
+3. N-dimension variation is FREE (Tier B applies regardless of N value diversity)
+
+### Confidence
+
+- HIGH on per-MAC-temporal constancy hypothesis (clean N-vary vs K-vary contrast)
+- HIGH on the unified mechanism (explains 3-tier model + N-vs-K asymmetry +
+  random penalty all at once)
+- HIGH on +47W ceiling for K-vary at table cap (16 unique)
+- HIGH on the implication that operand-broadcast architecture matters
