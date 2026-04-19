@@ -284,3 +284,29 @@ BF16/FP16/TF32.
 Confidence: HIGH for "SASS shows HMMA.16816 not 16832" diagnosis
             HIGH for "use cuBLAS, not direct PTX" recommendation
 
+
+## FP8 mma.sync UPDATE: time-scales linearly, but counting is ambiguous
+
+Time-scaling check refutes the DCE hypothesis:
+   N=200: 0.132 ms = 7528 TFLOPS (claimed)
+   N=400: 0.258 ms = 7700 TFLOPS (claimed)
+
+Time scales 1.95× for 2× work — so the kernel IS doing real work.
+
+But the SASS encoding (HMMA.16816.F32 — same family as BF16) suggests
+the compiler may be treating FP8 mma.sync as BF16-equivalent at byte level.
+
+If that's true, ops_per_inst should be 4096 (BF16 rate) not 8192 (FP8 rate).
+Recomputed: 7528 / 2 = **3764 TFLOPS = 75% of 5000 spec** — plausible.
+
+Alternative interpretations:
+1. FP8 truly runs at 1.5× spec on B300 (unlikely but possible — specs conservative)
+2. SASS encoding shared but HW dispatches based on input tag (exotic)
+3. Compiler folded 50% of work + counted wrong (unlikely given clean N-scaling)
+
+UNRESOLVED. Most likely: legacy mma.sync with .e4m3 uses the same SASS path
+as BF16 with the same byte rate, producing FP8-quality output. ops_per_inst
+should be the BF16 rate (4096), giving ~3760 TF = 75% of spec.
+
+For PRODUCTION FP8 perf, cuBLAS algoId=66 (tcgen05) is authoritative at
+4500 TF = 90% spec. Direct PTX FP8 is in a gray zone.
