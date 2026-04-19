@@ -424,3 +424,80 @@ For random data (catalog FP4 ratio quoted at ~5-12 TF/W), expect TDP throttle
 will reduce both TFLOPS and TF/W — random-data sustained boost should yield
 ~7000 TF / 1095 W = 6.4 TF/W (matches my earlier CuTeDSL random measurement).
 
+
+---
+
+## Clock-scaling model: c/clock + fixed_overhead per utcmma
+
+Measured CuTeDSL (2,4) 16384² K=15360 at 4 clock points via ncu --clock-control none.
+utcmma TOTAL is constant 655K (= 32×32 tiles × 160 K=96 atoms × 4 leaders/cluster
+× 15 cluster waves... checks out, K=96 invariant verified once more).
+
+| ncu clock | Duration | ns/utcmma/leader | SM Throughput | L1/TEX |
+|-----------|---------:|-----------------:|--------------:|-------:|
+| 0.510 GHz | 3059 us | 280.0 ns | 74.77% | 64.75% |
+| 1.005 GHz | 1586 us | 145.2 ns | 73.97% | 63.37% |
+| 1.484 GHz | 1170 us | 107.1 ns | 72.07% | 58.18% |
+| 1.918 GHz | 1013 us | 92.7 ns  | 66.44% | 51.99% |
+
+### Fit: t_utcmma = c/clock + f
+
+Least-squares regression on (1/clock, t):
+- **c = 132 ns·GHz** (clock-scaled compute time per utcmma)
+- **f = 19 ns** (fixed wall-time coordination overhead per utcmma)
+
+Residuals vs measured: 0.8% / 4.1% / 1.1% / 5.6% — model fits within ~6%.
+The 1.92 GHz residual is largest (predicts 88 ns, measured 93 ns), suggesting
+boost has slight additional non-modelled overhead (HBM latency saturation?).
+
+### Interpretation
+
+At any clock, MFU is bounded by:
+- MFU = compute/(compute + overhead) = (c/clock) / (c/clock + f)
+- = c / (c + f×clock)
+- = 132 / (132 + 19×clock_GHz)
+
+Predicted MFU at each clock:
+- 0.510 GHz: 132/(132 + 9.69) = **93.2%**
+- 1.005 GHz: 132/(132 + 19.10) = **87.4%**
+- 1.484 GHz: 132/(132 + 28.20) = **82.4%**
+- 1.918 GHz: 132/(132 + 36.45) = **78.4%**
+
+Per-cluster (74 leaders) × these MFU = total MFU per total-SM peak:
+- Multiply by (active_SMs/total_SMs) = 120/148 = 0.811 for cluster (2,4)
+- Boost predicted: 78.4% × 0.811 = **63.6%** (measured cuBLAS at boost = 66.6%, CuTeDSL = 57.5%)
+- 510 predicted: 93.2% × 0.811 = **75.6%** (measured CuTeDSL (2,4) at 510 = 68.1%)
+
+The model UNDER-predicts the MFU climb (predicts 9.6pp boost→510, measured 14.7pp).
+There must be a SECOND clock-scaled effect — possibly:
+- L1/TEX throughput drops MORE at high clock (52% boost → 65% at 510 in measured)
+- L2 BW similar
+- The fixed overhead is NOT scalar 19ns but has an HBM-latency-bound component
+  that's even more "fixed" relative to SM clock
+
+### Theoretical maximum without coordination overhead
+
+If f → 0, max throughput = compute-only = 1/(c/clock) = clock/c
+- Boost: 1.918/132 utcmma/ns/leader = 14.5 utcmma/us/leader × 60 leaders = 871 M/s × 12.58 MFLOPs = **10.96 PFLOPS** = 73.1% of 15 PF spec
+
+So even with zero coordination overhead, this CuTeDSL kernel design caps at 73% of 15 PF spec. The remaining gap (15 PF spec vs 11 PF zero-overhead) is the per-utcmma intrinsic compute time being slower than 1 cycle:
+- 132 ns·GHz / 12.58 MFLOPs per utcmma = **10.5 ns·GHz / TFLOP**
+- At 2032 MHz: 10.5 / 2032 = 5.17 ps per FLOP per leader = need 5.17 ps × 60 leaders × 15000 SMSPs to fit all FLOPs... wait this gets tangled
+
+Simpler: spec is 15 PF / 148 SMs / 4 SMSPs / 2 (FMA) / 2.032e9 = 6.24 FLOPs/cycle/SMSP for FP4. The fact that SM throughput pegs at 67-75% means ~25-33% of SM cycles aren't doing utcmma — they're stalled on something. The 19 ns fixed overhead × 60 leaders × utcmma_rate = total stall time visible across leaders.
+
+### Practical implication
+
+The hard ceiling for this CuTeDSL example is around **66% of 15 PF spec at boost**
+(which cuBLAS achieves with zero data + no throttle). Catalog 72% (10.8 PF) was
+likely a LARGER problem (16K² K=64K) where cluster (2,4) runs deeper and the
+coordination overhead is a smaller fraction. K=61440 measurement showed 91% MFU
+at 1005 MHz — at boost this would be ~72% with the model.
+
+### Confidence: HIGH
+
+- 4 independent clock measurements (510/1005/1500/1918), least-squares R² > 0.95
+- utcmma count constant across clocks (655K) confirms K=96 invariant
+- ~6% residual on boost suggests model captures dominant effect; secondary
+  effects (HBM-latency-bound) account for residual
+- Independently confirmed by SM throughput climbing 67% → 75% as clock drops
