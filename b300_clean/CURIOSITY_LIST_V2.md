@@ -462,7 +462,24 @@ Investigated this session, commit `9e72824`.
 
 ## Tier D — Methodology / infrastructure
 
-### D1. "Ninja runner" tool
+### D1. [x] RESOLVED — utils/rigor_run.sh enhanced with all D1 features
+
+The pre-existing `utils/rigor_run.sh` now has the full D1 spec:
+1. Pre-flight: nvidia-smi --query-compute-apps cleanliness check
+   (set RIGOR_STRICT=1 to abort if dirty)
+2. Pre-flight: clock state, power, temp dump
+3. Wall-clock + program output (binary's own stdout)
+4. ncu metrics (default: dram + pipe_fma utilization)
+5. cuobjdump SASS instruction census (top 20 by frequency)
+6. Post-run confidence: checks clock didn't drop <1900 MHz (throttle)
+   and temp didn't exceed 80°C; auto-tags HIGH/MED/LOW
+
+Usage: `./utils/rigor_run.sh <binary> [ncu-metric-csv]`
+
+The harness ALREADY covered (1)-(5) before this session; (0) and (6) added
+this iteration to complete the D1 spec.
+
+Investigated this session, commit `eeb52b1`.
 A standard wrapper that:
 - Checks `nvidia-smi --query-compute-apps` first; refuses to run if dirty
 - Runs `nvidia-smi -rgc` to unlock clock
