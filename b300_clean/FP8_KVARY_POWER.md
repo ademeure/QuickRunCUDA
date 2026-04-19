@@ -75,3 +75,53 @@ Same recipe as BF16 applies:
 - N-direction value diversity is FREE
 - K-direction variation costs ~+25W per "unique value across K cycles"
   (slightly higher than BF16 due to longer K=32)
+
+---
+
+## CORRECTED: FP8 A K-vary with fixed encoding
+
+Re-tested A K-vary with proper FP8 encoding (idx % 8 for k_pack instead of
+idx / 16 which was giving M-direction). Each unsigned word now contains
+4 distinct K-direction values from the K-pack.
+
+| Pattern | Power | Δ vs A const 614 |
+|---------|------:|------------------:|
+| A=+1.0 const, B rand | 614 | 0 |
+| A K-vary 2 unique | 608 | −6 |
+| A K-vary 4 unique | 608 | −6 |
+| A K-vary 16 unique | 613 | −1 |
+
+**A K-vary on FP8: effectively ZERO cost** (all within noise floor σ≈4-8W).
+
+## Final cross-precision A vs B K-vary table
+
+| Precision | A K-vary 16u cost | B K-vary 16u cost | Ratio |
+|-----------|------------------:|------------------:|------:|
+| BF16 | +2 W | +47 W | 24× |
+| **FP8 e4m3** | **≈0 W** | **+71 W** | **>70×** |
+
+The FP8 ratio is even MORE extreme than BF16. Both precisions confirm:
+- A is broadcast through ONE shared register stage → essentially free
+  to K-vary
+- B is distributed across many parallel MAC registers → expensive to
+  K-vary, scaling with K-cycle count
+
+## FP8 vs BF16 B K-vary: 1.5× scaling
+
+BF16 B K-vary 16: +47W
+FP8 B K-vary 16: +71W (1.51× BF16)
+
+Predicted from K-cycle count (FP8 K=32 vs BF16 K=16): 2×
+Measured: 1.51×
+
+Below the linear prediction. Likely the FP8 multiplier processes 2 K
+positions per cycle (giving 16 cycles instead of 32), partially mitigating
+the extra K work. So effective per-cycle K-vary cost is similar to BF16,
+just spread over 1.5× the cycles.
+
+## Confidence
+
+- HIGH on FP8 A K-vary effectively 0 (4 datapoints within noise)
+- HIGH on FP8 B K-vary +71W (replicable)
+- HIGH on broadcast-A / distributed-B mechanism being precision-agnostic
+- MED on the exact 2-K-positions-per-cycle pipelining hypothesis (1.5× vs 2×)

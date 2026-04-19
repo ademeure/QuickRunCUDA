@@ -40,14 +40,32 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
             if (mode == 1700) {
                 w_a = 0x38383838u;  // A const +1.0
             } else if (mode >= 1701 && mode <= 1710) {
+                // FIXED: A is M=128 × K=32 FP8 = 1024 unsigned (4 FP8 per word)
+                // smem_A[m*8 + k_pack], k_pack = 0..7, each pack holds 4 K values
+                // So per-cycle K index changes faster, varies as k_pack within each m row
                 int K_unique = 1 << (mode - 1700);
-                int k = idx / 16;  // K index for FP8 K=32: smem_A[m * (K/4) + k_pack]
-                                   // Actually layout: 1024 unsigned for A. K=32 = 8 unsigned per row of K.
-                                   // smem_A[m*8 + k_pack] where m=0..127, k_pack=0..7
-                                   // k_pack maps to K positions [k_pack*4 .. k_pack*4+3]
-                int v_idx = (k & (K_unique - 1));
+                int k_pack = idx % 8;  // K-pack index 0..7
+                int n_in_pack = 0;     // simplification - all 4 K positions in pack get same value
+                int k_eff = k_pack * 4 + n_in_pack;
+                int v_idx = (k_eff & (K_unique - 1));
                 unsigned char v = fp8_val(v_idx);
-                w_a = ((unsigned)v) | ((unsigned)v << 8) | ((unsigned)v << 16) | ((unsigned)v << 24);
+                // Make all 4 FP8 in word same value (since they're 4 consecutive K positions
+                // in same K-pack — but K-vary should distinguish K positions)
+                // For TRUE K-vary, want each FP8 in pack different
+                if (K_unique <= 4) {
+                    // pack the K_unique cycle within the word
+                    unsigned char b0 = fp8_val((k_pack*4 + 0) & (K_unique - 1));
+                    unsigned char b1 = fp8_val((k_pack*4 + 1) & (K_unique - 1));
+                    unsigned char b2 = fp8_val((k_pack*4 + 2) & (K_unique - 1));
+                    unsigned char b3 = fp8_val((k_pack*4 + 3) & (K_unique - 1));
+                    w_a = b0 | (b1<<8) | (b2<<16) | (b3<<24);
+                } else {
+                    unsigned char b0 = fp8_val((k_pack*4 + 0) & (K_unique - 1));
+                    unsigned char b1 = fp8_val((k_pack*4 + 1) & (K_unique - 1));
+                    unsigned char b2 = fp8_val((k_pack*4 + 2) & (K_unique - 1));
+                    unsigned char b3 = fp8_val((k_pack*4 + 3) & (K_unique - 1));
+                    w_a = b0 | (b1<<8) | (b2<<16) | (b3<<24);
+                }
             } else {
                 w_a = r_a;
             }
