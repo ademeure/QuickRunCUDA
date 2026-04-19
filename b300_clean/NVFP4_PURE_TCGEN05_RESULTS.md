@@ -445,3 +445,56 @@ For workloads with structured B (MoE, CUDA Graphs of repeated computations):
 - MED on the exact mechanism (need ncu pipe-level metrics to confirm)
 - Within-word FP4 stride encodings (modes 1-3) have some packing imprecision
   — stride 4 was effectively stride 8. Cross-pack strides (mode 4+) are accurate.
+
+---
+
+## BF16 SIGN-BIT-only patterns (full sweep with stride 64)
+
+B's sign bit varied with controlled patterns; other 15 bits (exp+mantissa)
+always random. 50M iters at 1005 MHz, m=128 n=128.
+
+| Mode | Pattern | Power | Δ vs random sign |
+|------|---------|------:|-----------------:|
+| 0 | sign random (BASELINE) | 606 | 0 |
+| 1 | all-positive (sign=0) | 556 | −50 |
+| 2 | all-negative (sign=1) | 556 | −50 |
+| 9 | N-stride 2 sign | 578 | −28 |
+| 8 | N-stride 4 sign | 549 | **−57 ← min1** |
+| 7 | N-stride 8 sign | 548 | **−58 ← min2** |
+| 6 | N-stride 16 sign | 552 | −54 |
+| **5** | **N-stride 32 sign** | **596** | **−10 ← peak2** |
+| **11** | **N-stride 64 sign** | **596** | **−10 ← peak2** |
+| 4 | N-uniform per K (=stride 128) | 548 | −58 |
+| 3 | K-uniform per N alone | 599 | −7 |
+| 12 | K-uniform + stride 16 | 545 | −61 ← global min |
+| 10 | K-uniform + stride 32 | 603 | −3 |
+| 13 | K-uniform + stride 64 | 600 | −6 |
+
+### U-shaped curve (unusual structure)
+
+Sign-bit-only N-stride sweep has a **double-dip U shape**:
+- stride 1: 0W savings (random, max entropy)
+- stride 2: −28W (some savings start)
+- **stride 4-16: −54 to −58W (LOW entropy, max savings)**
+- **stride 32-64: −10W (recovers — sign is "random-like" again)**
+- stride 128 (uniform per K): −58W (zero entropy, max savings)
+
+Hypothesis: the B operand is fed in ~16-element chunks per cycle into the
+multiplier-B port. When all 16 elements in a chunk repeat the sign pattern,
+the multiplier registers see identical sign-bit input → no toggle. With
+stride ≥32, each 16-elem chunk has multiple distinct sign values → full
+toggling activity.
+
+This is OPPOSITE the full-data N-stride finding (cliff at stride 32).
+The sign-bit-only test reveals a 16-element pattern alignment that the
+broader full-data test hides.
+
+### Practical: ReLU activations get free 8% power savings
+
+Real-world ReLU output is all-positive (sign always 0) → mode 1 = −50W
+of total ~605W = 8% power reduction. This applies to any all-positive
+operand workload (ReLU, sigmoid, exponential, etc.).
+
+For workloads with structured sign patterns (e.g., quantized weights with
+sparse sign bits, or transformer Q/K which have positional sign symmetries),
+choosing structures with ≤16 unique signs per K row gives max savings.
