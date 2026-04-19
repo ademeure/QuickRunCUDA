@@ -93,6 +93,14 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 w = r & ~0xFF80FF80u;  // sign+exp (bits 7-15)
             } else if (mode == 805) {
                 w = r & ~0x807F807Fu;  // sign+mant (bits 0-6, 15)
+            } else if (mode >= 900 && mode <= 1155) {
+                // Force entire exp field (bits 7-14) to specific value V = mode - 900
+                int V = mode - 900;
+                if (V > 255) V = 255;
+                unsigned exp_pat = (V & 0xFF) << 7;
+                unsigned exp_mask = 0x7F80u;
+                // Both halves of word
+                w = (r & ~(exp_mask | (exp_mask << 16))) | (exp_pat | (exp_pat << 16));
             } else {
                 // For mode >= 400 (A bit forcing), B is random
                 w = r;

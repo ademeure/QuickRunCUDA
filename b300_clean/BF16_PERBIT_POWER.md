@@ -280,3 +280,75 @@ Recomputed:
   semantics directly predict it)
 - MED on the precise breakdown of toggle vs magnitude effects (need more
   bit positions to fit the model rigorously)
+
+---
+
+## CORRECTION: magnitude hypothesis was WRONG — actually subnormal handling
+
+Tested by forcing entire B exp field to specific values V (modes 900-1155).
+If "magnitude controls power", expected monotonic curve. Instead:
+
+| V (exp) | Approx value | Power | Δ vs random |
+|--------:|--------------|------:|------------:|
+| baseline | - | 606 | 0 |
+| 0 | subnormal/zero | 510 | −96 |
+| 32 | tiny ~2^-95 | 500 | −106 |
+| 64 | small ~2^-63 | 502 | −104 |
+| 96 | ~2^-31 | 502 | −104 |
+| 123 | ~0.06 | 493 | −113 |
+| 127 | ~1.0 | 493 | −113 |
+| 131 | ~16 | 493 | −113 |
+| 163 | ~2^36 | 493 | −113 |
+| 195 | ~2^68 | 493 | −113 |
+| 227 | ~2^100 | 494 | −112 |
+| 255 | Inf/NaN | 492 | −114 |
+
+**Power is FLAT (−113 W) across the entire normal exp range (V=123-255)!**
+
+Only V=0 (subnormal forced) gives MEAN reduction (−96 W), 17 W less savings
+than normal exp values. **Subnormal handling COSTS power**, not saves it.
+
+### Corrected two-component model
+
+1. **Bit-toggle suppression** (still valid): forcing constant reduces register
+   switching — symmetric for any bit
+2. **Subnormal-handling penalty** (corrected from "magnitude redirection"):
+   when forced bits push values into subnormal range, denorm/zero handling
+   logic stays MORE active → +~17 W penalty
+
+This still predicts:
+- Sign bit symmetric (no subnormal effect)
+- Mantissa LSB symmetric (no subnormal effect)
+- Exp bits asymmetric: force=0 ALONE penalizes (subnormal-prone), force=1 doesn't
+- All exp force=0 = max subnormal = max penalty
+
+### A operand magnitude test
+
+| Bit | A force=0 | A force=1 | Δ | Comparison to B |
+|-----|----------:|----------:|--:|------------------|
+| 7 (exp LSB) | 595 | 595 | 0 | B was +17 W (asymmetric) |
+| 10 (exp) | 596 | 595 | −1 | B was +18 W (asymmetric) |
+| 14 (exp MSB) | 610 | 598 | −12 | B was +11 W; A is REVERSED! |
+| 15 (sign) | 598 | 597 | −1 | B was +1 W (also symmetric) |
+
+A operand shows near-zero asymmetry except bit 14 (which goes opposite
+direction from B). This further confirms broadcast-A vs distributed-B
+multiplier datapath: A's specific values matter less because B's randomness
+dominates per-cycle product variance.
+
+### Confidence
+
+- HIGH on flat power across normal exp range (10 datapoints all 492-494 W)
+- HIGH on subnormal penalty being +17 W (consistent with asymmetry findings)
+- HIGH on A operand near-zero asymmetry (4 bits tested)
+- MED on the bit-14 reversed direction for A (not yet replicated, single run)
+
+### Practical implication
+
+For workloads:
+- All-positive (sign=0): saves 60 W (sign bit toggle effect)
+- Forced unit-magnitude (exp=127): saves 113 W (toggle + no subnormal)
+- Forced subnormal (exp=0): saves only 96 W (toggle minus subnormal penalty)
+
+Avoid pushing data into subnormal range if power-optimizing — actually
+HURTS rather than helps despite "smaller values" intuition.
