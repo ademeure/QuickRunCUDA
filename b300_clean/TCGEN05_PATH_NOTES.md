@@ -76,10 +76,30 @@ check. Use cuBLAS for production tcgen05 GEMM benchmarking instead.
 
 ## 5. Performance reality
 
-- Small-shape CUTLASS tutorial (FP16 512×1024×256): 126 ms/launch (overhead-bound)
-- For real perf: cuBLAS hits 2237 TFLOPS = 90% of NVIDIA spec at 8K³ (per A5)
-- cuBLAS's algoId=66 IS the tcgen05 family (per A5 + power data S3)
-- Direct PTX tcgen05 only matters for fused custom kernels (FlashAttention etc.)
+CUTLASS minimal tutorial (01_mma_sm100, after patching arch check + skipping
+host verification):
+
+| Shape       | Time/launch | Effective TFLOPS | % of FP16 spec (5000) |
+|-------------|------------:|-----------------:|----------------------:|
+| 512×1024×256| 126 ms      | 0.002            | 0.00004%              |
+| 8192×8192×8192 | 975 ms   | 1.1              | 0.022%                |
+
+The tutorial is 2000× SLOWER than cuBLAS for 8K³ (2237 TFLOPS via A5/B3).
+
+ROOT CAUSE: each K-tile iteration does cooperative_copy + cute::wait_barrier,
+with single-warp `if (elect_one_warp)` guard for the mma + arrive. The
+synchronization overhead dominates even at 8K size.
+
+PRACTICAL: For tcgen05 PERFORMANCE, use cuBLAS (algoId=66). The CUTLASS
+tutorial is for STUDYING the API surface, not benchmarking. Production
+tcgen05 kernels are in CUTLASS GEMM library (70_blackwell_*) which use
+warp-specialized pipelines + multi-stage SMEM + persistent kernels — much
+more sophisticated than the tutorial.
+
+KEY EVIDENCE:
+- cuBLAS BF16 8K³: 2237 TFLOPS = 90% spec (commit 754fb69)
+- cuBLAS uses algoId=66 = tcgen05 family (commit e43f754)
+- CUTLASS tutorial: 1.1 TFLOPS at same 8K³ — pure synchronization overhead
 
 ## What's still open
 
