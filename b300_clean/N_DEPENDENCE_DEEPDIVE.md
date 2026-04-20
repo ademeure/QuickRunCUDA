@@ -1136,3 +1136,26 @@ that require manual `-rgc` recovery.
 
 **Operational lesson**: ALWAYS verify ALL GPU clocks before benchmarking, not
 just GPU 0. Multi-GPU systems compound the chance of finding a stuck GPU.
+
+## Multi-GPU independence: no power/thermal coupling
+
+Tested if GPU 1 random workload affects GPU 0 K-id speedup:
+
+```
+Test                                            GPU 0 TFLOPS
+GPU 0 K-id alone                                2110
+GPU 0 K-id while GPU 1 running random           2108, 2103
+GPU 0 random while GPU 1 running random         1495
+```
+
+NVML during dual workload:
+- GPU 0: 2032 MHz / 834W (K-id, NOT throttled)
+- GPU 1: 1252 MHz / 984W (random, throttled normally)
+
+**No coupling between GPUs.** Each chip operates on independent power budget
+(~1100W per GPU). The 2× B300 system is genuinely independent at the power
+plane level - no shared thermal envelope or power budget.
+
+**Operational implication**: Multi-GPU deployments can mix workload types
+across GPUs without cross-interference. K-id-friendly and K-id-hostile
+workloads can coexist on different GPUs at full performance.
