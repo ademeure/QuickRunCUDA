@@ -484,3 +484,39 @@ This robustly verifies:
 1. The TRUE hardware ceiling is ~2252 TFLOPS BF16 (vs cuBLAS spec 2242)
 2. The cuBLAS spec is power-throttling-limited
 3. Any data with low per-cycle entropy approaches this ceiling
+
+---
+
+## Alpha/beta scaling effect (accumulator)
+
+| alpha | beta | TFLOPS |
+|------:|-----:|-------:|
+| 1.0 | 0.0 (overwrite) | 1504 |
+| 1.0 | 1.0 (accumulate) | 1479 (-1.7%) |
+| 2.0 | 0.0 | 1500 |
+| 0.5 | 0.0 | 1497 |
+
+Alpha value doesn't matter (just scaling). Beta=1 (accumulate, requires C read)
+adds ~1.7% overhead. Negligible vs main bit-entropy mechanism.
+
+## FINAL summary of all variables tested
+
+| Variable | Effect on throughput |
+|----------|----------------------|
+| Bit count of B (random) | ~70 TFLOPS per bit |
+| Bit count of A (random) | ~30 TFLOPS per bit |
+| Bit position within mantissa | None |
+| Specific constant value | None (NaN slightly slower) |
+| A vs B both constant | Same regardless |
+| Mixed A=val1, B=val2 constants | -0.4% from same constants |
+| Alpha (1.0 vs 0.5 vs 2.0) | None |
+| Beta (0 vs 1) | -1.7% (accumulate overhead) |
+| MMA shape | Indirect via cuBLAS algorithm choice |
+| Trans options | trans_B=T loses dedup if B not arranged for it |
+| Power cap | Tighter cap → bigger speedup |
+
+The TRUE hardware ceiling: ~2252 TFLOPS BF16, ~4420 TFLOPS FP8.
+Achievable for any constant-data test, regardless of specific value or shape.
+
+Mechanism: per-cycle bit toggle activity drives multiplier power; less activity
+means less power means less throttling means higher sustained throughput.
