@@ -518,6 +518,49 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 unsigned short ve = h(n_seed_e);
                 unsigned short vo = h(n_seed_o);
                 w = ((unsigned)vo << 16) | ve;
+            } else if (mode >= 5000 && mode <= 5004) {
+                // K-rotating sub-tile pattern test:
+                // Within each K row, N=16 unique values (fits cache).
+                // Across K rows, the SET of 16 values rotates (k % K_unique selects which set).
+                // K_unique = 1<<(mode-5000) = 1, 2, 4, 8, 16
+                // Tests: is dedup cache per-K-row (then all free) or per-MMA (then cliff at K_unique > 1)?
+                int K_unique = 1 << (mode - 5000);
+                int k = idx / 64;
+                int npair = idx % 64;
+                int n_even = npair * 2;
+                int n_idx_e = n_even % 16;     // within each K row, N varies with N_unique=16
+                int n_idx_o = (n_even + 1) % 16;
+                int k_idx = k % K_unique;
+                auto h = [](int kk, int nn) -> unsigned short {
+                    unsigned hh = 0xC0FFEE13u ^ (kk * 0xDEADBEEFu) ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    return (unsigned short)(hh & 0xFFFF);
+                };
+                unsigned short ve = h(k_idx, n_idx_e);
+                unsigned short vo = h(k_idx, n_idx_o);
+                w = ((unsigned)vo << 16) | ve;
+            } else if (mode >= 5100 && mode <= 5104) {
+                // K-rotating WITH WIDER N pattern: each K row has N_unique=32 (above cliff).
+                // K rows rotate through K_unique distinct 32-N-pattern sets.
+                // If per-MMA cache, free at K_unique=1, cost beyond.
+                // If per-K-row, cost at K_unique=1 (since N_unique=32 already over cliff).
+                int K_unique = 1 << (mode - 5100);
+                int k = idx / 64;
+                int npair = idx % 64;
+                int n_even = npair * 2;
+                int n_idx_e = n_even % 32;
+                int n_idx_o = (n_even + 1) % 32;
+                int k_idx = k % K_unique;
+                auto h = [](int kk, int nn) -> unsigned short {
+                    unsigned hh = 0xC0FFEE13u ^ (kk * 0xDEADBEEFu) ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    return (unsigned short)(hh & 0xFFFF);
+                };
+                unsigned short ve = h(k_idx, n_idx_e);
+                unsigned short vo = h(k_idx, n_idx_o);
+                w = ((unsigned)vo << 16) | ve;
             } else if (mode >= 2900 && mode <= 2908) {
                 // SUB-TILE DEDUP TEST: 8 sub-tiles of 16 N each.
                 // K_break = mode - 2900 sub-tiles use UNIQUE pattern; rest use SHARED pattern 0.
