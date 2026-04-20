@@ -248,7 +248,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 
 ## O. Surprises / falsifiable claims
 
-- [ ] **O1 — Compiler emits `STG.NA` when?** (Non-temporal store)
+- [x] **O1 — Compiler emits `STG.NA` when?**: NEVER auto. STG.NA is
+  STG.E.EF (Evict-First) on B300, emitted only via `st.global.cs` PTX
+  or `__stcs()` intrinsic. Use for streaming-only writes. Commit history.
 - [x] **O2 — Tensor core warmup**: **NO warmup penalty** for mma.sync.
   First MMA = steady-state MMA (~20 cy inc. clock64 overhead, 16 cy
   pipeline). No need for dummy-MMA warmup. See `b300_clean/O2_TENSOR_WARMUP.md`.
