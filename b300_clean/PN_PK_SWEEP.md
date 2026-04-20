@@ -266,3 +266,86 @@ power-friendly than expected.
 - Test diagonal × K-flip combinations
 - Test with non-linear K dependencies (e.g., quadratic n+k*k)
 - Cross-check with NVFP4 to see if same diagonal-LOW behavior
+
+## Random shift per K row: cache might hold MORE than 2 patterns
+
+Tested `sign[k][n] = ((n + rand_shift[k]) / p_n) & 1` where rand_shift[k] is
+random in [0, p_n) per K-row. Each K row gets a different N-pattern.
+
+```
+p_n=2  random-shift-per-K : 461 W LOW  (2 possible patterns - fits)
+p_n=4  random-shift-per-K : 465 W LOW  (4 possible patterns - still fits!)
+p_n=8  random-shift-per-K : 467 W LOW  (8 possible patterns - STILL fits!)
+p_n=16 random-shift-per-K : 569 W HIGH (16 patterns - finally breaks)
+p_n=32 random-shift-per-K : 530 W partial HIGH
+```
+
+### CONTRADICTS the strict "2-entry cache" model
+
+Previous kphase_n test showed pk=4 num_phases=3 → HIGH (3 patterns thrash).
+Now we see random-K-shift p_n=8 with 8 unique patterns stays LOW.
+
+### Possible reconciliation
+
+The two tests differ in WHICH AXIS has variation:
+
+1. **kphase_n**: PER-COLUMN K-pattern variation
+   - Column 0 has K-pattern A
+   - Column 1 has K-pattern B
+   - 3+ patterns → HIGH
+   - Cache checks "is THIS column's K-pattern same as cached?"
+
+2. **random_kshift**: PER-K-ROW sub-tile pattern variation
+   - K-row 0 has N-pattern A
+   - K-row 1 has N-pattern B
+   - 8 unique patterns → STILL LOW
+   - Cache checks "is THIS K-row's sub-tile content cached?"
+
+The K-row dimension may have HIGHER cache capacity than the N-column dimension.
+
+### Hypothesis: per-K-row sub-tile cache holds 8+ patterns
+
+In K=16, the 16 K-rows are evaluated sequentially in one MMA. The cache may
+hold up to 8 sub-tile patterns and apply LRU/random replacement. If the
+total unique patterns ≤ cache size, no thrashing.
+
+### Power transition point: between 8 and 16 unique sub-tile patterns
+
+```
+p_n  unique patterns  power state
+ 2   2                LOW
+ 4   4                LOW
+ 8   8                LOW
+16   16               HIGH (transition!)
+32   32               partial HIGH
+```
+
+Sharp transition at 16 unique patterns suggests cache capacity ≈ 8-16.
+
+### Refined model
+
+```
+SUB-TILE CACHE (K-row direction):
+- Per sub-tile position (16 BF16 N values)
+- Holds ~8 unique sub-tile contents
+- Triggered by sub-tile content match
+- K-rows in same MMA share cache state
+```
+
+This is a major refinement of the prior "2-entry cache" model. The cache
+may actually be much larger but operates on different axes with different
+characteristics.
+
+## Confidence
+
+- **HIGH**: Random K-shift LOW for p_n ≤ 8 (8 unique patterns OK)
+- **HIGH**: Transition at p_n between 8 and 16 (cache capacity reached)
+- **MEDIUM**: Cache capacity ~8-16 for sub-tile direction
+- **OPEN**: Why kphase_n shows 3 patterns = HIGH but random_kshift shows 8 = LOW
+  (different cache mechanism per axis?)
+
+## Next experiments to disambiguate
+
+- Test with EXACTLY N distinct shifts (e.g., 4 shifts from a fixed set, not random)
+- Test K-shift frequency per row (1 row vs many rows per shift)
+- Test combined: per-column phase (multiple K-patterns) AND per-row shift
