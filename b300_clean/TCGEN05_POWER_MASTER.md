@@ -191,6 +191,10 @@ Provenance documents:
 | **PRACTICAL: 18% gain** | PRACTICAL_THROUGHPUT_GAIN.md | Structured B at boost = 4.06s vs random 4.78s (avoids 1590MHz throttle) |
 | **Power cap sweep: 2.09× at 400W** | PRACTICAL_THROUGHPUT_GAIN.md (appendix) | Optimization speedup grows as cap tightens: 1.18x@1100W → 2.09x@400W |
 | Per-SM scaling | PER_SM_POWER_SCALING.md | 3.1W per SM random, 1.0W per SM const, linear up to 148 |
+| Power-frequency curve | POWER_FREQUENCY_CURVE.md | Peak 2.36× ratio at 1500 MHz; best TF/W at 1300-1500 MHz |
+| M dimension halves | M_DIMENSION_HALVES.md | BF16 halves preserved at M=64 (N-direction structural) |
+| Cross-MMA dedup | CROSS_MMA_DEDUP.md | Per-MMA only; alt MMAs avg the powers; partial opt gives 12% gain |
+| Power floor | POWER_FLOOR.md | 287W absolute minimum for 148 SMs of active tcgen05 |
 
 ---
 
