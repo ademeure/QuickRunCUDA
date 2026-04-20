@@ -301,3 +301,92 @@ to see the exact test code and data. The b300_clean directory contains:
 
 For historical / lower-confidence numbers, see the parent dir's
 `B300_PIPE_CATALOG.md` (preserved unchanged).
+
+---
+
+## ADDENDUM (2026-04-20): cuBLAS K-id Mechanism Deep Dive
+
+Comprehensive characterization of the data-dependent throttle mechanism in
+B300 tcgen05.mma. See `N_DEPENDENCE_DEEPDIVE.md` for full details (1300+
+lines, 25 commits, 5 independent measurement methods).
+
+### Practical peak ceiling table
+
+| Workload | TFLOPS | % of HW ceiling | Notes |
+|----------|--------|-----------------|-------|
+| **Random BF16 production** | **1495-1577** | 65-70% | M=N=K=20480 peak |
+| **2:4 structured sparse BF16** | **1645-1740** | 73-77% | M=N=K=16384 peak |
+| **Random FP8 production** | **2624-2683** | 58-60% | M=N=K=24576 peak |
+| K-id synthetic BF16 (impossible) | 2098 | 93% | shape-conditional |
+| Full constant BF16 (impossible) | 2253 | 100% (HW ceiling) | universal trigger |
+
+### 5-Gate model for K-id speedup activation
+
+ALL FIVE conditions required for the full 1.42× BF16 / 1.55× FP8 speedup:
+1. **N ∈ {K/2, K, 2K}** — outer memory access gate (razor-sharp, off by 32 = total loss)
+2. **N divisible by 256** — tile_N alignment
+3. **K divisible by 256** — tile_K alignment
+4. **transB=0** layout (NN/TN, not NT/TT)
+5. **Data has chunk=1 alternation OR chunk divides 64 OR period 1/2**
+
+Real ML workloads satisfy NONE simultaneously → ~2-11% practical benefit.
+
+### Independent mechanism: structured sparsity
+
+| Sparsity Pattern | Speedup | Notes |
+|------------------|---------|-------|
+| Random 0% (dense) | 1.00× | baseline |
+| Random 30% sparse | 0.95× | DIP — pattern-detector thrashes |
+| Random 50% sparse | 0.97× | still in dip |
+| Random 75% sparse | 1.06× | starting to recover |
+| Random 90% sparse | 1.17× | zero shortcuts dominate |
+| **Structured 2:4 (50% zeros)** | **1.11×** | predictable positions trigger detection |
+| 100% zero | 1.52× | full ceiling |
+
+### Power dynamics (NVML-verified)
+
+```
+Mode      Avg Clock   Avg Power   Energy Density
+K-id      1924 MHz    737 W       0.35 W/TF
+Random    1507 MHz    976 W       0.65 W/TF (~2× more)
+```
+
+Random hits 1100W power cap → throttle. K-id stays at boost.
+
+Power cap modulation:
+- 1100W cap: K-id 1.42× faster than random
+- 700W cap:  K-id 1.49× faster
+- 500W cap:  K-id 1.66× faster
+
+### Llama-70B production reference
+
+```
+FFN matmul (K=8192, N=28672) random data:
+M=1     6.6 TF    (memory-bound, single-token decode)
+M=128   739 TF    (continuous batching, 47% peak)
+M=2048  1455 TF   (compute-bound, 92% peak)
+M=8192  1495 TF   (saturated, 95% peak)
+
+QKV proj (K=8192, N=10240):
+M=8192  1485 TF   (saturated)
+```
+
+### Cross-GPU + multi-GPU validation
+
+- Both B300 SXM6 chips (GPU 0 and GPU 1) show IDENTICAL N-dependence within 1%
+- Multi-GPU: no power/thermal coupling. Independent ~1100W per chip
+- Operational hazard: GPUs can get stuck at low clock (1005 MHz) requiring
+  `sudo nvidia-smi -rgc -i N` to recover. Always verify clock during long runs.
+
+### Sub-tile dedup IS LARGELY DEAD in cuBLAS
+
+- Within-row constancy (sub-tile of 16/32/256 N): only 1-3% speedup
+- K-row identity: 42% speedup
+- K-row dedup dominates by 14× margin in cuBLAS
+- The 32-byte sub-tile dedup observed in custom tcgen05 microbenchmarks
+  doesn't translate to significant cuBLAS GEMM benefit
+
+### Provenance
+
+20+ commits this session on branch `f2fp-deep-dive`, starting at `702d4bd`
+through `f0c8331`. Full doc at `b300_clean/N_DEPENDENCE_DEEPDIVE.md` (1300+ lines).
