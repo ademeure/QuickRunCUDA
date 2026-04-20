@@ -57,11 +57,43 @@ ncu metrics for matched read vs write kernels (.cg, 64 MB ws):
 
 **The L2 port has only 1.8× read-vs-write asymmetry** (21 / 12 TB/s).
 The remaining 4.2× wall-clock gap comes from:
-- **Write-allocate amplification** (1.5× extra sectors per demand-write)
-- **DRAM write-back leak** (1.1 TB/s leaving L2 even at "L2-fitting" 64 MB ws)
+- **Write-allocate amplification** (1.5× extra sectors per demand-write,
+  ncu confirms `lts__t_sectors_op_write` = 1.5× `l1tex__t_sectors`)
+- **DRAM write-back leak** (1.07 TB/s leaving L2 even at "L2-fitting" 64 MB ws)
 
-So the L2 itself isn't 4× slower — the demand path through write-allocate
-+ writeback eviction makes it look 4× slower from the kernel's POV.
+### Tried to push writes higher — confirmed it's the SM side, not L2
+
+I tried multiple cleaner patterns:
+- Full-sector stores: `st.global.cg.v4.b64` → emits **STG.E.ENL2.256** (32 B
+  per store, full sector). Time: 19.5 s for 30 M iters × 32 B → **3.74 TB/s**
+  (basically same as STG.128 = 3.78 TB/s).
+- Single-pass / no revisit (each thread writes 96 KB own region):
+  **3.12 TB/s** (DRAM-bound).
+- Warp-coalesced 1024 B per warp-cycle (32 threads × 32 B sequential
+  per-warp slice of 16 KB): **3.74 TB/s** — DRAM leak drops to 22 MB/s
+  (essentially zero), but wall BW unchanged.
+- Tried .cg / .cs / .wb / .wt cache hints — all within ±2 % of 3.74 TB/s.
+
+ncu on the warp-coalesced run:
+| metric                          | value         |
+|---------------------------------|---------------|
+| dram__bytes_write.per_second    | 21.91 MB/s    |
+| lts__t_bytes.sum.per_second     | 10.84 TB/s    |
+| lts__t_sectors_op_write         | 568 B sectors |
+| l1tex__t_sectors_op_st          | 379 B sectors |
+| l1tex__t_requests_op_st         | 11.84 B       |
+| amplification (lts / l1tex)     | **1.50×**     |
+
+**The 1.5× write-allocate amplification persists even with full-sector
+warp-coalesced writes** — it is a per-write-transaction L2 metadata cost,
+NOT a partial-line artifact. So writes were never a "bad access pattern"
+problem.
+
+**The 3.74 TB/s effective write ceiling is a real B300 SM/LSU store-pipe
+limit.** The L2 port has 10.84 TB/s of headroom that the SM side
+cannot fill on writes. Reads with the same kernel template hit 15.92 TB/s
+because reads do not have the 1.5× allocate amplification AND
+the LSU read pipe is wider than the store pipe per cycle.
 
 ### 4. Per-byte energy (estimate)
 | op           | active W | wall-effective BW | nJ/byte (demand) |
