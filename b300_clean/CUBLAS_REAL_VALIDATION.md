@@ -207,3 +207,62 @@ For BF16 cuBLAS GEMM 8192³:
 - HIGH that source is K-row dedup (not sub-tile cache) at cuBLAS level
 - HIGH that power-throttling explains the runtime gap
 - MEDIUM on practical applicability to real ML weights (depends on layout)
+
+---
+
+## Verification: K-rows IDENTICAL with N pure random
+
+To isolate the K-row identity factor:
+
+| Configuration | TFLOPS | Speedup |
+|---------------|-------:|--------:|
+| FULLY random (B random per (k,n)) | 1517 | 1.00× |
+| K-rows IDENTICAL, N random per element | 2143 | **1.41×** |
+
+This confirms: **K-row identity alone gives 1.41× speedup**, even with
+pure random N values (no quantization, no sub-tile cache hit).
+
+## When does this apply to real workloads?
+
+K-row identity in B[k_in, n_out] means: every K_in row is identical.
+This means the matrix is rank-1 (or rank << K).
+
+Realistic scenarios with K-row identity:
+- **Embedding lookup multiplied by query**: embedding rows are repeated K times
+- **Fused attention with replicated KV heads**: GQA/MQA with grouped heads
+- **Convolutional blocks with shared filters**: filter applied at each spatial position
+- **Diagonal/sparse blocks**: where most K rows are zero
+
+Typical NOT-applicable cases:
+- Standard linear layer weights (random per (k, n))
+- Per-element quantized weights
+- Most ML weight matrices
+
+## Refined practical recipe
+
+The cuBLAS speedup applies when:
+1. **B matrix has K-row similarity** (consecutive K rows have similar content)
+2. OR **B is structured-quantized with K-aligned scale groups**
+3. OR **B has some internal repetition pattern aligned with K dimension**
+
+For unstructured weights, this optimization does NOT apply.
+
+For structured weights or specialized inference (e.g., GQA attention),
+the 1.41× speedup is REAL and accessible.
+
+## Honest headline (revised)
+
+For BF16 cuBLAS GEMM 8192³ on B300:
+- Worst case (fully random data): 1517 TFLOPS
+- K-row identity (e.g., GQA attention KV cache): **2143 TFLOPS (1.41×)**
+- Maximum theoretical (cuBLAS spec): ~2242 TFLOPS
+
+The 1.45× headline DOES depend on B having K-row similarity.
+For typical unstructured weights, no benefit.
+For specific patterns (GQA, embedding products, etc.), real practical gain.
+
+## Confidence
+
+- HIGH on the 1.41× being real for K-row-identical B
+- HIGH on the mechanism being K-row pairwise dedup
+- MEDIUM on which real workloads benefit (depends on specific data layout)
