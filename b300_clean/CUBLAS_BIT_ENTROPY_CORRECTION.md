@@ -698,3 +698,42 @@ The LARGEST headroom available for ML workloads:
 - From random cuBLAS to const cuBLAS: 1.51× speedup (data optimization)
 - From const cuBLAS to theoretical: 1.09× (algorithm optimization)
 - Combined: 1.66× possible vs current cuBLAS random
+
+---
+
+## Sustained throughput test (5 runs back-to-back)
+
+**Const data sustained**:
+- Run 1-5 TFLOPS: 2252.18, 2252.24, 2252.25, 2252.24, 2252.28
+- Variance: < 0.1 TFLOPS (essentially noise-free)
+- Clock: stable 2032 MHz throughout
+- Power: 595-935W (well under cap)
+- Temperature: 49-60°C (cool)
+
+**Random data sustained**:
+- Run 1-5 TFLOPS: 1678, 1679, 1675, 1670, 1668 (slight 0.6% drift)
+- Clock: oscillating 1402-2032 MHz (throttling cycling)
+- Power: oscillating 553-1098W (hits cap then backs off)
+- Temperature: 49-63°C
+
+**Speedup at sustained**: 2252/1675 = **1.34×** (matches initial measurement)
+
+## Confirms throttling is the mechanism
+
+Random data: clock dynamically throttling between boost (2032) and ~1400 MHz
+Const data: sustained boost (2032 MHz) without interruption
+
+The 1.34× speedup is **purely from avoiding throttling** by reducing per-cycle
+multiplier power. No data-dependent algorithm differences, no cycle count
+changes - just sustained boost vs throttle cycling.
+
+## Practical takeaway: predictable throughput
+
+For deployment:
+- **Const-data workloads**: PREDICTABLE 2252 TFLOPS sustained
+- **Random-data workloads**: VARIABLE 1668-1700 TFLOPS, oscillating clock
+- INT4 quantized inference: somewhere in between (1860-1990 TF, less variability)
+
+Predictable throughput is valuable for SLA-bound inference deployments
+where p99 latency matters. Const/structured data gives both higher AND
+more predictable throughput.
