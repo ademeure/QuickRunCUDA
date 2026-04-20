@@ -416,3 +416,58 @@ This explains ALL observed behavior:
 - transB=1 no benefit (memory access pattern doesn't match cache architecture)
 
 This is now a HIGH-confidence model with multiple independent verification paths.
+
+## Cache replacement policy: NOT simple LRU
+
+Tested K-row arrangement variants with same 2-pattern set (A, B) at M=K=N=8192:
+
+```
+Arrangement          TFLOPS    Speedup   Description
+ABAB (chunk=1)       2102 TF   1.42×     ✓ FULL  - immediate alternation
+AABB (chunk=2)       1528 TF   1.03×     ✗ NONE  - paired adjacency
+AAAABBBB (chunk=4)   1722 TF   1.16×     PARTIAL
+8xA-8xB              2019 TF   1.36×     NEAR FULL
+32xA-32xB            2077 TF   1.40×     ✓ FULL
+64xA-64xB            2082 TF   1.40×     ✓ FULL  - matches K-tile size
+
+ABC (period 3)       1521 TF   1.03×     ✗ NONE
+ABCD (period 4)      1521 TF   1.03×     ✗ NONE
+AABBCC (chunk=2 of 3 pat) 1517 TF 1.02×  ✗ NONE
+```
+
+### Surprising: chunk=2 fails but chunk=1 succeeds
+
+A simple 2-slot LRU should keep both A and B in cache regardless of arrangement.
+Yet chunk=2 (AABB) gives essentially no speedup while chunk=1 (ABAB) is full.
+
+**This rules out simple LRU.** Possible mechanisms (could not isolate definitively):
+
+1. **Pattern predictor**: HW detects "alternating period-1" as a special case
+   (matches a hardwired pattern recognizer). Other arrangements miss the predictor.
+
+2. **Per-K-tile constancy**: When chunk size ≥ K-tile size (64), each K-tile sees
+   one constant pattern → trivial dedup. Below 64, only chunk=1 matches the
+   alternation predictor.
+
+3. **Differential gating with timing**: The 2-pattern alternation may match the
+   pipeline depth (6 stages) in a way that allows speculative dedup.
+
+The chunk-size-vs-speedup curve is non-monotonic:
+chunk: 1 → 2 → 4 → 8 → 32 → 64
+ratio: ✓ → ✗ → mid → near-full → ✓ → ✓
+
+This is **strong evidence the dedup HW has multiple detection paths** (period-1
+alternation predictor, plus per-K-tile constancy detector). The transitions
+between paths create the dip at chunk=2,4.
+
+### Practical implications
+
+For real workloads to trigger speedup, the K-direction structure of weights must:
+- Be EXACTLY constant per K-tile (chunk ≥ 64), OR
+- Alternate immediately every K-row (pattern AB AB AB...)
+
+Real ML weights satisfy NEITHER → real inference benefit remains ~2-6%.
+
+For SYNTHETIC compression schemes (e.g., quantized weights with shared scales
+per K-block of 64), the constant-per-block structure could partially trigger
+the dedup. This might be a path for hardware-aware quantization design.
