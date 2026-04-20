@@ -237,3 +237,30 @@ Combined with prior findings:
 - Full constant data (entropy=0): universal speedup, shape-INDEPENDENT
 - Structured low-entropy: shape-CONDITIONAL on N alignment to K
 - Real ML inference shapes: outside speedup window → ~2-6% benefit
+
+## A vs B asymmetry: only B operand triggers shape-conditional speedup
+
+Tested A operand with K-column-identity structure (A[m][k] = g(m), constant
+along K direction) - dual of the B K-id pattern. Result:
+
+```
+M=K=8192 BF16, A=K-col-id, B=random:
+N=8192:  1490 TF (vs random 1482 = 1.005×)
+N=9216:  1471 TF (vs random 1464 = 1.005×)
+N=12288: 1493 TF (vs random 1484 = 1.006×)
+N=16384: 1487 TF (vs random 1478 = 1.006×)
+N=24576: 1494 TF (vs random 1485 = 1.007×)
+```
+
+**A K-identity gives essentially NO speedup at ANY N.** All 0.5-0.7%.
+
+Contrast with B K-identity at N=K=8192: 2098 TF (1.42×).
+
+**Confirms existing model:** A operand is broadcast through fanout (free
+regardless of value), B operand is distributed and gates power based on
+content. The shape-conditional speedup is purely a B-side mechanism.
+
+This means in real ML inference, you cannot get throttle relief by
+making the activation tensor (often A in cuBLAS NN convention) low-entropy.
+You'd need the WEIGHT tensor (B) to have the K-id-like structure AND the
+shape to fall in N ∈ {K/2, K, 2K}. The combination is rare in practice.
