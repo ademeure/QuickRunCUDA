@@ -1121,3 +1121,61 @@ The mechanism is fully understood at every level:
 - Library: bit-entropy correlation, throttling avoidance
 - Application: INT4 quantization automatically benefits
 - Production: predictable, lower thermal, lower power, higher throughput
+
+---
+
+## Investigation limitations and open questions
+
+### What we DID rigorously verify:
+- cuBLAS GEMM with controlled-pattern data
+- Multi-precision (FP16, BF16, FP8 e4m3, NVFP4 microbench)
+- Multi-shape (256³ to 32768³)
+- Multi-GPU (both B300 SXM6 in cluster)
+- Multi-method (CUDA Graph, chrono, single-matmul)
+- NCU-verified (cycle counts identical, same kernel)
+- Sustained 15+ runs (stable, no thermal degradation)
+- Power-cap sweep (1100W to 400W)
+
+### What we DID NOT test:
+- Real framework kernels (AWQ, GPTQ kernels - might differ from cuBLAS GEMM)
+- mxfp8/mxfp4 cuBLAS support (not directly available)
+- NVLink power/bandwidth dependence
+- Kernel co-execution (overlap with other workloads)
+- VERY long sustained runs (1+ hour) - thermal effects may differ
+- CUTLASS implementations
+- Multi-stream concurrent matmuls
+- BACKWARD pass with atomics
+
+### What remains UNCERTAIN:
+- Whether real LLM inference frameworks (vLLM, TensorRT-LLM) achieve our predicted 1.07-1.13× automatic speedup
+- Whether mxfp8/mxfp4 has same mechanism
+- Whether these findings generalize to A100/H100 (likely yes by analogy, untested)
+
+### Caveats for deployment recommendations:
+- Our INT4 simulations were synthetic (XOR'd bit patterns), not real GPTQ format
+- Real GPTQ kernels do dequant+GEMM in custom code, not cuBLAS GEMM
+- The bit-entropy mechanism HOLDS at the multiplier hardware level, but
+  measurable benefit depends on specific kernel implementation
+- Short-burst inference (small batches) doesn't sustain throttling, so doesn't benefit
+
+## When this matters and when it doesn't
+
+**Matters most**:
+- Sustained training workloads (large M, full TDP)
+- Power-capped datacenter inference (typically 600-800W per GPU)
+- Long-context prefill phase (large M)
+- Custom kernel development for ML workloads
+
+**Doesn't matter**:
+- Single-token autoregressive inference (M=1, DRAM-bound)
+- Small models (<2048 hidden dim) - too small to throttle
+- Burst workloads (<100ms duration) - doesn't reach steady state
+- Memory-bound operations (atomics, reductions)
+
+## Final confidence
+
+- HIGH on mechanism existence and characterization
+- HIGH on specific TFLOPS measurements at tested shapes
+- MEDIUM on extrapolation to real framework kernels (AWQ, GPTQ specific)
+- LOW on long-term thermal behavior (>10 minute runs untested)
+- LOW on cross-architecture transfer (A100/H100 untested but likely similar)
