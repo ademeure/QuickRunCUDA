@@ -222,7 +222,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 - [ ] **O4 — IMAD wide multiply** (32x32→64) latency.
 - [ ] **O5 — `__brevll` vs reverse lookup table** breakeven.
 - [ ] **O6 — Atomic on volatile pointer**: SASS difference vs non-volatile.
-- [ ] **O7 — `clock()` vs `clock64()` cost**.
+- [x] **O7 — `clock()` vs `clock64()` cost**: clock64 is **2× CHEAPER**
+  than clock() (2.1 vs 4.0 cy/read after baseline subtract). Both
+  compile to `CS2R SR_CLOCKLO`; clock() pays mask/shift overhead.
+  See `b300_clean/O7_CLOCK_VS_CLOCK64.md`.
 
 ## P. SM-level resource limits
 
