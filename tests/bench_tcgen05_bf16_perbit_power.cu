@@ -59,6 +59,9 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
             } else if (mode == 1799) {
                 // A = all zero (special test for A-side gating)
                 w_a = 0u;
+            } else if (mode == 1800) {
+                // A = all zero (combined with B=0 below for absolute minimum)
+                w_a = 0u;
             } else if (mode >= 1701 && mode <= 1710) {
                 // A K-vary: K_unique values across K dim, same across M (broadcast test)
                 int K_unique_k = 1 << (mode - 1700);  // 2,4,8,...
@@ -704,6 +707,9 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 unsigned short ve = h_norm(n_idx_e);
                 unsigned short vo = h_norm(n_idx_o);
                 w = ((unsigned)vo << 16) | ve;
+            } else if (mode == 1800) {
+                // Mode 1800: A=0 AND B=0 (absolute minimum)
+                w = 0u;
             } else if (mode >= 4000 && mode <= 4299) {
                 // A-test modes: B forced to constant +1.0 to isolate A contribution
                 w = 0x3F803F80u;
