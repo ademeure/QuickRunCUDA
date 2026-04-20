@@ -51,6 +51,10 @@ __device__ __forceinline__ unsigned pick_fp4(unsigned byte, int mode) {
     } else if (mode == 7) {
         // 7 positive nonzero codes (1..7)
         return (byte % 7u) + 1u;
+    } else if (mode == 8) {
+        // 5 "centered" {-1.0, -0.5, +0, +0.5, +1.0} = {0xA, 0x9, 0x0, 0x1, 0x2}
+        static const unsigned char centered[5] = {0xA, 0x9, 0x0, 0x1, 0x2};
+        return centered[byte % 5u];
     }
     return 0u;
 }
