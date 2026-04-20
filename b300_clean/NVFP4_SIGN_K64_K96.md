@@ -38,14 +38,30 @@ forced +-+-+- (31) 390 W    -58 W (-12.9%)
 
 ## K=96 results (M=128, N=128, 1-CTA, SF=1.0)
 
+GPU 1 sub-agent measurements (3 samples each, median reported):
+
 ```
 Sign mode          Power    Savings vs random
-random (0)         418-440  baseline (variable)
-all-positive (1)   ~422 W   -18 W (-4%)
-all-negative (2)   ~387 W   -53 W (-12%)  ← best
-K-uniform-per-N (3) ~404 W   -14 W (-3%)
-forced +-+-+- (31) ~364 W   -54 W (-13%)  ← tied for best
+random (0)         440 W    baseline (median of 418, 446, 440)
+all-positive (1)   422 W    -18 W (-4%)
+all-negative (2)   387 W    -53 W (-12%)  ← BEST clean
+K-uniform-per-N (3) noisy   intermittent crash; valid sample 336W (-104W)
+single sign/K (4)  noisy    intermittent crash
+forced +-+-+- (31) 413 W    -27 W (-6%)
 ```
+
+GPU 0 alternative measurement (single sample, less reliable):
+```
+Sign mode          Power    Savings vs random  
+random (0)         418 W    baseline
+K-uniform-per-N (3) 404 W   -14 W (-3%)
+single sign/K (4)  399 W    -19 W (-5%)
+forced +-+-+- (31) 364 W    -54 W (-13%)
+```
+
+The GPU 0 single sample for sign=31 (-54W) and GPU 1 multi-sample (-27W) disagree;
+GPU 1 multi-sample is more trustworthy. The GPU 0 K=96 measurements suffer
+from frequent crashes (all-pos and all-neg fail; possibly SF init issue at K=96).
 
 ## KEY FINDING: K=64 vs K=96 mechanism differs
 
