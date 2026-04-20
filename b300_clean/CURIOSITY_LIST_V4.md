@@ -176,7 +176,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 - [ ] **G7 — `__forceinline__` vs LTO link-time inline**.
 - [ ] **G8 — Whole-program optimization** with separate compilation.
 - [ ] **G9 — PTX `.maxnreg` directive** effect.
-- [ ] **G10 — `__launch_bounds__` exact impact** on register allocation.
+- [x] **G10 — `__launch_bounds__` impact**: only `min_blocks_per_sm > 1`
+  actually constrains registers. `(1024, 2)` forces R29 vs default R36
+  to fit 2048 threads × 32 reg = 65K SM register file. min_blocks=1 is
+  documentation only. Commit history.
 
 ## H. Per-pipe power (sub-tcgen05)
 
