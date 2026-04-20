@@ -185,6 +185,10 @@ Provenance documents:
 | mma.sync legacy | MMA_SYNC_POWER.md | A vs B asymmetry exists in legacy mma.sync (17W gap) |
 | NVFP4 SF | NVFP4_SF_POWER.md | Scale factor adds independent ~27W when random |
 | Sparse validation | SUBTILE_SPARSE_VALIDATION.md | Per-byte sparsity ineffective; sub-tile-level confirms two-half |
+| K-direction linear | K_DIRECTION_LINEAR.md | NO K-halves; uniform ~19.5W per random K row |
+| A vs B zero asym | A_B_ZERO_ASYMMETRY.md | A=0 saves 121W, B=0 saves 313W (full gating) |
+| Latency data-indep | LATENCY_DATA_INDEPENDENT.md | per-MMA timing IDENTICAL across patterns - dedup is power-only |
+| **PRACTICAL: 18% gain** | PRACTICAL_THROUGHPUT_GAIN.md | Structured B at boost = 4.06s vs random 4.78s (avoids 1590MHz throttle) |
 
 ---
 
