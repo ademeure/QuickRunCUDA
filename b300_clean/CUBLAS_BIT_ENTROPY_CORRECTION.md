@@ -91,3 +91,65 @@ which has different practical implications.
 
 The bit-entropy interpretation is BETTER NEWS for ML inference: ANY data
 with low entropy benefits, not just specifically K-row-structured data.
+
+---
+
+## Bit POSITION sensitivity test
+
+Does it matter WHICH bits are random within mantissa?
+
+### 4 random bits at different starting positions:
+
+| start_bit | TFLOPS |
+|----------:|-------:|
+| 0 | 1812 |
+| 1 | 1801 |
+| 2 | 1797 |
+| 3 | 1798 |
+
+### 1 random bit at different positions:
+
+| start_bit | TFLOPS |
+|----------:|-------:|
+| 0 | 2008 |
+| 1 | 2001 |
+| 2 | 1993 |
+| 3 | 1989 |
+| 4 | 1985 |
+| 5 | 1994 |
+| 6 | 2003 |
+
+**Bit position doesn't matter. Only bit COUNT matters.** Variance < 1% across positions.
+
+## Implication for quantization design
+
+Any quantization scheme that reduces bit count gives proportional benefit:
+- 4-bit weights (INT4-style): ~1.20× speedup vs full random
+- 1-bit weights: ~1.34× speedup
+- 0-bit (constant): 1.47× speedup
+
+This is precision-mantissa-bit-INDEPENDENT. The mechanism is purely
+bit-count entropy at the multiplier level.
+
+## Connect back to microbench
+
+In microbench mode 0-15 (per-bit forcing), we saw:
+- Sign bit (15) most impactful: -56W save when forced
+- Exp bits 7-13: -30W each
+- Mantissa bits 0-6: -15-25W each
+
+So at MICROBENCH (per-bit) level, bit POSITION matters (sign > exp > mantissa).
+But at cuBLAS level (with same exp=126 fixed and only mantissa varying), the
+positions WITHIN mantissa are equivalent.
+
+The reconciliation: bit-position effects manifest when comparing across
+bit FIELDS (sign vs exp vs mantissa). Within a single field (mantissa),
+positions are equivalent.
+
+## Final mechanism summary
+
+cuBLAS speedup = f(bit entropy of B) where:
+- Each random sign bit: ~165 TFLOPS cost
+- Each random exp bit: ~100-150 TFLOPS cost (estimated, untested)
+- Each random mantissa bit: ~70 TFLOPS cost (uniform across positions)
+- B all-constant: max speedup ~1.47× over fully random
