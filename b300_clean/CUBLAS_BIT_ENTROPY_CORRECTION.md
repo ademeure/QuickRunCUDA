@@ -520,3 +520,35 @@ Achievable for any constant-data test, regardless of specific value or shape.
 
 Mechanism: per-cycle bit toggle activity drives multiplier power; less activity
 means less power means less throttling means higher sustained throughput.
+
+---
+
+## Compute precision: 16F not supported with BF16 inputs
+
+cuBLAS BF16 GEMM only supports CUBLAS_COMPUTE_32F (32-bit accumulator).
+Tried CUBLAS_COMPUTE_16F → cuBLAS returns error (no-op effectively).
+
+This is a cuBLAS API constraint. BF16 operands with FP32 accumulator is the
+only valid combination. (FP16 inputs may support FP16 accumulator separately.)
+
+## Microbench vs cuBLAS comparison
+
+For BF16 m128n128k16 with random data:
+- Microbench (custom tcgen05 kernel): ~1220 TFLOPS at 1005 MHz
+- cuBLAS BF16 8192³ random at boost: 1503 TFLOPS
+- cuBLAS BF16 8192³ const at boost: 2252 TFLOPS
+
+cuBLAS ~23% faster than my microbench at random data because:
+- Better SMEM tiling (m256n256 cluster_group::2)
+- Optimized TMA scheduling
+- Better instruction pipelining
+
+cuBLAS const ~85% faster than microbench random because:
+- Both improvements above
+- PLUS no power throttling
+
+The hardware ceiling (2252 TFLOPS) is reachable only with:
+1. Optimized kernel implementation (cuBLAS or similar)
+2. Low entropy data (avoids power throttling)
+3. Square or compute-bound shape
+4. Sufficient M (≥256)
