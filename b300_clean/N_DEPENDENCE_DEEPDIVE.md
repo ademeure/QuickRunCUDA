@@ -820,3 +820,34 @@ density, not raw wattage.
    2× based on data pattern - relevant for power-conscious operators.
 
 4. The TFLOPS×Watt PCMark style metric is highly data-dependent.
+
+## Sustained workload: speedup persists over 60s
+
+Ran K-id and random continuously for 60 seconds, recording per-iteration TFLOPS:
+
+```
+K-id (N=K=8192, M=K=8192):
+  Iter 1 (3s):    2105 TF
+  Iter 10 (29s):  2094 TF
+  Iter 20 (59s):  2092 TF
+  Decline:        ~13 TF over 60s = ~0.6%
+  Speedup:        1.42× sustained throughout
+
+Random (N=K=8192, M=K=8192):
+  Iter 1 (4s):    1482 TF
+  Iter 8 (31s):   1467 TF
+  Iter 16 (62s):  1471 TF
+  Decline:        ~11 TF over 60s = ~0.7%
+```
+
+**Both modes show only 0.6-0.7% thermal degradation over 60s.** The speedup
+ratio (1.42×) is fully maintained throughout. K-id speedup is NOT a
+transient warmup effect.
+
+This is consistent with the power-cap throttle mechanism: the GPU enforces
+power cap continuously and the benefit of lower-power data persists as long
+as the workload runs.
+
+Production deployments CAN reliably extract the K-id benefit IF they meet
+the trigger conditions. The challenge remains hitting the conditions, not
+maintaining them.
