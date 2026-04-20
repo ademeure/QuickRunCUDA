@@ -167,6 +167,13 @@ Even more brutal under 600 W power cap: FP8 random = 3087 TFLOPS (-43%).
 23. **K-row dedup is pairwise-consecutive in tcgen05** — sorting K rows by similarity saves ~5W per BF16 transition (ab82fd2)
 24. **Sticky activation in tcgen05 sub-tile dedup** — putting matching sub-tiles at LOW N saves up to 270W per CTA (87cd247)
 25. **Per-byte cost of K-vary in tcgen05 = 0.025 W/byte** (universal across precisions, total ~110W for 4096 byte B operand) (b38bb2a)
+26. **disable_lane scales linearly: ~2.4W per disabled column** for BF16 random; useful for sparse attention (c3fadcc)
+27. **mma.sync legacy ALSO has dedup** — A vs B asymmetry exists in BF16 (17W) and FP8 (22W) mma.sync (bd7e1b8, da32bb2)
+28. **Per-MMA latency is data-INDEPENDENT** — dedup is purely transistor-level clock gating, no throughput impact (3cc8c8c)
+29. **PRACTICAL: structured B is 18% FASTER at boost** (4.06s vs 4.78s); avoids 1590 MHz throttle (7929d59)
+30. **Power cap sweep: 1.18-2.09× speedup** as caps tighten (1.18x@1100W → 2.09x@400W); critical for power-capped inference (e5b2176)
+31. **A vs B zero gating asymmetric** — B=0 fully gates (313W save), A=0 only partial (121W save); A varying is conditional (60W extra when B varies) (d9ca24d)
+32. **Per-SM scaling**: 3.1W per SM random, 1.0W per SM const, 2.1W data-dep delta, linear up to 148 SMs (e11f5c9)
 
 ## tcgen05.mma POWER MASTER (NEW 2026-04-20)
 
