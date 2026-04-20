@@ -1385,3 +1385,57 @@ freely without cross-interference at the kernel level. There's no
 This is good news for inference servers handling diverse models - one
 heavy random-pattern workload doesn't steal performance from a K-id-
 friendly workload running in the same pipeline.
+
+## Per-iteration timing: speedup activates from iter 0
+
+Timed individual cuBLAS LtMatmul launches (no graph) to detect any warm-up:
+
+```
+K-id at M=N=K=8192 (per-iteration TFLOPS):
+  iter  0: 2190.75 TFLOPS (0.502 ms)
+  iter  1: 2228.98 TFLOPS (0.493 ms)
+  iter  5: 2218.47 TFLOPS
+  iter 10: 2226.96 TFLOPS
+  iter 28: 2227.54 TFLOPS
+  Stable at ~2227 TF after iter 1.
+
+Random at M=N=K=8192 (per-iteration TFLOPS):
+  iter  0: 1902.43 TFLOPS (0.578 ms)
+  iter  5: 1883.55 TFLOPS
+  iter 10: 1866.87 TFLOPS
+  iter 28: 1866.77 TFLOPS
+  Stable at ~1865 TF after iter 1.
+```
+
+### Key observations
+
+1. **K-id activates at iter 0 (97% of stable peak)** — only 1.7% improvement
+   between iter 0 and iter 1. The HW dedup engages essentially immediately.
+
+2. **Random has tiny cold-start ADVANTAGE** — iter 0 at 1902 TF, drops to
+   ~1867 TF stable. The throttle takes ~1 iteration to fully engage.
+
+3. **L2 cache warmup is NOT a meaningful contributor** to K-id speedup.
+   If L2-caching B mattered, we'd see iter 0 << iter 5. But iter 0 ≈ iter 5.
+
+4. **Mechanism is data-pattern based, not cache-state based.** The HW
+   recognizes the pattern within the first kernel launch.
+
+### Observed peak per-iter
+
+- K-id: 2229 TF (above the sustained-graph 2105 TF measurement)
+- Random: 1902 TF (above the sustained-graph 1486 TF measurement)
+
+Confirms cold vs sustained difference. Per-iter timing is between cold-start
+and sustained-graph regimes. The K-id advantage stays consistent at ~1.19×
+in this regime (similar to cold-start ratio).
+
+### Operational implications
+
+For inference serving with kernel launch overheads of ~10-50us per matmul:
+- The K-id speedup is available IMMEDIATELY at first invocation
+- No "warm-up batch" needed to extract benefits
+- Each individual matmul gets independently throttled based on its data
+
+This means even single-batch inference (one matmul at a time) benefits from
+the mechanism if data triggers it - no batch effects needed.
