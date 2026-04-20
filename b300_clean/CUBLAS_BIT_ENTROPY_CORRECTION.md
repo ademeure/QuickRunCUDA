@@ -585,3 +585,29 @@ LARGE enough to sustain compute pressure:
 
 For the largest deployed models (Llama 70B), the speedup is maximal. Smaller
 models or smaller batches see proportionally less benefit.
+
+---
+
+## Update: 32768³ also benefits 1.33× (earlier 1.03× was thermal artifact)
+
+When run cool, 32768³ gives:
+- Random: 1703 TFLOPS
+- Constant: 2273 TFLOPS
+- Speedup: 1.33×
+
+Previously I observed 1.03× for 32K which was a thermal artifact (GPU
+already heated up from prior measurements). When fresh, 32K behaves
+similarly to 8K (full benefit).
+
+Updated shape-size table:
+
+| Shape | Ratio | Note |
+|-------|------:|------|
+| 256³ - 1024³ | 1.00× | Too small, DRAM/launch bound |
+| 2048³ | 1.02× | Marginal |
+| 4096³ | 1.15× | Significant |
+| 8192³ | **1.34×** | Maximum efficiency |
+| 16384³ | 1.24× | L2 pressure |
+| 32768³ | 1.33× | Recovered when cool |
+
+Sweet spot: 8192-32768 cube range, giving 1.24-1.34× speedup.
