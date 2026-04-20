@@ -245,7 +245,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   pipeline). No need for dummy-MMA warmup. See `b300_clean/O2_TENSOR_WARMUP.md`.
 - [ ] **O3 — Branch density vs back-pressure**: kernel with 50% branches
   vs 0%.
-- [ ] **O4 — IMAD wide multiply** (32x32→64) latency.
+- [x] **O4 — IMAD wide multiply**: 32x32→64 is 2× IMAD cost, 32x32→32hi
+  is 1.9×, 64x64→64 (low) same as IMAD, **__umul64hi is 8.8× SLOWER**
+  (emulated). Avoid splitmix64-style PRNGs in hot loops. Commit history.
 - [x] **O5 — `__brevll` vs reverse lookup table**: BREV intrinsic always
   wins. `__brev`=3.53 TIPS, shift-based=3.53 TIPS (compiler folds to
   BREV), 8-bit LUT=0.93 TIPS (4× slower due to constant mem). Commit history.
