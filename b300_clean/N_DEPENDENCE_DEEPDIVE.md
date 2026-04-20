@@ -1267,3 +1267,44 @@ Best achievable production:
 Both numbers ~10-11% above their respective dense randoms. Confirms 2:4
 structured sparsity provides PRECISION-INDEPENDENT boost via the same
 mechanism (zero-pattern prediction in multiplier circuits).
+
+## 2:4 sparsity requires FIXED zero positions, not just 50% count
+
+Tested various 50% sparse patterns at M=N=K=8192 BF16:
+
+```
+Pattern                              TFLOPS   Speedup
+FIXED 2:4 zeros at positions 0,1     1668     1.13×  ✓
+FIXED 2:4 zeros at positions 0,2     1660     1.12×  ✓
+FIXED 4:8 zeros (chunks of 4)        1663     1.12×  ✓
+RANDOM 2:4 (random which 2 of 4)     1513     1.02×  ✗ NO benefit
+ROTATING 2:4 (cycle through 6 pos)   1461     0.99×  ✗ slight regression
+```
+
+**The pattern detector requires CONSISTENT zero positions across all 4-element
+groups in B.** Even though all five test cases have exactly 50% zeros, only
+those with FIXED zero positions trigger the speedup.
+
+### Implications
+
+1. NVIDIA's 2:4 structured sparsity format spec (N:M sparsity) requires
+   FIXED positions for a reason - matches HW pattern detection.
+
+2. Software-level sparsity that randomly chooses zero positions (e.g., naive
+   magnitude-based pruning without re-arrangement) gets NO benefit even at 50%.
+
+3. To benefit on dense GEMM:
+   - Use cuSPARSE/cuTENSOR sparse APIs with proper 2:4 format, OR
+   - Pre-arrange weights so zeros are at fixed positions per 4-element group
+
+4. The HW detector likely has a small "position window" - rotating positions
+   exceed the window and behave like random.
+
+### What about row-level vs column-level position consistency?
+
+Open question (not yet tested): does the position consistency need to hold
+along the K direction (within columns of B) or N direction (within rows of B)?
+
+The fill_24_modes function fills B linearly (mem-order), which depends on
+B's storage layout. Need a follow-up test with explicit row vs column
+position pinning to fully characterize.
