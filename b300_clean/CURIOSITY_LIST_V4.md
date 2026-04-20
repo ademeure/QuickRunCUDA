@@ -28,8 +28,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   ALU pipe (0.5/SMSP/cy): LOP3/IADD3/SHF/PRMT/BFI. XU (0.125/cy): BREV/
   POPC/CLZ. LSU (0.25/cy): SHFL. FFMA 0.66/cy at 2 warps (→ 0.98 at 4+).
   See `b300_clean/A6_PER_PIPE_REFERENCE.md`. Commit: this batch.
-- [ ] **A7 — Active mask transition cost**: warp diverges then reconverges;
-  measure cost of BSSY / BSYNC.
+- [x] **A7 — Active mask transition cost**: even if(true) costs +8 cy
+  (compiler emits BSSY/BSYNC). Half-warp divergence: +2.5 cy. Data-dep
+  divergence: +13 cy. Branch cost is NOT free even when predictable.
+  Commit history.
 - [x] **A8 — SETP throughput** (with caveat): FSETP+SELP at ALU peak
   (0.49/SMSP/cy). ISETP+SELP slightly lower (~0.33/inst). nvcc PTX→SASS
   fusion makes per-inst rate hard to isolate cleanly.
