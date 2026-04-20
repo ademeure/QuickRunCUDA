@@ -23,7 +23,26 @@ emission for various PTX/CUDA load and atomic intrinsics on B300.
 For READ-ONLY data (model weights, lookup tables, prefilled buffers):
 - **Prefer `__ldg`** — uses constant cache path, can be more efficient
 - `const __restrict__ T*` parameters trigger compiler to emit `__ldg` automatically
-- `ld.global.ca` and plain `ld.global` are NOT equivalent to `__ldg`
+- `ld.global.ca` and plain `ld.global` are NOT equivalent to `__ldg` in SASS
+
+## Performance verified: __ldg vs ld.global.ca = SAME SPEED
+
+Re-measured per `bench_ldg_constant_vs_strong.cu` (16 KB hot region):
+
+| Variant | Time | vs default |
+|---------|------|------------|
+| `__ldg` (LDG.E.CONSTANT) | 1.216 ms | 1.00× |
+| `ld.global.ca` (LDG.E.STRONG.SM) | 1.216 ms | 1.00× |
+| `ld.global` (LDG.E) | 1.216 ms | 1.00× |
+| **`ld.global.cg` (LDG.E.STRONG.GPU)** | **2.719 ms** | **2.24× SLOWER** |
+
+**Surprise**: despite different SASS, `__ldg` is NOT measurably faster
+than `ld.global.ca` for this workload. The "constant cache hint" doesn't
+translate to a measurable L1-hot win. The hint may matter only for
+specific tensor-core-coupled workloads.
+
+**Big lesson**: avoid `ld.global.cg` (= bypass L1) unless you really
+want L2-only access — 2.24× slower at L1-resident workloads.
 
 For READ-WRITE data:
 - Use `ld.global` (no qualifier) or `ld.global.ca`
