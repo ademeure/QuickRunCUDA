@@ -111,7 +111,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 
 - [ ] **E1 — atomicAdd misaligned (e.g. ½ word offset)**: error or split?
 - [ ] **E2 — atomicAdd b16 packed `__half`** vs scalar throughput.
-- [ ] **E3 — atomicCAS contention scaling**: 2, 4, 8, 32 contending threads.
+- [x] **E3 — atomicCAS contention scaling**: aggregate **FLAT at 1.1
+  successful CAS/μs** for any N threads (1-128). Each CAS = ~900 ns
+  ≈ 1380 cy unavoidable. Linear slowdown per thread under contention.
+  Commit history.
 - [x] **E4 — `red` vs `atom` SASS**: DIFFERENT opcodes. `atom` →
   `ATOMG.E.ADD.STRONG.GPU` (returns old); `red` → `REDG.E.ADD.STRONG.GPU`
   (no return). `red.relaxed` SASS-identical to `red.global`.
