@@ -70,6 +70,49 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 };
                 unsigned short v = val(v_idx);
                 w_a = ((unsigned)v << 16) | v;
+            } else if (mode >= 4000 && mode <= 4007) {
+                // A M-vary HIGH-ENTROPY: M_unique = 1<<(mode-4000); B forced to constant +1.0
+                // A layout: idx = m * 8 + k_pack. m = idx/8 (0..127), k_pack = idx%8.
+                // For each k position, A[m,k] uses h(m % M_unique).
+                int M_unique = 1 << (mode - 4000);
+                int m_idx = (idx / 8) % M_unique;
+                auto h = [](int mm) -> unsigned short {
+                    unsigned hh = 0xC0FFEE13u ^ (mm * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    return (unsigned short)(hh & 0xFFFF);
+                };
+                unsigned short v = h(m_idx);
+                w_a = ((unsigned)v << 16) | v;
+            } else if (mode >= 4100 && mode <= 4107) {
+                // A K-vary HIGH-ENTROPY: K_unique = 1<<(mode-4100). M_unique = 128 (each m row may differ but K-side determines)
+                // For each m, K-side cycles through K_unique values
+                int K_unique = 1 << (mode - 4100);
+                int k = idx / 64;       // K row 0..15 (idx 0..63 maps to K=0)
+                int v_idx = k % K_unique;
+                auto h = [](int kk) -> unsigned short {
+                    unsigned hh = 0xC0FFEE13u ^ (kk * 0xDEADBEEFu);
+                    hh = hh * 0x9E3779B1u;
+                    hh ^= hh >> 16;
+                    return (unsigned short)(hh & 0xFFFF);
+                };
+                unsigned short v = h(v_idx);
+                w_a = ((unsigned)v << 16) | v;
+            } else if (mode >= 4200 && mode <= 4207) {
+                // A FULL random per (m, k): truly random per byte position
+                // M_unique = 1<<(mode-4200), all M cycles through this many distinct values; K varies fully
+                int M_unique = 1 << (mode - 4200);
+                int m_idx = (idx / 8) % M_unique;
+                int k_pack = idx % 8;
+                auto h = [](int mm, int kk) -> unsigned short {
+                    unsigned hh = 0xC0FFEE13u ^ (mm * 0x9E3779B1u) ^ (kk * 0xDEADBEEFu);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    return (unsigned short)(hh & 0xFFFF);
+                };
+                unsigned short ve = h(m_idx, k_pack * 2);
+                unsigned short vo = h(m_idx, k_pack * 2 + 1);
+                w_a = ((unsigned)vo << 16) | ve;
             } else if (mode >= 1801 && mode <= 1810) {
                 // A N-vary: K_unique values across M dim (no effect on per-MAC temporal)
                 int K_unique_m = 1 << (mode - 1800);
@@ -524,6 +567,9 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 unsigned short ve = h_norm(n_idx_e);
                 unsigned short vo = h_norm(n_idx_o);
                 w = ((unsigned)vo << 16) | ve;
+            } else if (mode >= 4000 && mode <= 4299) {
+                // A-test modes: B forced to constant +1.0 to isolate A contribution
+                w = 0x3F803F80u;
             } else {
                 // For mode >= 400 (A bit forcing), B is random
                 w = r;
