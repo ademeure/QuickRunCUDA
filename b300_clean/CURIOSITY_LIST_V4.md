@@ -52,7 +52,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   better than pair (36% > 13-22%) — long MMA window has room for
   2 scalar streams. Commit history.
 - [ ] **B5 — FFMA + ULDC** (uniform datapath): does ULDC steal an issue slot?
-- [ ] **B6 — Same-pipe ILP**: 2 independent FFMAs in one issue slot? (Probably no).
+- [x] **B6 — Same-pipe ILP**: NO dual-issue. FFMA saturates at NC=4
+  chains (= latency 4 cy) = 1 inst/cy/SMSP (issue port ceiling).
+  More chains wasted; more throughput needs more WARPS. Commit history.
 - [ ] **B7 — Branch + compute parallel**: cost of BRA when fully predictable
   vs not.
 
