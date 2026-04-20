@@ -561,6 +561,29 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 unsigned short ve = h(k_idx, n_idx_e);
                 unsigned short vo = h(k_idx, n_idx_o);
                 w = ((unsigned)vo << 16) | ve;
+            } else if (mode >= 6100 && mode <= 6107) {
+                // SUB-TILE-level sparse zeros: each sub-tile is either ALL ZERO or ALL RANDOM
+                // K_zero = mode - 6100 sub-tiles forced to zero, others random.
+                int K_zero = mode - 6100;
+                int npair = idx % 64;
+                int sub_tile = npair / 8;
+                if (sub_tile < K_zero) {
+                    w = 0;
+                } else {
+                    w = r;
+                }
+            } else if (mode >= 6000 && mode <= 6010) {
+                // SPARSE ZEROS in B: random B with X% values forced to zero (X = 10*(mode-6000))
+                // Tests if HW detects/gates zero values independently of sub-tile dedup
+                int zero_pct = 10 * (mode - 6000);  // 0, 10, 20, ..., 100
+                unsigned r2 = 0xCAFEBABEu ^ idx * 0x12345678u;
+                // Use r2 modulo 100 to decide: if < zero_pct, force to zero
+                int rval = ((r2 ^ (r2 >> 8)) & 0xFFFF) % 100;
+                if (rval < zero_pct) {
+                    w = 0;
+                } else {
+                    w = r;
+                }
             } else if (mode >= 5200 && mode <= 5220) {
                 // K-row consecutive grouping test: K_unique = (mode - 5200) distinct content
                 // patterns arranged in CONSECUTIVE GROUPS of size 16/K_unique each
