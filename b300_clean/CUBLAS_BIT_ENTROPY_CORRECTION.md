@@ -817,3 +817,23 @@ Custom kernels could potentially close some of the 8% gap with significant
 engineering investment, but the bulk of the optimization opportunity
 (60% → 92%, the random→const speedup) is accessible without algorithm
 changes - just data structure.
+
+---
+
+## Layout test (column vs row major B)
+
+| B bits | COL TFLOPS | ROW TFLOPS | Speedup vs B=7 |
+|-------:|-----------:|-----------:|---------------:|
+| 0 | 2206 | 2238 | COL 1.31×, ROW 1.32× |
+| 4 | 1815 | 1830 | COL 1.08×, ROW 1.08× |
+| 7 | 1680 | 1690 | (baseline) |
+
+Row-major consistently ~1% faster (better cuBLAS algorithm path?).
+Bit-entropy speedup is essentially identical in both layouts: 1.31-1.32×.
+
+Layout doesn't fundamentally change the mechanism. The throughput differences
+between layouts are small enough to be within optimization noise.
+
+For ML deployment: data layout choice matters at most ~1.5%, vs the ~30%
+benefit from data structure (bit entropy / quantization). Focus optimization
+effort on data structure first, layout second.
