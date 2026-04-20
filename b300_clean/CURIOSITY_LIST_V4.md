@@ -47,8 +47,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   fast (16 cy/inst) to leave dispatch slots for FFMA. Only slow ops
   (MUFU) get the 100% overlap. See `b300_clean/B2_FFMA_LDG_DUAL.md`.
 - [ ] **B3 — MUFU + FFMA**: catalog says yes; verify and measure overlap.
-- [ ] **B4 — Tensor + FFMA + IMAD all simultaneous**: maximum-ILP kernel.
-  Find peak combined ops/sec.
+- [x] **B4 — Tensor + FFMA + IMAD all simultaneous**: 13-36% overlap
+  (NOT 100%). Issue port serializes even tensor pipe. Triple-mix
+  better than pair (36% > 13-22%) — long MMA window has room for
+  2 scalar streams. Commit history.
 - [ ] **B5 — FFMA + ULDC** (uniform datapath): does ULDC steal an issue slot?
 - [ ] **B6 — Same-pipe ILP**: 2 independent FFMAs in one issue slot? (Probably no).
 - [ ] **B7 — Branch + compute parallel**: cost of BRA when fully predictable
