@@ -128,6 +128,30 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                     unsigned char nib = h(n_pos % N_unique);
                     w |= ((unsigned)(nib & 0x0F)) << (4*p);
                 }
+            } else if (mode >= 5200 && mode <= 5264) {
+                // NVFP4 K-row CONSECUTIVE GROUPING: K_unique = mode-5200, group_size=64/K_unique
+                int K_unique = mode - 5200;
+                if (K_unique < 1) K_unique = 1;
+                if (K_unique > 64) K_unique = 64;
+                int group_size = 64 / K_unique;
+                if (group_size < 1) group_size = 1;
+                int n_pack = idx % 16;
+                int k = idx / 16;
+                int k_group = k / group_size;
+                w = 0;
+                auto h = [](int kk, int nn) -> unsigned char {
+                    unsigned hh = 0xC0FFEE13u ^ (kk * 0xDEADBEEFu) ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    return (unsigned char)((hh & 0x07) | ((hh >> 4) & 0x08));
+                };
+                // Within-row N_unique=64 (1 sub-tile only since NVFP4 sub-tile = 64 N)
+                for (int p = 0; p < 8; p++) {
+                    int n_pos = n_pack * 8 + p;
+                    int n_idx = n_pos % 64;
+                    unsigned char nib = h(k_group, n_idx);
+                    w |= ((unsigned)(nib & 0x0F)) << (4*p);
+                }
             } else if (mode >= 3100 && mode <= 3108) {
                 // PATTERN COUNT for NVFP4: rotating distinct sub-tile patterns 1..8
                 int N_distinct = mode - 3100;

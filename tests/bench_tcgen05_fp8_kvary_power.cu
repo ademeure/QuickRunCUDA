@@ -144,6 +144,64 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 unsigned char b2 = h((n_base + 2) % N_unique);
                 unsigned char b3 = h((n_base + 3) % N_unique);
                 w = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+            } else if (mode >= 5000 && mode <= 5005) {
+                // FP8 K-row rotating: each K row gets N_unique=16 (sub-tile-friendly).
+                // K_unique = 1<<(mode-5000) = 1, 2, 4, 8, 16, 32 distinct K-row patterns
+                int K_unique = 1 << (mode - 5000);
+                int n_pack = idx % 32;
+                int n_base = n_pack * 4;
+                int k = idx / 32;          // K row 0..31
+                int k_idx = k % K_unique;
+                auto h = [](int kk, int nn) -> unsigned char {
+                    unsigned hh = 0xC0FFEE13u ^ (kk * 0xDEADBEEFu) ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    unsigned char v = (unsigned char)(hh & 0xFF);
+                    unsigned char e = (v >> 3) & 0x0F;
+                    if (e == 0) e = 1;
+                    if (e == 15) e = 14;
+                    return (v & 0x87) | (e << 3);
+                };
+                // n_unique=16 per K row (so within row, fits sub-tile cache for FP8 yes since cliff at 32)
+                int n_idx_e = (n_base + 0) % 16;
+                int n_idx_o = (n_base + 1) % 16;
+                int n_idx_2 = (n_base + 2) % 16;
+                int n_idx_3 = (n_base + 3) % 16;
+                unsigned char b0 = h(k_idx, n_idx_e);
+                unsigned char b1 = h(k_idx, n_idx_o);
+                unsigned char b2 = h(k_idx, n_idx_2);
+                unsigned char b3 = h(k_idx, n_idx_3);
+                w = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+            } else if (mode >= 5200 && mode <= 5232) {
+                // FP8 K-row CONSECUTIVE GROUPING: K_unique=mode-5200, group_size=32/K_unique
+                int K_unique = mode - 5200;
+                if (K_unique < 1) K_unique = 1;
+                if (K_unique > 32) K_unique = 32;
+                int group_size = 32 / K_unique;
+                if (group_size < 1) group_size = 1;
+                int n_pack = idx % 32;
+                int n_base = n_pack * 4;
+                int k = idx / 32;
+                int k_group = k / group_size;
+                auto h = [](int kk, int nn) -> unsigned char {
+                    unsigned hh = 0xC0FFEE13u ^ (kk * 0xDEADBEEFu) ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    unsigned char v = (unsigned char)(hh & 0xFF);
+                    unsigned char e = (v >> 3) & 0x0F;
+                    if (e == 0) e = 1;
+                    if (e == 15) e = 14;
+                    return (v & 0x87) | (e << 3);
+                };
+                int n_idx_e = (n_base + 0) % 16;
+                int n_idx_o = (n_base + 1) % 16;
+                int n_idx_2 = (n_base + 2) % 16;
+                int n_idx_3 = (n_base + 3) % 16;
+                unsigned char b0 = h(k_group, n_idx_e);
+                unsigned char b1 = h(k_group, n_idx_o);
+                unsigned char b2 = h(k_group, n_idx_2);
+                unsigned char b3 = h(k_group, n_idx_3);
+                w = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
             } else if (mode >= 3100 && mode <= 3108) {
                 // PATTERN COUNT for FP8: rotating distinct sub-tile patterns 1..8
                 int N_distinct = mode - 3100;

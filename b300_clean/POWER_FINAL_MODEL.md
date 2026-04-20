@@ -167,3 +167,68 @@ position-dependent values):
 
 3. **Combined**: (consecutive K-row matching) × (sub-tile-friendly N pattern)
    → minimum power = ~303W (baseline only), even with all unique data.
+
+---
+
+## Cross-precision K-row consecutive grouping (modes 5200+ in each kernel)
+
+**FP8** (K=32):
+| K_unique | Group size | Power (W) | Δ vs free |
+|---------:|-----------:|----------:|----------:|
+|        1 |         32 |       306 | 0 |
+|        2 |         16 |       316 | +10 |
+|        4 |          8 |       328 | +22 |
+|        8 |          4 |       348 | +42 |
+|       16 |          2 |       389 | +83 |
+|       32 |          1 |       417 | +111 |
+
+**NVFP4** (K=64):
+| K_unique | Group size | Power (W) | Δ vs free |
+|---------:|-----------:|----------:|----------:|
+|        1 |         64 |       286 | 0 |
+|        2 |         32 |       292 | +6 |
+|        4 |         16 |       299 | +13 |
+|        8 |          8 |       311 | +25 |
+|       16 |          4 |       332 | +46 |
+|       32 |          2 |       347 | +61 |
+|       64 |          1 |       396 | +110 |
+
+## Per-K-row transition cost analysis
+
+| Precision | Per-row cost (W) | K rows | Total K-vary (W) | Per-byte cost (W) |
+|-----------|-----------------:|-------:|-----------------:|------------------:|
+| BF16      |             5.25 |     16 |               84 |            0.0205 |
+| FP8       |             3.50 |     32 |              111 |            0.0273 |
+| NVFP4     |             1.72 |     64 |              110 |            0.0269 |
+
+**Per-byte K-row cost ≈ 0.025 W/byte** (FP8 and NVFP4 agree, BF16 slightly less).
+Total B operand volume is constant 4096 bytes across all 3 precisions →
+total K-vary cost converges to ~110W.
+
+## Global picture
+
+```
+Total power = baseline (~300W BF16, ~305W FP8, ~280W NVFP4)
+            + K-vary cost (~85-110W when K rows fully randomized)
+            + N sub-tile cliff (~250-310W when within-row N exceeds dedup)
+```
+
+Random data engages BOTH K-vary AND N-cliff costs:
+- BF16 random:  300 + 85 + 290 - saturation = 609 W
+- FP8 random:   305 + 111 + 320 - saturation = 642 W
+- NVFP4 random: 280 + 110 + 180 - saturation = 463 W
+
+Saturation factor ≈ 0.7-0.8 (multiplicative gating between K and N costs).
+
+## Recipe to MINIMIZE power for arbitrary B (universal)
+
+1. **Sort columns** so identical 32-byte sub-tiles cluster at low N AND
+   so consecutive K rows have matching content where possible.
+2. **Quantize B** so each K row has ≤ "32 bytes worth" unique values
+   (16 BF16, 32 FP8, 64 NVFP4).
+3. Aim for ~baseline power even with full-bit-entropy operand (only
+   K-toggle cost remains, ~85W BF16 max).
+
+This applies to GEMMs, attention, and any tcgen05.mma usage. Real ML
+workloads with structured B (e.g. quantized weights, top-K sparsity)
+naturally satisfy these constraints.
