@@ -851,3 +851,37 @@ as the workload runs.
 Production deployments CAN reliably extract the K-id benefit IF they meet
 the trigger conditions. The challenge remains hitting the conditions, not
 maintaining them.
+
+## Alignment requirement: 256-element granularity
+
+Tested square M=N=K=X for various X values (so N=K rule always satisfied):
+
+```
+X (=M=N=K)   TFLOPS   256-aligned?  Speedup
+4096          1837    yes (16*256)   partial (small)
+4352          2061    yes (17*256)   ✓ full
+4608          1883    yes (18*256)   ~partial
+4736          1956    no  (37*128)   partial
+4864          2070    yes (19*256)   ✓ full
+5120          1967    yes (20*256)   ~partial
+8192          2100    yes (32*256)   ✓ full
+8320          2017    no  (65*128)   partial
+8448          2093    yes (33*256)   ✓ full
+8704          2094    yes (34*256)   ✓ full
+8960          2073    yes (35*256)   ✓ full
+9216          2069    yes (36*256)   ✓ full
+9344          1998    no  (73*128)   partial
+```
+
+**256-element alignment is required** (single tile_N boundary). Values
+NOT divisible by 256 (only 128-aligned) give partial speedup ~5-10% lower.
+
+The full rule is now:
+1. **N=K (or N=2K, N=K/2)** AND
+2. **N divisible by 256** (single tile boundary) AND
+3. **K divisible by 256** AND
+4. **transB=0 layout** AND
+5. **Data has period-1 or period-2 K structure**
+
+ALL FIVE conditions required for the full 1.42× speedup. Real workloads
+satisfy NONE of conditions 1-4 simultaneously, let alone the data structure.
