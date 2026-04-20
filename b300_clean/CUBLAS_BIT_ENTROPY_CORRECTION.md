@@ -153,3 +153,62 @@ cuBLAS speedup = f(bit entropy of B) where:
 - Each random exp bit: ~100-150 TFLOPS cost (estimated, untested)
 - Each random mantissa bit: ~70 TFLOPS cost (uniform across positions)
 - B all-constant: max speedup ~1.47× over fully random
+
+---
+
+## A operand entropy ALSO matters at cuBLAS level
+
+Microbench said A is FREE. But cuBLAS shows A entropy DOES affect throughput.
+
+### A entropy sweep with B = 7-bit random mantissa:
+
+| A bits | TFLOPS | Speedup vs A=7 |
+|-------:|-------:|---------------:|
+| 0 (constant) | 1889 | 1.13× |
+| 1 | 1796 | 1.08× |
+| 2 | 1763 | 1.06× |
+| 4 | 1712 | 1.03× |
+| 7 | 1670 | 1.00× (baseline) |
+
+### A entropy sweep with B = 0 (constant):
+
+| A bits | TFLOPS | Speedup vs A=7 |
+|-------:|-------:|---------------:|
+| 0 | **2252** | 1.03× |
+| 7 | 2195 | 1.00× |
+
+**Per-A-bit cost: ~30 TFLOPS** (with B random)
+**Per-A-bit cost: ~8 TFLOPS** (with B constant, less compute-bound)
+
+A entropy contribution is ~half of B's (~70 TFLOPS per bit).
+
+## Why A matters in cuBLAS but not microbench?
+
+Microbench: single tcgen05 instruction with A broadcast through fanout buffer.
+A varying = fanout signals toggle; insignificant power.
+
+cuBLAS: uses cluster_group::2 m256n256 internally with multi-tile algorithm.
+A operand may be used differently (cross-tile reuse, possibly some redirect
+via TMA). The data-dep cost manifests at this larger scale.
+
+## Maximum achievable cuBLAS performance
+
+Combined A=0 + B=0 (both operands constant): **2252 TFLOPS** at boost
+- This is at/above cuBLAS BF16 spec peak (~2242)
+- Both operands constant → minimal data-dep power → no throttling
+- True maximum throughput possible
+
+For optimization:
+- Structuring BOTH A AND B reduces power further (~60W extra over B-only)
+- A-side optimization is HALF as impactful as B-side
+- For inference: prefer reducing B (weight) entropy first
+
+## Final practical guidance for inference
+
+Best optimization stack:
+1. INT4 quantize weights (B side): -70 TFLOPS × 4 bits saved = +280 TFLOPS
+2. Reduce activation entropy (A side): ~+150 TFLOPS additional
+3. Power-cap-aware deployment: 1.32-2.09× depending on cap
+
+Achievable for INT4-quantized inference with structured activations: ~1.40-1.50×
+in cuBLAS, approaching custom kernel ceiling.
