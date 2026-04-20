@@ -22,8 +22,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   3 distinct sources = 0.61/SMSP/cy vs 1-2 sources = 0.97/SMSP/cy (37% slower).
   LOP3/ALU pipe at 0.5/SMSP/cy peak doesn't show this (pipe-bound first).
   See `b300_clean/A4_FFMA_PORT_PRESSURE.md`.
-- [ ] **A5 — Predicate register file**: how many predicates can be live?
-  Push past 7 to see spill behavior.
+- [x] **A5 — Predicate register file**: nvcc rotates P0-P3 even with
+  16 PTX virtual predicates — no spill failure. Each physical pred
+  immediately reused after consumption. Commit history.
 - [x] **A6 — Per-pipe latency table**: measured for 13 op types at 1500 MHz.
   ALU pipe (0.5/SMSP/cy): LOP3/IADD3/SHF/PRMT/BFI. XU (0.125/cy): BREV/
   POPC/CLZ. LSU (0.25/cy): SHFL. FFMA 0.66/cy at 2 warps (→ 0.98 at 4+).
