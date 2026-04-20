@@ -117,7 +117,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 - [ ] **F4 — Cluster barrier with subset of CTAs**: can you have 2/4 CTA
   participate vs 4/4? Latency.
 - [ ] **F5 — Async transaction barriers** (mbarrier + cp.async): pipe depth.
-- [ ] **F6 — `__syncwarp` cycle cost vs no-op**: how cheap is it really?
+- [x] **F6 — `__syncwarp` cycle cost vs no-op**: **1 CYCLE** on convergent
+  warp. Use liberally. membar.cta = 6 cy (heaviest fence).
+  See `b300_clean/F6_SYNCWARP_COST.md`.
 
 ## G. Compiler / nvcc behavior
 
