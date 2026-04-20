@@ -195,12 +195,12 @@ Provenance documents:
 | M dimension halves | M_DIMENSION_HALVES.md | BF16 halves preserved at M=64 (N-direction structural) |
 | Cross-MMA dedup | CROSS_MMA_DEDUP.md | Per-MMA only; alt MMAs avg the powers; partial opt gives 12% gain |
 | Power floor | POWER_FLOOR.md | 287W absolute minimum for 148 SMs of active tcgen05 |
-| **cuBLAS real GEMM (BF16)** | CUBLAS_REAL_VALIDATION.md | **1.41× for SQUARE 8192³ K-row-identical; only 1-2% for typical rectangular Llama-shape GEMMs (different cuBLAS algorithm)** |
+| **cuBLAS real GEMM (BF16)** | N_DEPENDENCE_DEEPDIVE.md | **1.41× ONLY at N ∈ {K, 2K, K/2}; 1.02× at all other shapes. SAME kernel - shape-conditional HW pattern detection (NOT algorithm switch).** |
 | **cuBLAS real GEMM (FP8)** | CUBLAS_REAL_VALIDATION.md | **1.55× for SQUARE 8192³ (4082 TFLOPS = 91% of FP8 spec peak); 1.02× for rectangular** |
 | **Practical scope** | PRACTICAL_SCOPE_HONEST.md | When works (K≥N+M≥256+power-of-2 N): 1.28-1.55×; when doesn't (FFN expand, autoregressive): 1.00× |
 | **K≥N heuristic (Llama FFN)** | CUBLAS_REAL_VALIDATION.md | FFN DOWN projection (K>N): 1.40× speedup; gate/up (N>K): 1.01×; avg ~10% across SwiGLU FFN |
 | **GRACEFUL DEGRADATION** | CUBLAS_REAL_VALIDATION.md | INT4 quantized weights: 1.20× automatic speedup; INT8: 1.06×; works for approximate K-row similarity too |
-| **GPTQ INT4 (BF16)** | CUBLAS_REAL_VALIDATION.md | Real GPTQ-style quantized inference: **1.12× AUTOMATIC** speedup, no code changes |
+| **GPTQ INT4 (BF16) - CORRECTED** | REALISTIC_INT4_SCOPING.md | Realistic Gaussian + INT4: **~4% automatic** (synthetic XOR tests inflated to 12%) |
 | **FP8 GPTQ** | CUBLAS_REAL_VALIDATION.md | FP8 quantized inference: **1.21× AUTOMATIC** speedup at group_size 512+ |
 | **CRITICAL CORRECTION** | CUBLAS_BIT_ENTROPY_CORRECTION.md | **Speedup is PRIMARILY BIT ENTROPY of B, not K-row similarity**. Each random mantissa bit costs ~70 TFLOPS. INT4 benefits from low entropy, not from structure. |
 | **TRUE HARDWARE PEAKS** | CUBLAS_BIT_ENTROPY_CORRECTION.md | BF16 2252 TF (100.5% spec), FP8 4420 TF (98.5% spec) with constant data. cuBLAS published specs are POWER-CAPPED measurements. |

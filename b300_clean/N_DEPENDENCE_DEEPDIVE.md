@@ -1,0 +1,147 @@
+# cuBLAS K-id Speedup is SHAPE-DEPENDENT (correction)
+
+**Date: 2026-04-20.** Discovered while applying rule #9 to "K-row identical → 1.40× speedup" claim.
+
+## Headline finding
+
+The 1.40× K-id speedup is NOT universal across shapes. It only triggers when:
+- N ∈ {K, 2K} (and N=K/2 if M is large enough)
+- All other N values: speedup collapses to ~1.02×
+
+This is NOT due to cuBLAS picking a different algorithm. ncu confirms the
+SAME kernel `nvjet_sm103_tss_128x256_64x6_2x1_2cta_v_bz_NNT` runs at all
+tested N values. The shape-dependence is intrinsic to the data×kernel
+interaction at the hardware level.
+
+**Correction to prior claim:** TCGEN05_POWER_MASTER.md previously attributed
+the rectangular-vs-square gap to "different cuBLAS algorithm" - this is wrong.
+Same kernel, different shape-induced HW behavior.
+
+## Data (after `nvidia-smi -rgc`, M=K=8192 BF16, GPU 0)
+
+K-id mode (rank-1 along K, varies by N):
+
+```
+N      TFLOPS  N/K   Speedup vs random
+8192   2098    1.0   1.42×  ← speedup
+9216   1503    1.13  1.02×
+10240  1501    1.25  1.02×
+12288  1521    1.5   1.03×
+14336  1501    1.75  1.01×
+16384  2089    2.0   1.42×  ← speedup
+20480  1494    2.5   1.01×
+24576  1505    3.0   1.02×
+28672  1495    3.5   1.01×
+32768  1513    4.0   1.02×
+```
+
+K variation (M=N=8192):
+```
+K     TFLOPS  Speedup
+4096  2117    1.40×  ← N=2K, speedup
+4608  1513    1.02×  
+5120  1511    1.02×  
+5632  1507    1.02×
+6144  1535    1.03×  
+6656  1483    1.00×
+7168  1488    1.00×
+7680  1482    1.00×
+8192  2086    1.41×  ← N=K, speedup
+12288 2145    1.40×  ← (different kernel: 256×256 tile)
+16384 2172    1.41×  ← (different kernel)
+```
+
+Cross-K validation of N=K, N=2K rule:
+```
+K=4096 N=4096:  speedup ✓
+K=4096 N=8192:  speedup ✓
+K=4096 N=12288: NO speedup
+K=6144 N=6144:  speedup ✓ (when N=K, not N=8192)
+K=6144 N=12288: speedup ✓
+K=6144 N=18432: NO speedup
+K=8192 N=8192:  speedup ✓
+K=8192 N=16384: speedup ✓
+K=8192 N=24576: NO speedup
+```
+
+So **K=6144 is NOT inherently broken** - the earlier confusion was that we tested
+K=6144 with N=8192, where N/K=1.33 falls outside the {1, 2} window.
+
+## Full constant (entropy=0) comparison
+
+To confirm this is shape-conditional STRUCTURED data and not a measurement issue,
+tested fully constant B (both A and B all-zero bits):
+
+```
+N      Full-const TFLOPS
+8192   2251
+9216   2218
+12288  2257
+16384  2260
+24576  2262
+32768  2262
+```
+
+**Full constant: shape-independent. Range 2218-2262 TF (~2% spread).**
+
+Whereas K-id at same shapes: 1495-2098 TF (~40% spread).
+
+## Mechanism interpretation
+
+Two distinct hardware mechanisms:
+
+1. **Universal entropy detector (full-const)**:
+   When the bit-entropy-per-byte is exactly zero everywhere, hardware
+   gates the multiplier circuits across the entire fabric. Works
+   regardless of shape.
+
+2. **Shape-conditional pattern detector (structured low-entropy)**:
+   When data has structure (e.g., rank-1 along K), the dedup HW only
+   detects the structure when N aligns with cuBLAS scheduling pattern.
+   Likely tied to L2/SMEM scheduling order: at N=K and N=2K, the
+   CTA-to-N-tile mapping creates cyclic register-reuse patterns that
+   the hardware can collapse.
+
+The rule "N ∈ {K, 2K, K/2 if M≥2K}" suggests cuBLAS uses an
+M-tile-major scheduling (sweep all M tiles for fixed N tile, then
+advance N). At N=K, the M sweep happens K/256=32 times in M-direction
+and 32 times in N-direction. Symmetric M=N tile counts may create
+the cyclic pattern.
+
+## Practical implication for ML inference
+
+Real Llama-class models use FFN dimensions:
+- Llama-70B: K=8192, N_intermediate=28672 (N/K=3.5) → outside speedup window
+- Llama-8B: K=4096, N=14336 (N/K=3.5) → outside speedup window
+- DeepSeek-V3: K=7168, N=18432 (N/K=2.57) → outside speedup window
+
+**Almost no production inference shape hits the K-id speedup window.**
+
+Combined with the prior "realistic Gaussian INT4 = ~4%" finding, the
+practical takeaway is firm:
+
+> **Real ML inference benefits ~2-6% from data-dependent throttle relief,
+> NOT the 40% suggested by synthetic same-K-row tests at square shapes.**
+
+## Methodology note: clock state contamination
+
+During this investigation, GPU 0 was discovered stuck at 1005 MHz under
+load (despite no explicit lock and Idle reason showing). Initial repro
+attempts gave ~1190 TF universally (1.0× ratio). After `sudo nvidia-smi
+-rgc -i 0` the clock returned to 2032 MHz boost and the periodic pattern
+appeared cleanly.
+
+**Operational lesson:** Always sample `nvidia-smi --query-gpu=clocks.current.sm`
+during a long microbenchmark run to confirm the clock is at the expected
+boost level. Don't trust prior measurements without clock verification.
+
+## Verification log
+
+| Action | Cmd / file | Result |
+|--------|-----------|--------|
+| Kernel identification | ncu kernel-name regex | Same kernel for N=8192 thru 32768 |
+| Random control | mode=0 | Flat at 1472-1486 TF across all N |
+| K-id periodic | mode=1 | Spikes at N=K, 2K, K/2; flat 1500 elsewhere |
+| Full-const universal | extreme2 0 0 | Flat 2218-2262 TF across all N |
+| K=6144 scaling | tested N=K, 2K | Works when N aligned, NOT inherently broken |
+| Clock state | nvidia-smi during run | 1005 MHz contamination ruled out post-rgc |
