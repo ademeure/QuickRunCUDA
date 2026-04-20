@@ -233,15 +233,32 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
     unsigned tsfa_addr = tmem_addr + 128;
     unsigned tsfb_addr = tmem_addr + 256;
 
-    // Init TMEM SF region with UE4M3 1.0 (0x38)
+    // Init TMEM SF region. Default UE4M3 1.0 (0x38).
+    // 'verify' arg controls SF entropy: 0=default(1.0), 1=zeros, 2=random, 3=high-mant random
     {
-        unsigned one_pack = 0x38383838u;
+        unsigned sf_pack;
+        if (verify == 1) sf_pack = 0u;
+        else if (verify == 2) {
+            // Random-ish SF byte pattern
+            unsigned r = (threadIdx.x * 0x9E3779B1u) ^ 0xC0FFEE13u;
+            r ^= r >> 16;
+            sf_pack = r;
+        } else if (verify == 3) {
+            sf_pack = 0xAAAAAAAAu;  // patterned bits
+        } else {
+            sf_pack = 0x38383838u;  // SF = 1.0
+        }
         for (int chunk = 0; chunk < 4; chunk++) {
             unsigned col_base = chunk * 128 + (threadIdx.x * 4);
             unsigned addr = tmem_addr + col_base;
+            // Per-thread variant if verify==2: each thread writes different value
+            unsigned p0 = sf_pack;
+            unsigned p1 = (verify == 2) ? (sf_pack ^ 0x12345678u) : sf_pack;
+            unsigned p2 = (verify == 2) ? (sf_pack ^ 0x9ABCDEF0u) : sf_pack;
+            unsigned p3 = (verify == 2) ? (sf_pack ^ 0x55AA55AAu) : sf_pack;
             asm volatile(
                 "tcgen05.st.sync.aligned.32x32b.x4.b32 [%0], {%1, %2, %3, %4};\n"
-                :: "r"(addr), "r"(one_pack), "r"(one_pack), "r"(one_pack), "r"(one_pack));
+                :: "r"(addr), "r"(p0), "r"(p1), "r"(p2), "r"(p3));
         }
     }
     asm volatile("tcgen05.wait::st.sync.aligned;");
