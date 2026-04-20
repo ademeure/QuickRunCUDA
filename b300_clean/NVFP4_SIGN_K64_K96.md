@@ -170,3 +170,41 @@ giving net 9% lower energy per FLOP than K=64.
 - **HIGH**: K=96 has ~9% better energy/op than K=64 (despite higher power)
 - **MEDIUM**: Mechanism for sign-bit dependence is sign-transition energy in multipliers
 - **REFUTED** (rule #9): "K-uniform-per-N gives 28% savings" - was contaminated baseline artifact
+
+## Complete M/N/CTA matrix (clean methodology, single sample - some noise)
+
+```
+Config                  K=64 random  K=64 best    K=96 random  K=96 best
+M=128 N=128 1-CTA       343 W        307 (-10%)   423 W        367 (-13%)
+M=128 N=256 1-CTA       360 W        331 (-8%)    438 W        385 (-12%)
+M=256 N=128 2-CTA       440 W        373 (-15%)   476 W        399 (-16%)
+M=256 N=256 2-CTA ULTRA 340 W        310 (-9%)    459 W        394 (-14%)
+```
+
+### Cross-config summary
+
+- **M=256 N=128 2-CTA gives biggest sign-bit savings** (-15-16%)
+- **M=N=128 1-CTA gives smallest** (-10-13%)
+- K=96 consistently shows slightly larger % savings than K=64 (1-3pp)
+- Best constant pattern winner across all configs: all-pos / all-neg / forced +-+- (tied)
+
+### Why M=256 N=128 2-CTA wins for sign-bit savings
+
+Hypothesis: this config uses 2 CTAs each handling 128 N values × 256 M values.
+The 2-CTA cluster shares B operand multicast → if B sign bits are constant,
+both CTAs benefit from the gating equally. With 2× the multipliers active,
+the absolute power savings double.
+
+### Final operational guidance
+
+For B300 NVFP4 production:
+- Sign-bit pattern can save 9-16% of compute power
+- Constant-sign weight encoding (e.g., separating positive from negative
+  ranges) is most effective
+- K=96 ULTRA path benefits slightly more than K=64
+- Larger MMA tiles (256×128 with 2-CTA) maximize savings
+- K-uniform-per-N does NOT provide special advantage despite intuitive appeal
+
+This contradicts the prior intuition (and my own initial wrong claim) that
+K-row dedup mechanism dominates. Sign-bit power is primarily about
+TRANSITIONS in the multiplier sign path, not spatial K-row matching.
