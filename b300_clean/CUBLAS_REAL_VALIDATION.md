@@ -814,3 +814,46 @@ finding.
 - HIGH on INT4 ~1.20× extrapolation (matches 4-bit noise data point)
 - HIGH on practical applicability to quantized inference
 - This is the FINAL definitive practical impact finding
+
+---
+
+## FP8 cuBLAS power-cap sweep
+
+| Power cap | Random TFLOPS | K-id TFLOPS | Speedup |
+|----------:|--------------:|------------:|--------:|
+| 1100W (default) | 2625 | 4082 | 1.55× |
+| 600W | 1421 | 2563 | **1.80×** |
+| 400W | 804 | 1517 | **1.89×** |
+
+FP8 also amplifies under tight caps. At 400W cap (typical for energy-efficient
+deployments), FP8 K-row identical reaches **1.89× speedup** = nearly DOUBLE.
+
+## A operand structure: minimal effect
+
+| A pattern | B pattern | TFLOPS |
+|-----------|-----------|-------:|
+| random | random | 1507 |
+| random | K-row id | 2127 (1.41×) |
+| M-row id | random | 1525 (1.01×) |
+| K-pos id | random | 1507 (1.00×) |
+| M-row id | K-row id | 2152 (1.43×) |
+
+A operand structure adds only marginal benefit (1.41 → 1.43×) on top of B
+structure. Confirms B-side dominates dedup cost. **For inference: focus on
+B (weight) layout, not A (activation).**
+
+## Final cross-precision practical impact at boost (default 1100W)
+
+| Precision | Square 8192³ random | Square 8192³ K-id | Speedup | Spec peak achieved |
+|-----------|--------------------:|------------------:|--------:|-------------------:|
+| FP16 | 1385 | 2092 | 1.51× | ~95% (vs ~2200) |
+| BF16 | 1486 | 2104 | 1.41× | ~94% |
+| FP8 e4m3 | 2625 | 4082 | 1.55× | **91% (vs 4486)** |
+
+For graceful K-row similarity (INT4-style noise):
+- ~1.20× speedup automatic for INT4 quantized inference
+- ~1.06× for INT8 quantized inference
+
+For tight power caps (typical 600W datacenter):
+- BF16: 1.55-1.74× speedup
+- FP8: 1.80× speedup
