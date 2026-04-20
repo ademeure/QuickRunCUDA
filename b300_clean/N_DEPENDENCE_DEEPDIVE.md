@@ -920,3 +920,49 @@ throughput. To benefit, sparsity must be either:
 
 Random unstructured pruning is the worst case. NVIDIA's marketing of 2:4
 sparsity is genuinely correct: structured zeros work, random zeros hurt.
+
+## Sub-tile dedup vs K-row dedup: K-row dominates in cuBLAS
+
+Isolated each mechanism by constructing data that triggers ONE without the other:
+
+```
+At N=K=8192 (in K-id window):
+mode 0 (fully random):                  1479 TF (1.00× baseline)
+mode 1 (sub-tile 16 N const per row):   1493 TF (1.01×) ← ~no benefit
+mode 4 (sub-tile 32 N const per row):   1512 TF (1.02×)
+mode 5 (sub-tile 8 N const per row):    1499 TF (1.01×)
+mode 6 (sub-tile 256 = full N-tile):    1518 TF (1.03×)
+mode 2 (K-row identical):               2100 TF (1.42×) ← STRONG
+mode 3 (BOTH sub-tile+K-row):           2102 TF (1.42×) ← K-row only
+```
+
+**Sub-tile dedup contributes ~1-3% in cuBLAS; K-row dedup gives 42%.**
+
+This refines the prior tcgen05 power model. While custom tcgen05 kernels may
+show stronger sub-tile dedup effects, cuBLAS's actual GEMM kernels see
+K-row dedup as the DOMINANT mechanism by a 14× margin.
+
+### Why?
+
+The cuBLAS kernel tile is 128×256 with 64-K-stage iteration. Within each
+K-iteration (64 rows), B is loaded as 64 consecutive K-rows × 256 N-cols.
+
+If sub-tile (within-row) is constant: dedup operates on each K-row's N-axis
+independently. Each row gets dedup'd separately - O(K_iter) dedup events.
+
+If K-row is constant: dedup operates ACROSS K-rows. Once first row loaded,
+ALL subsequent K-rows in the K-iteration are recognized as duplicates - O(1)
+dedup event per K-iteration.
+
+The K-row mechanism amortizes far better with cuBLAS's 64-K-stage structure.
+
+### Practical implication
+
+For real workloads:
+- Within-row sparsity/structure: <3% benefit (negligible)
+- K-row similarity: up to 42% benefit (but requires impossible shape conditions)
+
+This reinforces that the practical inference benefit is firmly ~2-11%
+(from structured 2:4 sparsity which works via independent mechanism).
+
+Confidence: HIGH (clean isolation, multiple sub-tile granularities tested).
