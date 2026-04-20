@@ -14,12 +14,14 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
         unsigned r = (i + blockIdx.x * 1024u) * 0x9E3779B1u; r ^= r >> 16; r *= 0x85EBCA6Bu;
         r &= ~0x7F800000u; r |= 0x3F000000u;
         if (mode == 2 || mode == 3) r &= ~0x80000000u;
+        if (mode == 5 || mode == 7) r = 0u;
         smem_A[i] = r;
     }
     for (int i = 0; i < 2048; i++) {
         unsigned r = (i + blockIdx.x * 1024u + 0xC0FFEE00u) * 0x9E3779B1u; r ^= r >> 16; r *= 0x85EBCA6Bu;
         r &= ~0x7F800000u; r |= 0x3F000000u;
         if (mode == 1 || mode == 3) r &= ~0x80000000u;  // TF32 sign
+        if (mode == 6 || mode == 7) r = 0u;
         smem_B[i] = r;
     }
     *tmem_p = 0xFFFFFFFFu;

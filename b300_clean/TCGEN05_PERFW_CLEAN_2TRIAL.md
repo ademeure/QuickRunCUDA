@@ -127,3 +127,43 @@ N=192 result of 14.99 TF/W (rounding).
 
 SF random adds ~3-5 W (negligible, as previously measured at 1005 MHz).
 The 100-240 W from data dominates by 2-3 orders of magnitude.
+
+## Zero-skip ladder: A=0, B=0, both=0 (mode 5/6/7)
+
+Mode 5 = A entirely zero, mode 6 = B entirely zero, mode 7 = both
+zero. Tests if multiplier short-circuits when one or both operands
+are uniformly zero.
+
+| format       | random | A=0 | B=0 | A=B=0 | A-skip Δ | B-skip Δ |
+|--------------|--------|-----|-----|-------|----------|----------|
+| NVFP4 K=96   | 867 W  | 755 W | 411 W | 394 W | -112 W   | **-456 W** |
+| FP8 K=32     | 1069 W | 961 W | 425 W | 403 W | -108 W   | **-644 W** |
+| BF16 K=16    | 874 W  | 661 W | 405 W | 394 W | -213 W   | -469 W |
+| MXFP8 K=32   | 1039 W | 960 W | 428 W | 406 W | -79 W    | **-611 W** |
+
+### Findings
+
+1. **B=0 zero-skip saves 456-644 W per format** — biggest power lever
+   in tcgen05 we have measured. Multiplier truly short-circuits.
+
+2. **A=0 zero-skip saves only 79-213 W**, much less than B=0.
+   Asymmetric: B-broadcast architecture means killing A doesn't
+   kill the bus activity, but killing B does.
+
+3. **A=B=0 power floor ~394-406 W across all formats** — essentially
+   identical regardless of precision. This is the per-instruction
+   issue cost: tcgen05 dispatch + barrier + tmem maintenance with
+   completely zero-data multiplier work. ~250 W above idle.
+
+4. BF16's A=0 saves more (213 W) than NVFP4's A=0 (112 W). Maybe
+   because BF16 accumulator is wider (FP32 from fewer K) so more
+   adder activity dampened by A=0.
+
+### Practical implications
+
+- **Pre-detecting and skipping all-zero B tiles** in inference kernels
+  could save 456-644 W per CTA (40-60 % power reduction).
+- **All-zero A tiles** save 100-200 W (10-20 %), still worth pre-detection
+  for sparse activations.
+- **The 400 W floor** is the architectural minimum for issuing tcgen05
+  at peak rate; cannot go lower without reducing throughput.
