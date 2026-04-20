@@ -91,6 +91,46 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
             r = (t == 0) ? 0u : (0xFFFFFFFFu >> (32 - t));
         }
         // mode 41: only 2-bit Hamming via XOR of seed
+// Realistic LLM weight distributions (FP4 codes only)
+        else if (mode == 50) {
+            // 70% small {0, +/-0.5, +/-1.0}, 30% mid {+/-1.5, +/-2.0, +/-3.0}
+            // FP4 codes for {0, +/-0.5, +/-1.0, +/-1.5, +/-2.0, +/-3.0}:
+            //   {0=0, +0.5=1, +1=2, +1.5=3, +2=4, +3=5, -0.5=9, -1=A, -1.5=B, -2=C, -3=D}
+            unsigned val = 0;
+            for (int p = 0; p < 8; p++) {
+                unsigned bits = (r >> (p * 3)) & 0x1F;
+                unsigned code;
+                if ((bits & 0x7) < 5) {
+                    // 70% probability: small {0, +/-0.5, +/-1.0}
+                    static const unsigned char small[6] = {0, 1, 2, 9, 0xA, 0};
+                    code = small[bits % 6];
+                } else {
+                    // 30% probability: mid {+/-1.5, +/-2.0, +/-3.0}
+                    static const unsigned char mid[6] = {3, 4, 5, 0xB, 0xC, 0xD};
+                    code = mid[bits % 6];
+                }
+                val |= (code << (p * 4));
+            }
+            r = val;
+        }
+        // 100% concentrated on {0, +/-0.5, +/-1.0} - very narrow LLM-like
+        else if (mode == 51) {
+            unsigned val = 0;
+            for (int p = 0; p < 8; p++) {
+                unsigned bits = (r >> (p * 3)) & 0x7;
+                static const unsigned char small[6] = {0, 1, 2, 9, 0xA, 0};
+                val |= (small[bits % 6] << (p * 4));
+            }
+            r = val;
+        }
+        // 100% positive {+0, +0.5, +1.0, +1.5, +2.0} - 5-pos confirmed
+        else if (mode == 52) {
+            unsigned val = 0;
+            for (int p = 0; p < 8; p++) {
+                val |= (((r >> (p * 4)) % 5u) << (p * 4));
+            }
+            r = val;
+        }
         else if (mode == 41) {
             // Many distinct dwords each differing from neighbor by 2 bits
             unsigned base = (seed * 0xCAFEBABE) & 0xFFFFFFFFu;

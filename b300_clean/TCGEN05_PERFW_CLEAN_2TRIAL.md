@@ -525,3 +525,49 @@ Best case: constant (1 pattern) = 408 W (floor).
 Realistic LLM weights: many patterns, mid Hamming, mid popcount variance
 ≈ 800-870 W. **Hard to push below 600 W per CTA without restructuring
 weight quantization.**
+
+## Realistic LLM-weight power numbers (final practical table)
+
+NVFP4 K=96 N=256 cta=2 @ 1500 MHz (10.91 PF saturated):
+
+| B distribution                          | power  | TF/W  | savings | reachable? |
+|-----------------------------------------|--------|-------|---------|-----------|
+| All constant (theoretical floor)        | 416 W  | 26.2  | -459 W  | only for sparse-zero tiles |
+| Pure 5-pos {+0..+2} (positive only)     | 646 W  | 16.9  | -229 W  | only if signs separate    |
+| Narrow {0, ±0.5, ±1.0} 5 codes ±        | 712 W  | 15.3  | -163 W  | aggressive log-quant      |
+| **LLM-like (70% small, 30% mid, ±)**    | **816 W** | **13.4** | **-59 W** | typical FP4 quantization |
+| Random 16 codes (worst case)            | 875 W  | 12.5  | 0       | synthetic only            |
+
+### Bottom line for inference
+
+**Standard FP4 quantization (Llama-style) of normalized weights gives
+only ~7 % power reduction vs uncorrelated random data.** The variance
+that nature provides (Gaussian → quantize to FP4) is enough to use
+nearly all the toggle-energy a multiplier can consume.
+
+To save meaningfully:
+- 19 % (163 W): aggressive log-quantization that puts >95 % of weights
+  in {0, ±0.5, ±1.0}. Loses some tail accuracy.
+- 26 % (229 W): purely positive weights {+0..+2}. Requires storing
+  sign separately as 1-bit mask.
+- 53 % (459 W): only achievable for entirely uniform tiles (rare).
+
+**TF/W headroom in realistic FP4 inference: 13.4 → 16.9 = 26 % efficiency
+gain available** if quantization is restructured for power.
+
+### Final corrected B-side mental model
+
+For real engineers deciding how to quantize weights for power on B300
+tcgen05:
+1. **Default Gaussian FP4 quantization**: 800-870 W per CTA. No
+   meaningful power savings from data structure.
+2. **Aggressive low-magnitude clipping**: 700-720 W per CTA. ~7-19 %
+   power saved.
+3. **All-positive remap (sign as separate bitmap)**: 640-650 W per CTA.
+   ~26 % power saved.
+4. **All-uniform tiles (e.g., padding tiles, all-zero blocks)**:
+   400-420 W per CTA. ~53 % power saved. Worth detecting & special-casing.
+
+A-side (typical activations: post-softmax, post-ReLU):
+5. Random A: no extra savings beyond above.
+6. Many ReLU-zeroed A rows: detect entire zero rows for ~115 W per CTA.
