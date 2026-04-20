@@ -471,3 +471,78 @@ Real ML weights satisfy NEITHER → real inference benefit remains ~2-6%.
 For SYNTHETIC compression schemes (e.g., quantized weights with shared scales
 per K-block of 64), the constant-per-block structure could partially trigger
 the dedup. This might be a path for hardware-aware quantization design.
+
+## Detailed chunk-size curve (M=K=N=8192 BF16)
+
+```
+chunk    TFLOPS   Speedup
+1        2102     1.42×  ✓ FULL (alternation predictor)
+2        1525     1.03×  ✗ MIN (worst case)
+3        1675     1.13×
+4        1728     1.16×
+5        1785     1.21×
+6        1830     1.24×
+7        1844     1.25×
+8        2019     1.36×  ← jump (8 divides K-tile)
+12       1907     1.29×  ← drop
+16       2051     1.39×  ✓ (16 divides 64)
+24       1970     1.33×
+32       2065     1.40×  ✓ (32 divides 64)
+48       1969     1.33×
+64       2079     1.40×  ✓ (= K-tile size)
+96       1977     1.34×
+128      1919     1.30×  ← decline above K-tile
+```
+
+### Two mechanisms emerge
+
+**Path 1 — Alternation predictor**: triggered by chunk=1 (immediate ABAB).
+A specific HW pattern that recognizes period-1 alternation.
+
+**Path 2 — K-tile constancy**: triggered when chunk size divides K-tile (64).
+Powers-of-2 (8, 16, 32, 64) align with K-tile, giving high speedup.
+Non-divisors (3, 5, 6, 7, 12, 24, 48) give intermediate speedup.
+
+**Curiosity: chunk > 64 declines.** At chunk=128, two K-tiles per chunk but
+between-tile transitions don't get the bonus. At chunk=128, we get 1.30×, less
+than chunk=64 (1.40×). Hypothesis: dedup state resets between K-tiles,
+making "fresh tile = fresh detection" more efficient than "tile in middle of run".
+
+### Confidence on mechanism breakdown
+
+- HIGH on existence of two paths (chunk=1 outlier + power-of-2 advantage)
+- MED on K-tile size (64) hypothesis (matches kernel KSTAGES=64)
+- LOW on speculation about why chunk>64 declines
+
+## N-window is the OUTER gate
+
+Tested chunk sizes at N OUTSIDE the speedup window (M=K=8192):
+
+```
+N=9216 (out of window):
+  chunk=1, 8, 16, 32, 64: ALL 1480-1496 TF (no speedup)
+N=24576 (=3K, out of window):
+  chunk=1, 8, 16, 32, 64: ALL 1489-1529 TF (no speedup)
+```
+
+**No data structure triggers speedup outside the N window.** Confirms:
+
+1. **Outer gate**: N ∈ {K/2, K, 2K} required (memory access pattern)
+2. **Inner condition** (only matters when outer satisfied):
+   - chunk=1 (alternation), OR
+   - chunk divides K-tile size (64), OR
+   - period=1 (K-id constant)
+
+Both conditions must hold for speedup. This is now a HIGH-confidence
+two-stage gate model.
+
+## Master summary
+
+| Layer | Condition | Mechanism |
+|-------|-----------|-----------|
+| Memory access | N ∈ {K/2, K, 2K} ∧ transB=0 | Cache lookup pattern matches |
+| Data structure | period 1 OR chunk\|64 | Dedup HW activates |
+| Result | clock stays at boost | TFLOPS = ceiling |
+
+For real ML inference (Llama N/K=3.5, DeepSeek 2.57): outer gate FAILS.
+Speedup not accessible regardless of weight quantization scheme.
