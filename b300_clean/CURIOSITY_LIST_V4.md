@@ -76,8 +76,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   line; observe read amplification.
 - [ ] **D4 — HBM channel bonding granularity**: which address bits select
   which HBM stack? `dram__bytes.per_dram` per-stack metric sweep.
-- [ ] **D5 — SHMEM bank rotation under broadcast**: 32 lanes read same addr
-  vs 32 distinct. When does bank-broadcast kick in?
+- [x] **D5 — SHMEM bank rotation under broadcast**: ALWAYS — broadcast
+  is faster than distinct (13 vs 14.6 cy). N-way partial broadcasts
+  free. Stride-32 (32-way conflict) = 5.7×, not 32×. Skewed stride-33
+  avoids conflict. See `b300_clean/D5_SMEM_BANK_BEHAVIOR.md`.
 - [ ] **D6 — Register file bandwidth per cycle per SMSP**: max FMA chain
   with 4 unique sources per inst — RF reads ≤ 12/cycle?
 - [ ] **D7 — TMEM bandwidth**: load/store TMEM throughput, distinct from
