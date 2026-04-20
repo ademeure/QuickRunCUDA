@@ -201,3 +201,39 @@ The M direction tolerates variation; N requires exact alignment because:
 - The K-id pattern has all K rows = f(n)
 - HW dedup detects identical-row content via (m, n) coordinate hash
 - Misalignment in N shifts the cyclic pattern; misalignment in M doesn't
+
+## Universal across cuBLAS kernels (256x256 tile)
+
+Tested with K=12288 which forces cuBLAS to pick a different kernel
+(`nvjet_sm103_tss_256x256_64x4_2x1_2cta_v_bz_NNT` instead of 128×256):
+
+```
+M=K=12288, N varies:
+N=6144 (=K/2):   2136 TF   ← full speedup
+N=8192 (=2K/3): 2075 TF   ← partial speedup
+N=9216 (=0.75K): 1587 TF   ← no speedup
+N=12288 (=K):    2141 TF   ← full speedup
+N=16384 (=4K/3): 1604 TF   ← no speedup
+N=18432 (=1.5K): 1585 TF   ← no speedup
+N=24576 (=2K):   2144 TF   ← full speedup
+```
+
+**Same N ∈ {K/2, K, 2K} window applies to the 256×256 kernel.**
+
+This rules out kernel-specific implementation details. The shape rule
+is intrinsic to the tcgen05.mma HW pattern detector, not to cuBLAS's
+choice of tiling.
+
+## Final consolidated rule
+
+For B300 with K-row-identical B operand (rank-1 along K):
+- **Full 1.40-1.55× speedup** at N ∈ {K/2, K, 2K} (any cuBLAS kernel)
+- **Partial speedup** at N = K * (p/q) for small p, q (e.g., N=2K/3)
+- **No speedup** at unrelated N values
+- Razor-sharp boundary: ±32 N elements = total speedup loss
+- M variation tolerated (5% loss at M=K±32)
+
+Combined with prior findings:
+- Full constant data (entropy=0): universal speedup, shape-INDEPENDENT
+- Structured low-entropy: shape-CONDITIONAL on N alignment to K
+- Real ML inference shapes: outside speedup window → ~2-6% benefit
