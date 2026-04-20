@@ -152,6 +152,25 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                     unsigned char nib = h(k_group, n_idx);
                     w |= ((unsigned)(nib & 0x0F)) << (4*p);
                 }
+            } else if (mode >= 3020 && mode <= 3027) {
+                // NVFP4 SINGLE UNIQUE POSITION at sub-tile P (8 pseudo-sub-tiles)
+                int P = mode - 3020;
+                int n_pack = idx % 16;
+                int sub_tile = n_pack / 2;
+                int pos_in_tile = n_pack % 2;
+                int pattern_id = (sub_tile == P) ? (P + 1) : 0;
+                w = 0;
+                auto h = [](int nn) -> unsigned char {
+                    unsigned hh = 0xC0FFEE13u ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    return (unsigned char)((hh & 0x07) | ((hh >> 4) & 0x08));
+                };
+                for (int p = 0; p < 8; p++) {
+                    int n_in_tile = pos_in_tile * 8 + p;
+                    unsigned char nib = h(n_in_tile + pattern_id * 100);
+                    w |= ((unsigned)(nib & 0x0F)) << (4*p);
+                }
             } else if (mode >= 3100 && mode <= 3108) {
                 // PATTERN COUNT for NVFP4: rotating distinct sub-tile patterns 1..8
                 int N_distinct = mode - 3100;

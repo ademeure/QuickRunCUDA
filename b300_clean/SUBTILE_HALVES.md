@@ -73,3 +73,71 @@ Quantitative example for BF16 m128n128:
 - Test mode 3020+P for FP8 (FP8 has 8 sub-tiles too at my granularity)
 - Test mode 3020+P with pos_unique pattern that matches half boundaries differently
 - Verify with NCU counter (l1tex bank conflict counts may differ across halves)
+
+---
+
+## Cross-precision check: TWO-HALF is BF16-SPECIFIC
+
+Repeated single-unique-position test for FP8 and NVFP4:
+
+**FP8** (mode 3020-3027, my pseudo sub-tile = 16 N = HALF HW sub-tile):
+
+| Position | Power (W) |
+|---------:|----------:|
+|        0 |       406 |
+|        1 |       408 |
+|        2 |       414 |
+|        3 |       408 |
+|        4 |       409 |
+|        5 |       411 |
+|        6 |       407 |
+|        7 |       404 |
+
+**FP8 HW position (mode 3030-3033, full 32-byte HW sub-tile unique)**:
+
+| HW Pos | Power (W) |
+|-------:|----------:|
+|      0 |       501 |
+|      1 |       490 |
+|      2 |       501 |
+|      3 |       493 |
+
+**NVFP4** (mode 3020-3027):
+
+| Position | Power (W) |
+|---------:|----------:|
+|        0 |       337 |
+|        1 |       338 |
+|        2 |       345 |
+|        3 |       330 |
+|        4 |       333 |
+|        5 |       341 |
+|        6 |       339 |
+|        7 |       331 |
+
+Both FP8 and NVFP4: **UNIFORM cost across positions**. No halves asymmetry.
+
+## Updated conclusion: two-half is BF16-only
+
+The two-half processing is ONLY observed in BF16 m128n128k16 (with K=16).
+FP8 (K=32) and NVFP4 (K=64) treat all sub-tile positions equally.
+
+Possible explanations:
+1. BF16 m128n128 has a specific MAC array geometry (8 sub-tiles of N=16 with
+   half-N processing)
+2. FP8/NVFP4 have higher K → different pipeline depth → uniform processing
+3. K-direction iteration count affects whether sub-tile pipeline can split
+
+## Implications
+
+The "Half B is free" optimization only works for BF16 m128n128. For other
+precisions/shapes, the universal recipe still applies:
+- 32-byte sub-tile dedup (within K row)
+- Pairwise K-row dedup (across K)
+- A operand free regardless of randomness
+
+## Confidence
+
+- HIGH on BF16 having clear two-half asymmetry (8 measurements monotonic)
+- HIGH on FP8/NVFP4 NOT having halves asymmetry (uniform within ±10W)
+- LOW on the explanation for why BF16 is special
