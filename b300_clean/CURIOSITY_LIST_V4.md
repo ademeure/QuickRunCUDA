@@ -135,7 +135,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   2.4× slower than native atomicMin. half atomic ≈ float (no benefit).
   Commit history.
 - [ ] **E7 — sysmem atomics**: cudaAtomic on host-mapped memory.
-- [ ] **E8 — atomic w/ fence release/acquire** SASS effect.
+- [x] **E8 — atomic w/ fence release/acquire SASS**: relaxed = REDG (no
+  fence). acquire = ATOMG. release = MEMBAR.ALL.GPU + REDG (9× slower).
+  acq_rel = MEMBAR + ATOMG. Use plain atomicAdd unless ordering needed.
+  Commit history.
 
 ## F. Sync primitive deep ninja
 
