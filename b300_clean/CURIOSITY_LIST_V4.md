@@ -104,8 +104,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   See `b300_clean/D9_E4_LDG_ATOM_SASS.md`.
 - [ ] **D10 — L2 partitioning across HBM channels**: which L2 partition serves
   which HBM stack? Per-partition ncu metrics.
-- [ ] **D11 — Cache line size inference test**: does B300 have 128 B lines or
-  larger composite "sector"? Walk increasingly large strides.
+- [x] **D11 — Cache line size inference**: effective DRAM transaction
+  granularity ≈ **256 B** (plateau in stride sweep starts at 256 B).
+  Likely HBM3E burst length = 2× L2 sector. Plan layouts for 256 B
+  alignment. Commit history.
 
 ## E. Atomics & RMW edge cases
 
