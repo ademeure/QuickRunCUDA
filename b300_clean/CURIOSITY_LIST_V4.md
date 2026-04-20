@@ -239,7 +239,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 - [ ] **O3 — Branch density vs back-pressure**: kernel with 50% branches
   vs 0%.
 - [ ] **O4 — IMAD wide multiply** (32x32→64) latency.
-- [ ] **O5 — `__brevll` vs reverse lookup table** breakeven.
+- [x] **O5 — `__brevll` vs reverse lookup table**: BREV intrinsic always
+  wins. `__brev`=3.53 TIPS, shift-based=3.53 TIPS (compiler folds to
+  BREV), 8-bit LUT=0.93 TIPS (4× slower due to constant mem). Commit history.
 - [ ] **O6 — Atomic on volatile pointer**: SASS difference vs non-volatile.
 - [x] **O7 — `clock()` vs `clock64()` cost**: clock64 is **2× CHEAPER**
   than clock() (2.1 vs 4.0 cy/read after baseline subtract). Both
