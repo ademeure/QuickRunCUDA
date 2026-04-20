@@ -21,6 +21,34 @@ TDP cap                 1100 W
 **Active range**: ~135 W (constant) to ~455 W (worst pattern) per CTA.
 Per-CTA active power swings 3.4× based on B data alone.
 
+## Throughput saturation + efficiency (1005 MHz)
+
+All tests at 98% MFU (both K=64 standard and K=96 ULTRA give 128 cy/MMA,
+saturating the pipe). Data changes ONLY power, not throughput:
+
+| path   | cy/MMA | MAC/cy/cluster | PFLOPs/s total | theory PF | MFU |
+|--------|--------|----------------|-----------------|-----------|-----|
+| K=64   | 128    | 32,768         | 4.87            | 4.95      | 98.4% |
+| K=96   | 128    | 49,152         | 7.31            | 7.42      | 98.5% |
+
+K=96 ULTRA's 1.5× factor comes entirely from K-dimension (same cycle
+count, 1.5× MACs per cycle).
+
+**TFLOPS/W efficiency for each B distribution:**
+
+| B data              | K=64 TFLOPs/W | K=96 TFLOPs/W | K=96 efficiency gain |
+|---------------------|---------------|---------------|----------------------|
+| 5 positive {+0..+2} | 13.2          | **17.0**      | +29%                 |
+| 8 positive          | 12.3          | 15.5          | +26%                 |
+| 5 centered          | 11.9          | 14.9          | +25%                 |
+| full random 16      | 10.7          | 13.2          | +23%                 |
+
+**K=96 ULTRA + 5-pos B = 17.0 TFLOPs/W**, the best energy efficiency
+found at 1005 MHz. 29% better than K=64 + random, and 29% better than
+K=96 + random data. Combining the K=96 ULTRA path with weight
+distribution optimization is the most-actionable inference efficiency
+win on B300.
+
 ## A is MOSTLY free, but B is dominant
 
 5×5 matrix (median-of-2 trials, total W):
