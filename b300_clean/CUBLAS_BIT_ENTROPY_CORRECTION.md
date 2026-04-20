@@ -775,3 +775,45 @@ Practical implications validated across 1288+ commits in f2fp-deep-dive:
 - Both A and B contribute (B more, A about half)
 - Layout-agnostic with appropriate data structuring
 - Reproducible across both B300 GPUs in cluster
+
+---
+
+## Custom 2-CTA kernel vs cuBLAS at const data
+
+| Implementation | TFLOPS | % theoretical (2464) |
+|----------------|-------:|---------------------:|
+| Microbench m128n128 (single CTA) | 1922 | 78% |
+| Custom 2-CTA m256n256 | 2113 | 86% |
+| **cuBLAS m256n256 cluster_group::2** | **2252** | **92%** |
+
+cuBLAS still wins by 7% over my best custom 2-CTA kernel. Reasons:
+- Better TMA pipelining (overlaps loads with compute)
+- Multi-warp issue (custom only uses 1 warp per CTA)
+- Optimized accumulator handling
+
+To match cuBLAS would require implementing similar pipelining tricks
+in custom kernels. cuBLAS represents NVIDIA's significant engineering
+investment in BF16 GEMM optimization.
+
+The remaining 8% gap (cuBLAS 92% → theoretical 100%) is from:
+- Pipeline fill/drain at kernel start/end
+- TMA gaps between K-tiles
+- mbarrier coordination overhead
+- Inherent multi-CTA synchronization cost
+
+To CLOSE this gap would require:
+- Cross-K-tile prefetching
+- Persistent kernels with weight reuse
+- Lower-overhead synchronization
+- Possibly NVRTC custom JIT for specific shapes
+
+## Summary: cuBLAS is at 92% of theoretical hardware peak
+
+NVIDIA's cuBLAS extracts 92% of theoretical hardware throughput
+(2252 / 2464 TF) when data has minimal entropy. This represents the
+PRACTICAL peak achievable with current library implementations.
+
+Custom kernels could potentially close some of the 8% gap with significant
+engineering investment, but the bulk of the optimization opportunity
+(60% → 92%, the random→const speedup) is accessible without algorithm
+changes - just data structure.
