@@ -593,3 +593,65 @@ periodic with offset) to see if they also trigger.
 
 Confidence: HIGH on content-agnostic finding (9 modes all converge to
 ~1.3% spread). MED on speculation about HW intent.
+
+## Independent mechanism: sparsity (N-independent zero-mult shortcut)
+
+Tested sparsity (% zeros in B) at multiple N values to test if the speedup
+mechanism is independent of the K-id N-window:
+
+```
+B sparsity at N=8192 / 9216 / 16384 / 24576 (all M=K=8192):
+0%:     1480 / 1474 / 1481 / 1483
+50%:    1440 / 1427 / 1438 / 1433  ← DIP
+75%:    1571 / 1559 / 1569 / 1568
+90%:    1743 / 1731 / 1728 / 1730
+99%:    1930 / 1919 / 1935 / 1943
+100%:   2253 / 2218 / -- / --
+```
+
+**Sparsity speedup is COMPLETELY N-independent** - all 4 N values give
+virtually identical curves (within noise). This is a fundamentally
+different mechanism from the K-id pattern-based dedup.
+
+### U-shaped sparsity curve
+
+```
+0%:   1480 TF (baseline)
+30%:  1406 TF  ← 5% SLOWER than dense!
+50%:  1440 TF  ← still in dip
+60%:  1475 TF
+75%:  1565 TF
+90%:  1730 TF
+99%:  1930 TF
+100%: 2253 TF (full ceiling)
+```
+
+**Dip at 30-50% sparsity is a REAL phenomenon**, not noise. Reproducible
+across multiple N values. Hypothesis: control logic overhead for "is this
+operand zero?" detection. At intermediate sparsity, overhead exceeds
+zero-shortcut savings. At high sparsity, savings dominate.
+
+This means the popular **2:4 structured sparsity (50% zeros) actually hurts
+dense GEMM throughput** on B300! It only helps via dedicated cuSPARSE/cuTENSOR
+APIs that skip zero compute.
+
+### Mechanism summary
+
+Two completely independent paths to speedup on tcgen05.mma:
+
+| Mechanism | Trigger | Shape Sensitivity | Max Speedup |
+|-----------|---------|-------------------|-------------|
+| Pattern dedup (K-id, ABAB) | data structure | YES (N ∈ {K/2,K,2K}) | 1.42× |
+| Zero-mult shortcut | fraction of zeros | NO | depends on % |
+
+Combined effect possible: K-id with sparse-within-row gave 2152 TF (1.45×)
+which exceeds either alone. The mechanisms compose.
+
+### Practical implication update
+
+For real workloads:
+- Pattern dedup: requires synthetic structure, never naturally hits
+- Zero shortcut: requires >75% sparsity to provide >5% benefit
+- 2:4 sparsity: actually HURTS dense GEMM by 3-5%
+
+The 2-6% practical inference benefit estimate stands.
