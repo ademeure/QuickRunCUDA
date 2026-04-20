@@ -327,3 +327,58 @@ inference workloads.
 - HIGH on the LIMITED speedup for rectangular inference shapes (1-2%)
 - HIGH on the practical implication: use custom kernels for max benefit
 - LOW on whether better cuBLAS internal layouts could expose more savings
+
+---
+
+## Power/clock distribution for square vs rectangular
+
+NVML clock samples reveal WHY rectangular shapes don't benefit:
+
+**8192³ (square):**
+| Mode | Clock distribution | Power |
+|------|-------------------|------:|
+| Random | 9× 2032, 4× 1290, 4× 1252 (heavy throttle to 1250) | 1090W |
+| K-identical | 9× 2032, 4× 1912, 3× 1905 (throttles only to ~1900) | 1096W |
+| → Headroom from K-identity → 1.41× speedup |
+
+**8192×28672×8192 (rectangular Llama FFN):**
+| Mode | Clock distribution | Power |
+|------|-------------------|------:|
+| Random | 14× 1267, 13× 1245, 9× 2032 (heavy throttle to ~1250) | 1094W |
+| K-identical | 36× 1290, 9× 2032, 8× 1297 (also throttles to ~1290) | 1088W |
+| → Both throttle same → only 1.02× speedup |
+
+## Why rectangular shapes throttle BOTH equally
+
+Hypothesis: rectangular shapes have additional power overhead (TMA bandwidth,
+SMEM bank traffic, etc.) that dominates beyond multiplier data dependence.
+Even with K-identical data, the kernel hits TDP cap.
+
+For square shapes, the multiplier IS the dominant cost. K-identity reduces
+multiplier power → cap less binding → faster clock.
+
+## SHAPE SCAN summary (all power-of-2 N show benefit)
+
+| Shape | Random TFLOPS | K-id TFLOPS | Ratio |
+|-------|--------------:|------------:|------:|
+| 4096³ | 1402 | 1837 | 1.31× |
+| **8192³** | 1486 | 2104 | **1.41×** |
+| 16384³ | 1568 | 2196 | 1.40× |
+| 16384×8192×8192 | 1481 | 2115 | 1.42× |
+| 8192×16384×8192 | 1488 | 2090 | 1.40× |
+| 1024×8192×8192 | 1365 | 1781 | 1.30× |
+
+Llama shapes (rectangular non-power-of-2 N):
+| 8192×28672×8192 | 1490 | 1516 | 1.02× |
+| 8192×10240×8192 | 1476 | 1503 | 1.01× |
+| 4096×14336×4096 | 1449 | 1472 | 1.01× |
+
+## Final answer: 1.30-1.42× speedup for power-of-2 N
+
+The cuBLAS speedup IS reproducible for power-of-2 shaped GEMMs:
+- Up to 1.42× speedup with K-row identity in B
+- Includes some realistic shapes (8192×16384×8192 = 1.40×)
+- BUT typical ML models with non-power-of-2 N (Llama 28672, 10240, 14336)
+  use cuBLAS internal layouts that don't expose the K-row dedup
+  
+**Custom kernels could expose the full mechanism for ANY shape.**
