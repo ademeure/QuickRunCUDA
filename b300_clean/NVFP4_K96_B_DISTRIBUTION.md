@@ -77,3 +77,27 @@ together (matches the 5-pos / 4-pos test).
   what about K?).
 - Real model weights from a quantized model: load and measure directly.
 - Per-block_scale (block16) vs no-block-scale to isolate scale toggling.
+
+## Bonus: 5-pos B + outliers per K-block-of-16 sweep
+
+15 elements per K-block-of-16 from {+0..+2}, N elements from
+{-3, -2, -1, +2, +3, +4} ("outlier" set, uniform). Outlier positions
+random per (n, kblock):
+
+| outliers/K16 | % outliers | power W | Δ from pure 5-pos |
+|----|-----|---------|----------|
+| 0  | 0%  | 432     | 0        |
+| 1  | 6%  | 461     | +29      |
+| 2  | 13% | 480     | +48      |
+| 4  | 25% | 503     | +71      |
+| 8  | 50% | **526** | **+94 ← peak** |
+| 16 | 100%| 519     | +88      |
+
+50/50 mix is HIGHER than 100% pure outlier — mixing two distinct value
+distributions increases inter-element variance more than either pure
+distribution. Same toggle-energy phenomenon as popcount d=16 peak.
+
+**Key inference takeaway**: just 1 high-magnitude or sign-flipped outlier
+per 16 weights costs ~30 W per CTA. Pre-clipping outliers (or grouping
+them so SF blocks see uniform distributions) is worth ~30-90 W of B-side
+toggle power.
