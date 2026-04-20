@@ -173,11 +173,67 @@ sparsity levels.
 - **HIGH**: Multiplier zero-skip on A=const+0 (verified in matrix
   with multiple non-zero A baselines).
 
+## K=64 (non-ULTRA path) comparison
+
+Same kernel with `k_size_=0` in idesc, `MMA_K=64`, smaller SMEM buffers:
+
+| B mode              | K=64 | K=96 | Δ    |
+|---------------------|------|------|------|
+| full random 16      | 455  | 552  | +97  |
+| 5 positive {+0..+2} | 368  | 430  | +62  |
+| 8 positive          | 396  | 472  | +76  |
+| 5 centered {-1..+1} | 408  | 490  | +82  |
+
+K=96 ULTRA is 60-100 W HIGHER than K=64 across all B distributions
+(1.5× more MMA work per instruction). Relative B-distribution swing
+is similar (~25% in both paths), so the toggle-energy model applies
+at both K sizes.
+
+## K-axis sign-period sweep (K lane-pairing test)
+
+`bench_nvfp4_k96_kperiod.cu`: sign[k,n] = (k/pk ^ n/pn) & 1, mag=+1.0,
+A=random. At pn=0 (no N-flip), vary pk:
+
+| pk  | power W | Δ vs baseline |
+|-----|---------|---------------|
+| 0   | 299     | 0 (all sign=0) |
+| 1   | 343     | **+44 ← worst K** |
+| 2   | 322     | +21 |
+| 4   | 311     | +10 |
+| 8   | 305     | +4  |
+| ≥12 | 299     | 0 (asymptote) |
+
+**K-axis sensitivity is 4× weaker than N-axis** (44 W vs 179 W swings).
+Worst case at pk=1 suggests the multiplier accumulator consumes one
+K-row per cycle. Effect decays rapidly beyond pk=8.
+
+Combined pk=1 + pn=64: 436 W (mag=+1.0 only). Not additive: 299 + 44
++ 179 = 522 predicted but 436 measured — the XOR pattern creates a
+checker that maps differently to physical lane structure.
+
+## SF tensor sensitivity
+
+`bench_nvfp4_k96_sf.cu`: A+B random, vary SF tensor content:
+
+| SF pattern               | power W | Δ |
+|--------------------------|---------|----|
+| 0x38 (UE4M3=1.0)         | 554     | 0  |
+| 0x00 (output zeroed)     | 537     | -18 |
+| 0xFF (max scale)         | 551     | -4  |
+| random byte              | 561     | +7  |
+| alt 0x38/0x00 per 16     | 546     | -8  |
+| uniform {0x37,0x38,0x39} | 560     | +6  |
+
+**SF is a small lever (~25 W max range)** — B/A data matter 12× more.
+SF=0 forces outputs to zero, saving 18 W via accumulator idle. Other SF
+patterns cluster within ±10 W of baseline.
+
 ## What would change conclusions
 
 - Test at 1500 MHz to amplify signal (signal scales 1.9× with clock).
-- Test K=64 (non-ULTRA path) to see if same model holds.
-- Test K=128 with k_size_=0 (standard path).
+- Test K=128 with k_size_=0 (standard path) to compare with ULTRA.
 - Test bigger A-side variations (random sign-period patterns) to
   see if A has its OWN N-64 lane-pairing structure.
 - Real model weights (BF16 or FP8 quantized): predict + measure.
+- Validate the "mixing maximizes variance" observation (50/50 outlier
+  > 100% pure outlier) with popcount-controlled mix tests.
