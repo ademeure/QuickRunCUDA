@@ -268,7 +268,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   See `b300_clean/Q3_WARP_REDUCE_RECIPES.md`.
 - [ ] **Q4 — Vectorized scan** (prefix sum) at SHMEM SoL.
 - [ ] **Q5 — Sort 1024 keys in single block at SoL**.
-- [ ] **Q6 — Transpose 32×32 SHMEM tile** without bank conflicts.
+- [x] **Q6 — Transpose 32×32 SHMEM tile** without bank conflicts:
+  smem[32][33] padding = **8.2× faster** than smem[32][32] naive.
+  Skewed indexing smem[i][(i+k)&31] equally fast. Commit history.
 
 ## R. Power oddities + microarchitectural
 
