@@ -162,6 +162,19 @@ Even more brutal under 600 W power cap: FP8 random = 3087 TFLOPS (-43%).
 18. **L2 atomic units count = ~32** (stride sweep plateau analysis) (e7aab3a)
 19. **MLOPart MPS feature** is the ONLY way to control L2 partition affinity per CUDA device (af91798)
 20. **CCTL.IVALL doesn't exist on B300** — agent claim was wrong (9467cfe)
+21. **tcgen05 has 32-byte sub-tile B-operand dedup** — universal across BF16/FP8/NVFP4 (5881985, see TCGEN05_POWER_MASTER.md)
+22. **A operand is FREE in tcgen05** — random A only +5W vs constant A; B side is the power hot path (250W asymmetry) (7fc3bbf)
+23. **K-row dedup is pairwise-consecutive in tcgen05** — sorting K rows by similarity saves ~5W per BF16 transition (ab82fd2)
+24. **Sticky activation in tcgen05 sub-tile dedup** — putting matching sub-tiles at LOW N saves up to 270W per CTA (87cd247)
+25. **Per-byte cost of K-vary in tcgen05 = 0.025 W/byte** (universal across precisions, total ~110W for 4096 byte B operand) (b38bb2a)
+
+## tcgen05.mma POWER MASTER (NEW 2026-04-20)
+
+`b300_clean/TCGEN05_POWER_MASTER.md` provides a comprehensive model:
+- Random data: 609W BF16 / 642W FP8 / 463W NVFP4
+- Optimal-structured data: ~baseline 300W BF16 even with full bit entropy
+- 32-byte sub-tile boundary universal across all 3 precisions
+- Saves up to 310W per CTA via column sorting + K-row grouping
 
 ## 8. Speed-of-Light recipes
 
