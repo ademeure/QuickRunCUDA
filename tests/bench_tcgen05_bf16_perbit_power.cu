@@ -577,6 +577,34 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 } else {
                     w = r;
                 }
+            } else if (mode >= 6700 && mode <= 6707) {
+                // CROSS-HALF MATCHING TEST:
+                // Half A (sub-tiles 0-3) has K_unique unique patterns at random positions
+                // Half B (sub-tiles 4-7) MIRRORS Half A (sub_tile 4 = sub_tile 0, etc.)
+                // K_unique = mode - 6700 sub-tiles in Half A are unique vs baseline
+                int K_unique = mode - 6700;
+                int npair = idx % 64;
+                int sub_tile = npair / 8;
+                int pos_in_tile = npair % 8;
+                int n_pos = pos_in_tile * 2;
+                int n_pos_o = n_pos + 1;
+                // Mirror: sub-tiles 4-7 mirror sub-tiles 0-3
+                int mirrored_sub_tile = (sub_tile < 4) ? sub_tile : (sub_tile - 4);
+                int pattern_id;
+                if (mirrored_sub_tile < (4 - K_unique)) {
+                    pattern_id = 0;  // baseline
+                } else {
+                    pattern_id = mirrored_sub_tile + 1;  // unique pattern (same in both halves)
+                }
+                auto h = [](int nn) -> unsigned short {
+                    unsigned hh = 0xC0FFEE13u ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    return (unsigned short)(hh & 0xFFFF);
+                };
+                unsigned short ve = h(n_pos + pattern_id * 100);
+                unsigned short vo = h(n_pos_o + pattern_id * 100);
+                w = ((unsigned)vo << 16) | ve;
             } else if (mode >= 6500 && mode <= 6532) {
                 // INVERSE PARTIAL: break ALL sub-tiles by varying degree (sub-tile 0 also broken)
                 // K_zero = mode - 6500 N positions per sub-tile differ from THE BASELINE

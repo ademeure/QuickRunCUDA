@@ -141,3 +141,64 @@ precisions/shapes, the universal recipe still applies:
 - HIGH on BF16 having clear two-half asymmetry (8 measurements monotonic)
 - HIGH on FP8/NVFP4 NOT having halves asymmetry (uniform within ±10W)
 - LOW on the explanation for why BF16 is special
+
+---
+
+## Cross-Half Mirror Test (mode 6700-6704): Half A is the dominant path
+
+Test: Half B mirrors Half A's pattern. Does HW dedup Half B against Half A?
+
+| K_unique (unique sub-tile pairs A↔B mirror) | Power (W) | Note |
+|--------------------------------------------:|----------:|------|
+| 0 (all baseline) | 305 | all 8 sub-tiles same pattern |
+| 1 (sub_tile 3 + mirror 7 unique) | **465** | Half A activates! |
+| 2 (sub_tiles 2,3 + mirror 6,7) | 543 | |
+| 3 (sub_tiles 1,2,3 + mirror 5,6,7) | 619 | |
+| 4 (all 4 unique + mirror) | 612 | full random |
+
+vs K_break (only Half B unique):
+| K_break | Power (W) |
+|--------:|----------:|
+| 0 | 305 |
+| 1 | 304 (free!) |
+| 4 | 347 |
+
+## Key insight
+
+Mirror=1 (unique at sub_tile 3 in Half A + mirror at 7) = 465W.
+K_break=1 (unique at sub_tile 7 in Half B only) = 304W.
+
+The DIFFERENCE: Mirror=1 has unique sub-tile in Half A (position 3).
+K_break=1 doesn't.
+
+**Even when Half B has MATCHING content to Half A's broken sub-tile,
+no cross-half dedup occurs. The cost comes from the Half A activation alone.**
+
+This refines the BF16 two-half model:
+- **Half A is the "primary" / always-on multiplier path** — high power cost
+  for any unique data
+- **Half B is the "secondary" / gated path** — can be deduped to near-zero
+  cost when patterns match a previous sub-tile WITHIN Half B
+- **No cross-half dedup** — Half B can't reuse Half A's cached patterns
+
+## Mechanism interpretation
+
+The BF16 m128n128 multiplier likely has:
+- ONE primary 64-N MAC array (for Half A) that's always active when used
+- ONE secondary 64-N MAC array (for Half B) with aggressive power gating
+- The two arrays operate INDEPENDENTLY with separate dedup state
+- Half B's dedup cache is local to Half B; no shared state with Half A
+
+## Practical implication (refined)
+
+For BF16 m128n128 inference workloads:
+
+1. **Pack high-entropy data into Half B (N=64..127)** - free because Half B
+   gates aggressively
+2. **Use Half A (N=0..63) for low-entropy / sparse / repeated patterns** -
+   Half A pays full data-dep cost regardless of Half B's content
+3. **Don't try cross-half mirroring** - doesn't help; HW doesn't dedup across halves
+
+For example, for a row-major weight matrix:
+- Sort columns so that columns 0..63 (Half A) are the most repetitive
+- Columns 64..127 (Half B) can be arbitrary - they're mostly free
