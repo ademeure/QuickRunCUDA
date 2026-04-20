@@ -1104,3 +1104,35 @@ For peak with structured sparsity:
 
 This is the OPERATIONAL guidance for B300 deployment - what you can
 actually expect, not the theoretical or synthetic numbers.
+
+## Cross-GPU validation: identical pattern on both B300 SXM6
+
+Tested GPU 1 (separate physical chip) after `nvidia-smi -rgc -i 1`:
+
+```
+N        GPU 0 (K-id)   GPU 1 (K-id)
+8192     2098           2110           ✓ both full speedup
+9216     1503           1490           ✗ both no speedup
+12288    1521           1508           ✗ both no speedup
+16384    2089           2100           ✓ both full speedup
+24576    1505           1496           ✗ both no speedup
+32768    1513           1494           ✗ both no speedup
+```
+
+**Both GPUs show identical N-dependence pattern.** Within 1% match across
+all N values tested. This confirms the mechanism is at SILICON level, not
+a software/driver artifact specific to one chip.
+
+### Discovered: GPU 1 had same "stuck clock" problem
+
+When first sampled, GPU 1 showed all values around 1158-1187 TF (no speedup
+visible, similar to GPU 0's stuck-1005-MHz state). Required `nvidia-smi -rgc -i 1`
+to restore proper boost clock behavior.
+
+NVML showed GPU 1 had accumulated 39 hours of SW Power Capping and SW Thermal
+Slowdown events (counters), suggesting historical heavy thermal load. Both
+GPUs in this 2× B300 system seem prone to entering degraded clock states
+that require manual `-rgc` recovery.
+
+**Operational lesson**: ALWAYS verify ALL GPU clocks before benchmarking, not
+just GPU 0. Multi-GPU systems compound the chance of finding a stuck GPU.
