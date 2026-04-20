@@ -31,7 +31,7 @@ run_tier() {
       -0 $ITERS -1 $d -2 $WS_ARG \
       > /tmp/pc3_${TIER}_d${d}.log 2>&1 &
     PID=$!
-    REUSE="--reuse-cubin"
+    REUSE=""  # disabled - cubin-mismatch hazard
 
     sleep $RAMP
     s=()

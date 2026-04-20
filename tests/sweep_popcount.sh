@@ -22,7 +22,7 @@ for d in "${DENSITIES[@]}"; do
     -0 $ITERS -1 $d -2 $WS_BYTES \
     > /tmp/pc_run_$d.log 2>&1 &
   PID=$!
-  REUSE="--reuse-cubin"
+  REUSE=""  # disabled - cubin-mismatch hazard
 
   sleep 1.8
   s=()

@@ -36,7 +36,7 @@ run_tier() {
         > /tmp/wpc_${TIER}_d${d}.log 2>&1 &
     fi
     PID=$!
-    REUSE="--reuse-cubin"
+    REUSE=""  # disabled - cubin-mismatch hazard
 
     sleep 1.5
     s=()

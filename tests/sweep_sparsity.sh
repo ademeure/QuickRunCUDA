@@ -48,7 +48,7 @@ for gi in 0 1 2 3; do
         -0 $sp -1 $gran_value -2 $WS_BYTES \
         > /tmp/sp_${WS_NAME}_g${g}_v${v}_sp${sp}.log 2>&1 &
       PID=$!
-      REUSE="--reuse-cubin"
+      REUSE=""  # disabled - cubin-mismatch hazard
 
       sleep $RAMP_SLEEP
       s=()

@@ -50,7 +50,7 @@ run_tier() {
             > /tmp/sp3_${TIER}_g${g}_v${v}_sp${sp}.log 2>&1 &
         fi
         PID=$!
-        REUSE="--reuse-cubin"
+        REUSE=""  # disabled - cubin-mismatch hazard
 
         sleep $RAMP
         s=()

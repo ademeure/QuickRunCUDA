@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Bit-stride L2 power sweep with runtime pattern_mode arg.
-# Compile once (first run), then --reuse-cubin for the rest.
+# Each run compiles fresh (--reuse-cubin removed - was source of cubin-mismatch bugs).
 # Each pattern: ~3s kernel, sample 6×0.5s after 1.0s ramp, drop first 2 + last 1, median of 3.
 cd /root/github/QuickRunCUDA
 
@@ -18,7 +18,7 @@ OUT=/tmp/bitstride_sweep.log
 
 printf "%-6s %-6s %-6s %-6s %-6s %-6s %-6s %-10s\n" "p" "med_W" "s1" "s2" "s3" "s4" "s5" "name" | tee -a $OUT
 
-# First run compiles (no --reuse-cubin)
+# Each run compiles fresh (cubin-mismatch hazard)
 REUSE=""
 i=0
 while [ $i -lt ${#PATTERNS[@]} ]; do
@@ -32,7 +32,7 @@ while [ $i -lt ${#PATTERNS[@]} ]; do
     -0 $ITERS -1 $p -2 $WS_BYTES \
     > /tmp/bs_run_$p.log 2>&1 &
   RUN_PID=$!
-  REUSE="--reuse-cubin"
+  REUSE=""  # disabled - cubin-mismatch hazard
 
   sleep 1.8   # init + ramp to steady-state
   s=()

@@ -39,7 +39,7 @@ run_tier() {
         > /tmp/pc4_${TIER}_d${d}.log 2>&1 &
     fi
     PID=$!
-    REUSE="--reuse-cubin"
+    REUSE=""  # disabled - cubin-mismatch hazard
 
     sleep $RAMP
     s=()

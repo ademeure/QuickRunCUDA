@@ -26,7 +26,7 @@ for gi in 0 1 2 3; do
       -0 $ITERS -1 $packed -2 $WS_BYTES \
       > /tmp/spls_l2_g${g}_sp${sp}.log 2>&1 &
     PID=$!
-    REUSE="--reuse-cubin"
+    REUSE=""  # disabled - cubin-mismatch hazard
 
     sleep 1.5
     s=()
