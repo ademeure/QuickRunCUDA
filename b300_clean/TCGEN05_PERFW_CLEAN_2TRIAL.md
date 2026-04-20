@@ -167,3 +167,79 @@ are uniformly zero.
   for sparse activations.
 - **The 400 W floor** is the architectural minimum for issuing tcgen05
   at peak rate; cannot go lower without reducing throughput.
+
+## Toggle-skip vs zero-detect asymmetry: A and B work differently!
+
+Added mode 8 (B = constant non-zero), mode 9 (B = constant negative
+non-zero), mode 10 (A = constant non-zero) to the kernels. This isolates
+"toggle-skip" (multiplier saves power when input doesn't change) from
+"zero-detect" (multiplier saves power when input is exactly 0 via
+arithmetic short-circuit).
+
+### B-side: TOGGLE-SKIP (any constant saves)
+
+| format       | random | B=+const | B=−const | B=0   | const-vs-zero Δ |
+|--------------|--------|----------|----------|-------|----------------|
+| NVFP4 K=96   | 867 W  | 411 W    | 411 W    | 409 W | only 2 W       |
+| FP8 K=32     | 1066 W | 430 W    | 428 W    | 422 W | 8 W            |
+| BF16 K=16    | 882 W  | 410 W    | 409 W    | 400 W | 10 W           |
+
+B=positive constant ≈ B=negative constant ≈ B=zero. **B-side savings
+come 100% from inter-element toggle reduction**, NOT from arithmetic
+zero detection. The B-broadcast bus consumes most B-side power on
+edge transitions.
+
+### A-side: ZERO-DETECT (only A=0 saves a lot)
+
+| format       | random | A=0    | A=const(+) | A=0 saves | A=const saves |
+|--------------|--------|--------|------------|-----------|---------------|
+| NVFP4 K=96   | 871 W  | 758 W  | 847 W      | -113 W    | -24 W         |
+| BF16 K=16    | 877 W  | 662 W  | 790 W      | -215 W    | -87 W         |
+| FP8 K=32     | 1082 W | 969 W  | 1080 W     | -113 W    | **-2 W**      |
+
+For FP8, A=constant non-zero saves only 2 W vs random — A-side is
+NOT toggle-skip. Only A=0 triggers a savings, attributable to the
+multiplier arithmetic zero-detect (`0 × X = 0` short-circuits the
+adder/accumulator path).
+
+### Mechanism inferred
+
+The multiplier array has TWO distinct power-saving paths:
+
+1. **B-side bus power-gating**: when consecutive B elements are
+   identical, the broadcast bus does not toggle and the per-lane
+   multiplier inputs are static. Saves ~456 W per CTA. Independent
+   of arithmetic value.
+
+2. **A-side zero-detect**: when A=0, multiplier output is forced to
+   0 without computing, propagating through adder/accumulator silently.
+   Saves ~113-215 W per CTA. **Specific to A=0 (or A=−0)**, not other
+   constants.
+
+### Practical implication
+
+For inference:
+- Pre-detecting all-zero A activations (e.g. ReLU-killed rows) → 113-215 W per CTA
+- Pre-detecting low-toggle B (e.g. quantized identical-bucket weights)
+  → 456-644 W per CTA
+- All-zero A AND all-zero B (or B-uniform) → 394-406 W floor (-470 to
+  -670 W vs random)
+
+The B-side lever is bigger (broadcast amplifies impact), but A-side
+benefits even when B is non-trivial.
+
+### Earlier "zero-skip" claim corrected
+
+My previous statement "B=0 zero-skip saves 456-644W" was a mistake of
+naming. The true mechanism is toggle-skip on B-bus; B=any-constant gets
+the same 456-644 W savings. This was discovered by adding mode 8
+(B=const non-zero) and observing essentially same power as mode 6 (B=0).
+
+### Confidence
+
+- **HIGH** that B-side saving is toggle-skip (3 formats × 3 constants
+  all consistent within 10 W).
+- **HIGH** that A-side has separate zero-detect mechanism (FP8 A=const
+  saves 2 W vs A=0 saves 113 W is unambiguous).
+- **MED** for the precise mechanism (multiplier internal architecture
+  speculation).

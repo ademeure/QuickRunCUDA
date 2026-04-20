@@ -15,6 +15,7 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
         r &= ~0x7C007C00u; r |= 0x38003800u;
         if (mode == 2 || mode == 3) r &= ~0x80008000u;
         if (mode == 5 || mode == 7) r = 0u;
+        if (mode == 10) r = 0x3F003F00u;
         smem_A[i] = r;  // A always full random (signs random)
     }
     for (int i = 0; i < 2048; i++) {
@@ -22,6 +23,8 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
         r &= ~0x7C007C00u; r |= 0x38003800u;
         if (mode == 1 || mode == 3) r &= ~0x80008000u;  // B positive only
         if (mode == 6 || mode == 7) r = 0u;
+        if (mode == 9) r = 0xBF00BF00u;
+        if (mode == 8) r = 0x3F003F00u;
         smem_B[i] = r;
     }
     *tmem_p = 0xFFFFFFFFu;
