@@ -246,7 +246,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 
 ## N. Cache hierarchy + replacement
 
-- [ ] **N1 — L2 prefetcher behavior**: does B300 have stride detection?
+- [x] **N1 — L2 prefetcher**: NONE observable on B300. Sequential = reverse
+  = random = stride-16 all 745 cy/load. Use TMA/cp.async for explicit
+  prefetch; HW doesn't detect stride patterns. Commit history.
 - [ ] **N2 — L1 cache hit metric calibration**: build known-hit kernel,
   verify ncu.
 - [ ] **N3 — `cctl::ivall` / `cctl::wb`**: does B300 emit these for any
