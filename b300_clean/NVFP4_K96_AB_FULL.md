@@ -295,12 +295,31 @@ cy/MMA constant at 128 from earlier clock64 measurement).
    Same 1095 W power; achievable clock varies 1788-2002 MHz (12%)
    based on B distribution:
    - 5-pos:  2002 MHz → 14.56 PFLOPs (best non-zero-skip)
+   - +1 outlier per K16: 1962 MHz → 14.27 (-43 MHz vs pure 5-pos, 2% loss)
    - 8-pos:  1939 MHz → 14.10
-   - 5-cent: 1920 MHz → 13.97
+   - 5-cent: 1925 MHz → 14.00
    - 9-asym: 1856 MHz → 13.50
    - 16-rand: 1788 MHz → 13.01 (12% slower than 5-pos)
 
 This inverts the 1005 MHz fixed-clock analysis: without clock
 headroom, data quality = energy efficiency; with clock headroom
 (unlocked + TDP cap), data quality = throughput.
+
+### Outlier sensitivity at TDP cap (3-trial verified)
+
+5-pos baseline + N outliers per K-block-of-16 (from {-3,-2,-1,+2,+3,+4}):
+
+| outliers/K16 | clk MHz | pwr W | PFLOPs | TF/W |
+|--------------|---------|-------|--------|------|
+| 0 (pure 5-pos) | 2005    | 1091  | 14.58  | 13.36 |
+| 1 (6.25 %)     | 1962    | 1084  | 14.27  | 13.16 |
+| 2 (12.5 %)     | 1935    | 1082  | 14.07  | 13.00 |
+| 4 (25 %)       | 1890    | 1097  | 13.75  | 12.53 |
+| 8 (50 %)       | 1864    | 1094  | 13.56  | 12.39 |
+| 16 (100 %)     | 1863    | 1097  | 13.55  | 12.35 |
+
+Throughput loss from outliers is gradual: 1/K16 outlier costs ~2 %,
+saturates at ~7 % loss with 50%+ outliers. (Earlier "12 %" claim from
+1 outlier was a `--reuse-cubin` bug — the cubin was actually bench_excludes
+mode 0 = full random.)
 
