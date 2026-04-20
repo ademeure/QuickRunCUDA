@@ -214,3 +214,55 @@ For BF16 sub-tile=8, WORST is p_n=16 (chunk-2 sub-tile, different!).
 The WORST chunk size at sub-tile level differs between formats:
 - BF16: chunk-2 (++--...) at sub-tile level = 16 elements
 - NVFP4/FP8: chunk-4 at sub-tile level = 4 × 16 = 64 (for NVFP4) or 4 × 8 = 32 (for FP8)
+
+## BF16 diagonal stripe pattern: sign[k][n] = ((n + k*shift) / p_n) & 1
+
+### p_n=2 with various shifts:
+```
+shift=0 : 462 W (baseline, no diagonal)
+shift=1 : 468 W (small diagonal)
+shift=2 : 473 W (mild diagonal)
+shift=3 : 469 W
+shift=4 : 465 W
+shift=8 : 465 W
+```
+
+### p_n=8 (sub-tile boundary) with shifts:
+```
+shift=0 : 466 W
+shift=1 : 469 W
+shift=2 : 469 W
+shift=4 : 471 W
+shift=8 : 474 W
+```
+
+### Curious: diagonal patterns stay LOW despite many unique sub-tile patterns
+
+For p_n=8 shift=1, each K row has a different shifted version of the
+sub-tile pattern. With K=16 and shift=1, theoretically 8-16 distinct
+sub-tile contents per K-iteration.
+
+Yet measured power stays LOW (~470W). This contradicts the strict
+"≤2 patterns triggers LOW" rule.
+
+Possible explanations:
+1. The cache may hold more than 2 patterns transiently (LRU works through them)
+2. There's a separate "ramp/shift predictor" that handles linear shifts
+3. Pattern matching may use position-relative comparison that diagonals satisfy
+4. The mechanism is more complex than the 2-entry cache model
+
+Diagonal patterns are common in some quantization schemes (e.g., shifted
+weights for block-wise operations). This finding suggests they may be more
+power-friendly than expected.
+
+## Confidence
+- **HIGH**: Diagonal patterns stay LOW for shift ≤ 8 at p_n in {2, 8}
+- **MEDIUM**: Mechanism behind diagonal-LOW behavior (suggests cache > 2 entries OR special predictor)
+- **LOW**: Specific HW circuit responsible
+
+## What would change conclusions
+
+- Test diagonal at higher shifts (32, 64) to see if eventually breaks
+- Test diagonal × K-flip combinations
+- Test with non-linear K dependencies (e.g., quadratic n+k*k)
+- Cross-check with NVFP4 to see if same diagonal-LOW behavior
