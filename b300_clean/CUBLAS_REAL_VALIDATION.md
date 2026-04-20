@@ -430,3 +430,54 @@ For FP8 inference deployment with K-row-identical-compatible workloads:
 - HIGH on rectangular shapes still showing only 1.02× (consistent with BF16)
 - HIGH on FP8 reaching 91% of spec peak with optimization
 - HIGH on the cross-precision pattern (FP8 > BF16 due to higher data-dep)
+
+---
+
+## Comprehensive N sweep at fixed M=K=8192
+
+| N | 1100W rand | 1100W K-id | Ratio | 600W rand | 600W K-id | Ratio |
+|---|-----------:|-----------:|------:|----------:|----------:|------:|
+| 4096 | 1480 | 2077 | 1.40× | - | - | - |
+| 8192 | 1492 | 2106 | 1.41× | 836 | 1303 | 1.55× |
+| 9216 | 1479 | 1506 | 1.01× | - | - | - |
+| 10240 | 1481 | 1503 | 1.01× | - | - | - |
+| 12288 | 1495 | 1516 | 1.01× | - | - | - |
+| 13312 | 1487 | 1522 | 1.02× | - | - | - |
+| 14336 | 1488 | 1515 | 1.01× | - | - | - |
+| 15360 | 1492 | 1493 | 1.00× | - | - | - |
+| 16384 | 1496 | 2099 | 1.40× | 839 | 1304 | 1.55× |
+| 17408 | 1477 | 1478 | 1.00× | - | - | - |
+| 20480 | 1480 | 1503 | 1.01× | - | - | - |
+| 28672 | 1487 | 1502 | 1.01× | 831 | 851 | 1.02× |
+| 32768 | 1503 | 1550 | 1.03× | 829 | 864 | 1.04× |
+
+## Pattern: only N ∈ {4096, 8192, 16384} benefit
+
+| Beneficial N values | Speedup |
+|-------------------:|--------:|
+| 4096 | 1.40× |
+| 8192 | 1.41× (1.55× @ 600W cap) |
+| 16384 | 1.40× (1.55× @ 600W cap) |
+
+| All other N values | Speedup |
+|------------------:|--------:|
+| All non-power-of-2 (9216, 10240, 12288, 13312, 14336, 15360, 17408, 20480, 28672) | ~1.00-1.02× |
+| N=32768 (also power-of-2 but larger) | ~1.03× |
+
+## Why?
+
+Same kernel `nvjet_sm103_tss_128x256_64x6_` but:
+- N ∈ {4096, 8192, 16384}: cuBLAS internal layout exposes K-row dedup mechanism
+- Other N: cuBLAS uses different SMEM layout strategy (split N into smaller blocks?
+  TMA pattern that hides K-row dedup?) - exact reason unclear without deep analysis
+- N=32768: large B (512 MB) likely DRAM-bandwidth-bound, multiplier dedup doesn't help
+
+## Final practical impact range
+
+For BF16 cuBLAS GEMM with K-row-identical B:
+- **Best case (N=8192, 16384, 4096)**: 1.40× at default cap, 1.55× at 600W cap
+- **Worst case (rectangular Llama-style)**: 1.01-1.03× (no meaningful benefit)
+
+For FP8 (already shown):
+- N=8192³: 1.55× speedup → 4082 TFLOPS = 91% of FP8 spec peak
+- Likely same shape sensitivity (untested for other N)
