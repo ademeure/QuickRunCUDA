@@ -44,6 +44,33 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
         else if (mode == 20) seed = (k / 48) * (MMA_N/8) + npack;  // K-chunk-of-48 (only 1 transition!)
         else seed = i;
         unsigned r = (seed + blockIdx.x * 1024u + 0xC0FFEE00u) * 0x9E3779B1u; r ^= r >> 16; r *= 0x85EBCA6Bu;
+        // Specialized B value sets, override after random
+        if (mode == 21) {
+            // B uniformly chosen from {+1.0, +1.5} - tiny magnitude variation, no sign
+            r = ((r & 0x11111111u) ? 0x33333333u : 0x22222222u);
+        } else if (mode == 22) {
+            // B uniformly chosen from {+0.5, +1.0, +1.5, +2.0} - 4 close positives, no sign
+            unsigned b = 0;
+            for (int p = 0; p < 8; p++) { b |= (((r >> (p*4)) & 3) + 1) << (p*4); }
+            r = b;
+        } else if (mode == 23) {
+            // B uniformly chosen from {-6.0, +6.0} - extreme bipolar
+            r = ((r & 0x11111111u) ? 0xFFFFFFFFu : 0x77777777u);
+        } else if (mode == 24) {
+            r = ((r & 0x11111111u) ? 0xAAAAAAAAu : 0x22222222u);
+        } else if (mode == 25) {
+            // 4 distinct DWORD patterns (4 nibble values 0,1,2,3 splatted)
+            unsigned t = r & 3;
+            r = (t * 0x11111111u);  // 0x00000000, 0x11111111, 0x22222222, 0x33333333
+        } else if (mode == 26) {
+            // 8 distinct DWORD patterns
+            unsigned t = r & 7;
+            r = (t * 0x11111111u);
+        } else if (mode == 27) {
+            // 16 distinct DWORD patterns (all FP4 values, splatted)
+            unsigned t = r & 0xF;
+            r = (t * 0x11111111u);
+        }
         if (mode == 1 || mode == 3) r &= ~0x88888888u;
         if (mode == 6 || mode == 7) r = 0u;
         if (mode == 9) r = 0xAAAAAAAAu;

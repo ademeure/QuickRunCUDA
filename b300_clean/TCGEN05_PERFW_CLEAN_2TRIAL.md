@@ -404,3 +404,73 @@ After this correction, the ONLY realistic B-side power optimizations are:
 
 K-row sorting / clustering / similarity does NOT help. The K-axis power
 is gated only by full bit-identity of all K-rows, not by similarity.
+
+## DWORD-pattern threshold for B-bus toggle-skip
+
+Tested how many distinct DWORD patterns B can contain before
+toggle-skip stops working (NVFP4 K=96 N=256 cta=2):
+
+| # distinct dword patterns | power | savings vs random |
+|---------------------------|-------|-------------------|
+| 1 (constant)              | 410 W | 462 W (max)       |
+| 2 (sign flip / extreme)   | 414 W | 458 W             |
+| 4 (splatted)              | 501 W | 371 W             |
+| 8 (splatted)              | 725 W | 147 W             |
+| 16 (splatted)             | 866 W | 6 W (≈ random)    |
+| ~3000 (per-nibble {1..4}) | 642 W | 230 W ★           |
+| ~unbounded (random)       | 872 W | 0                 |
+
+### Key observations
+
+1. **Toggle-skip is a 1-2 dword feature.** With 1-2 distinct dword
+   patterns in the entire B buffer, savings are nearly max (-460 W).
+   At 4 patterns, half savings. Above 16, no benefit.
+
+2. **Popcount variance matters too** (★). Mode 22 has up to ~65K
+   distinct per-nibble dword patterns (random nibble from {1,2,3,4}),
+   yet uses 642 W — far below the 16-distinct-splatted-dwords case
+   (866 W). The reason: per-nibble {1,2,3,4} keeps popcount low
+   (avg 10 bits per dword), while splatted dwords vary 0-32 bits.
+   Inter-dword popcount toggling drives a separate power component.
+
+3. The 16-dword splat result (866 W) shows that a 1-bit set per nibble
+   (low popcount) is NOT enough — what matters is the popcount
+   *variance across dwords*. Splatted 0xFF (32 bits) vs 0x00 (0 bits)
+   = 32-bit popcount swing per cycle.
+
+### Two distinct B-power components
+
+1. **Bus toggle-skip on small alphabet** (≤ 4 distinct dwords):
+   saves up to 460 W. Hardware seems to have a 1-2 entry pattern
+   buffer that recognizes constant or alternating bus values.
+
+2. **Popcount-variance toggle** on bus signaling: separately driven
+   by Hamming distance between consecutive dwords. Low-popcount
+   alphabets (mode 22) save ~230 W even with thousands of distinct
+   patterns.
+
+### CORRECTED practical levers (final)
+
+For real LLM inference where weights cannot be made bit-identical:
+
+1. **Quantize B to ≤4 distinct dword patterns per tile** (impossibly
+   restrictive for real weights, but if you have it, save 370+ W).
+
+2. **More realistically: quantize B to low-popcount values.** All
+   FP4 values with popcount ≤ 1 (e.g., {+0, +0.5, +1.0, +2.0, +4.0,
+   ±0.5}) give significant savings via the popcount-variance term
+   (~230 W for mode 22-like distributions).
+
+3. **Avoid mixing 0x00 and 0xFF dwords** (max popcount swing).
+   Cluster weights into magnitude bands.
+
+4. **Magnitude-set narrowing** (5-pos: 430 W vs 16-random: 870 W) is
+   still the biggest realistic lever, ~440 W per CTA.
+
+5. **Sign-bit positive only** (B-positive mode 1): 142-150 W saving.
+
+6. **A=0 detection** (e.g. ReLU activations): 113-215 W saving.
+
+K-row sorting / chunk-K-uniformity gives ZERO benefit (proven by the
+chunk-48 = chunk-1 = ~870 W test). The K-axis power is BINARY: all
+K-rows bit-identical or full cost.
