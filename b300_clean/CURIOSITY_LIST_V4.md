@@ -38,8 +38,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   FFMA+IADD3 only 14.2% overlap (unified cluster). FFMA+SHFL 14.7%.
   FFMA+MUFU ~100% (per commit 8012b98). Issue-port duration > pipe diversity.
   See `b300_clean/A6_PER_PIPE_REFERENCE.md` + `b300_clean/B1_DUAL_ISSUE_FFMA_IADD3.md`.
-- [ ] **B2 — FFMA + LDG parallel issue**: known classic, but measure exact
-  overlap fraction at 1, 2, 4 LDG-per-FFMA.
+- [x] **B2 — FFMA + LDG parallel issue**: only **1% overlap with chain**
+  dep, 12% without. NOT the classic free overlap people assume. LDG too
+  fast (16 cy/inst) to leave dispatch slots for FFMA. Only slow ops
+  (MUFU) get the 100% overlap. See `b300_clean/B2_FFMA_LDG_DUAL.md`.
 - [ ] **B3 — MUFU + FFMA**: catalog says yes; verify and measure overlap.
 - [ ] **B4 — Tensor + FFMA + IMAD all simultaneous**: maximum-ILP kernel.
   Find peak combined ops/sec.
