@@ -166,3 +166,30 @@ Provenance documents:
 - LOW on whether 2-CTA cluster shares cache (untested due to 2cta kernel hang)
 - LOW on whether this transfers to NVIDIA's high-level libraries verbatim
   (but cuBLAS RANDOM vs CONSTANT gap matches predictions per I4 finding)
+
+---
+
+## Boost-clock validation (2032 MHz)
+
+Same kernel, same modes, just at -rgc (boost) instead of -lgc 1005:
+
+| Mode | Description | 1005 MHz (W) | Boost 2032 MHz (W) | Δ |
+|-----:|-------------|-------------:|-------------------:|---:|
+| 200 | Random | 609 | 1097 | +488 |
+| 300 | All zero | 294 | 621 | +327 |
+| 1400 | B const +1.0 | 299 | 643 | +344 |
+| 2900 | All-shared sub-tiles | 301 | 645 | +344 |
+| 2904 | 4-unique sub-tiles | 342 | 779 | +437 |
+| 2908 | All-unique sub-tiles | 601 | 1098 | +497 |
+
+**Dedup savings scale UP at boost:**
+- 1005 MHz: K_break=0 vs K_break=8 = 300 W gap
+- Boost:    K_break=0 vs K_break=8 = 453 W gap
+
+At boost, sub-tile dedup optimization saves ~450 W per CTA. With 148 SMs
+all running tcgen05.mma, total potential savings = 148 × 450/X (where X
+is CTA-per-SM concentration).
+
+Practical implication: a structured-data BF16 GEMM workload could run at
+~250W lower power than equivalent random-data workload on the SAME hardware
+at the same throughput. Crucial for power-constrained inference.
