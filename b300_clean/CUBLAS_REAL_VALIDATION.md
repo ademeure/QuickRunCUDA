@@ -266,3 +266,64 @@ For specific patterns (GQA, embedding products, etc.), real practical gain.
 - HIGH on the 1.41× being real for K-row-identical B
 - HIGH on the mechanism being K-row pairwise dedup
 - MEDIUM on which real workloads benefit (depends on specific data layout)
+
+---
+
+## Inference-typical GEMM shapes (rectangular)
+
+Tested realistic Llama-shaped GEMMs:
+
+| Shape | Random TFLOPS | K-row identical | Power (random) | Speedup |
+|-------|--------------:|----------------:|---------------:|--------:|
+| 8192³ (square) | 1517 | 2143 | 873 W | **1.41×** |
+| Llama 70B FFN (8192×28672×8192) | 1492 | 1523 | 1093 W | 1.02× |
+| Llama 70B QKV (8192×10240×8192) | 1477 | 1504 | - | 1.02× |
+| Llama 8B FFN (4096×14336×4096) | 1455 | 1476 | - | 1.01× |
+
+**Rectangular GEMMs show MINIMAL benefit (1.01-1.02×).** Only square 8192³
+shows the full 1.41× speedup.
+
+## Why?
+
+1. **cuBLAS uses different algorithms for different shapes**. The kernel for
+   8192³ that we identified (nvjet_sm103_tss_128x256_64x6) may not be used
+   for rectangular shapes.
+2. **Different tile sizes expose different dedup behaviors**. Rectangular
+   shapes may use tiles that don't align with K-row dedup mechanism.
+3. **Power-bound vs compute-bound**: rectangular GEMMs may be less compute-
+   bound at typical sizes, hitting different bottlenecks.
+
+## REVISED final headline
+
+The practical 1.41× speedup applies to:
+- **Square BF16 GEMMs at M=N=K=8192** (e.g., RNN cells, certain recurrent
+  layers, pure square attention scoring)
+- WITH K-row similarity in B (most workloads don't have this)
+
+For typical inference workloads (Llama-style FFN/QKV at M=8192):
+- Speedup is only 1-2%
+- Power is at cap regardless of data structure
+- Rectangular tile algorithms don't expose the K-row dedup as visibly
+
+## Honest conclusion
+
+The discovery of the power dedup mechanism is REAL and SCIENTIFICALLY VALUABLE.
+The microbench (custom tcgen05 kernel) shows up to 2.09× speedup at tight
+power caps. The cuBLAS validation confirms the mechanism exists at library
+level for SQUARE 8192³ shapes but doesn't directly apply to rectangular
+inference workloads.
+
+**For maximum practical impact**:
+- Use the microbench-style optimization in CUSTOM kernels (full 1.18-2.09×
+  range available)
+- For cuBLAS / standard library, the speedup is mostly limited to specific
+  square-shaped GEMMs with structured data
+- The mechanism understanding informs FUTURE library optimization opportunities
+
+## Confidence (final)
+
+- HIGH on the dedup mechanism existing at HW level (extensive microbench data)
+- HIGH on the 1.41× cuBLAS speedup for SQUARE 8192³ K-row-identical
+- HIGH on the LIMITED speedup for rectangular inference shapes (1-2%)
+- HIGH on the practical implication: use custom kernels for max benefit
+- LOW on whether better cuBLAS internal layouts could expose more savings
