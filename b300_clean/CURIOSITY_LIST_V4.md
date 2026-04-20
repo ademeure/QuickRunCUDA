@@ -56,8 +56,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 - [x] **B6 — Same-pipe ILP**: NO dual-issue. FFMA saturates at NC=4
   chains (= latency 4 cy) = 1 inst/cy/SMSP (issue port ceiling).
   More chains wasted; more throughput needs more WARPS. Commit history.
-- [ ] **B7 — Branch + compute parallel**: cost of BRA when fully predictable
-  vs not.
+- [x] **B7 — Branch + compute parallel**: predictable branches HIDE
+  behind FFMA latency (essentially FREE = 4.07 vs 4.09 cy). 50/50
+  divergence adds only ~12%. Branches are not free in pure-bookkeeping
+  code (A7) but very cheap interleaved with compute. Commit history.
 
 ## C. SASS instruction encoding + immediate forms
 
