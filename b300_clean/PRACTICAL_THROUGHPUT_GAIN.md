@@ -82,3 +82,30 @@ For inference deployments where weights B can be quantized/sorted:
 For training where both A and B (gradients) are random-like:
 - This optimization doesn't apply directly
 - Need to consider mixed-precision or structured-grad approaches
+
+---
+
+## Maximum optimization stack at boost
+
+| Config | Runtime (s) | Power (W) | Clock | Speedup |
+|--------|------------:|----------:|------:|--------:|
+| Random (mode 200) | 4.78 | 1096 | throttled to 1590 | 1.00× |
+| K-grouped (mode 5208) | 4.06 | 787 | sustained 2032 | 1.18× |
+| Max-opt (mode 6105: Half A=0, 3 rand in Half B) | 4.06 | **625** | sustained 2032 | 1.18× |
+
+Max-opt and K-grouped hit IDENTICAL 4.06s — both maxed at 2032 MHz boost cap.
+
+But Max-opt uses **162W LESS** than K-grouped (625W vs 787W). This shows:
+- 2032 MHz is the firmware-imposed boost ceiling
+- Even at full boost, Max-opt has 162W headroom under the 1100W TDP cap
+- Could potentially run higher clock if firmware allowed (or run cooler / quieter)
+
+## Practical ceiling: 18% speedup limited by boost clock cap
+
+The maximum throughput gain on B300 from data layout optimization is **18%**,
+limited by the 2032 MHz boost clock ceiling. Beyond this, additional power
+savings just give thermal/acoustic margin, not more speed.
+
+For applications that could ALSO improve frequency (if firmware permitted):
+- K-grouped at ~10% headroom → could potentially push to 2200 MHz
+- Max-opt at ~40% headroom → could potentially push significantly higher
