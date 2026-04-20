@@ -82,3 +82,67 @@ The TRUE practical gain from this HW feature for INT4 inference is **modest
 - HIGH on the REVISED practical guidance
 - MEDIUM on whether real Llama weights are "more Gaussian-like" or "more
   uniformly-mantissa-random" (depends on training)
+
+---
+
+## Realistic Gaussian INT4 across power caps
+
+| Cap | Gaussian TF | INT4 TF | Speedup |
+|----:|------------:|--------:|--------:|
+| 1100W (default) | 1403 | 1463 | 1.04× |
+| 600W | 766 | 809 | 1.06× |
+| 400W | 430 | 451 | 1.05× |
+
+**Speedup stays modest (4-6%) regardless of power cap.** Tighter caps don't
+amplify the effect for realistic data, unlike my synthetic test estimates.
+
+## Why realistic ≠ synthetic
+
+Realistic Gaussian weights have effectively HIGH bit entropy (sign + exp +
+mantissa all vary). INT4 quantization (16 levels × scale) reduces entropy
+moderately but not dramatically.
+
+Synthetic tests with mantissa-only-random baseline gave artificially high
+estimates because the baseline was already "structured" (no sign/exp variation).
+
+## Final practical guidance (REVISED, conservative)
+
+For Llama 70B INT4 inference deployment on B300:
+- Auto throughput gain: **~4-6%** (not 12-24% as earlier claimed)
+- Power saving: ~50-100W per GPU (not ~200W)
+- Throttle reduction: less dramatic than synthetic showed
+
+For 100-GPU INT4 inference cluster:
+- Effective throughput: ~104-106 GPUs equivalent (not 110-130)
+- Significant for very large deployments
+- Modest for small clusters
+
+## Investigation methodology reflection
+
+This is the THIRD application of rule #9 in this investigation:
+1. K-row similarity vs bit-entropy (caught early, corrected)
+2. cuBLAS spec peak vs true HW peak (caught - actually exceeded spec)
+3. **Synthetic vs realistic INT4 speedup** (caught now - synthetic inflated estimate)
+
+Each rigor application narrowed the practical claim to a more accurate value.
+
+The ABSOLUTE TRUE practical INT4 speedup on B300 is **~4-6%**, not the
+12-24% I optimistically claimed earlier.
+
+## Final final headline
+
+**Modern INT4-quantized LLM inference on B300 gets ~4-6% automatic throughput
+improvement** from this HW feature, with no software changes required.
+
+Modest but real. For datacenter deployment at scale, even 4% across thousands
+of GPUs translates to meaningful efficiency gains. But it's NOT the dramatic
+1.2-1.3× that synthetic tests suggested.
+
+## Final confidence: MEDIUM
+
+- HIGH on the mechanism existence and HW characterization
+- HIGH on the cuBLAS speedup at controlled patterns (1.34-1.59×)
+- HIGH on the 4-6% realistic estimate (verified under multiple caps)
+- MEDIUM on whether real frameworks (vLLM, TensorRT-LLM) achieve even this
+  modest gain (custom kernels may differ)
+- LOW on cross-architecture transfer (untested)
