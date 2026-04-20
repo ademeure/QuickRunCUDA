@@ -216,7 +216,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 
 ## K. PTX → SASS translation
 
-- [ ] **K1 — `cvt` chains**: when does PTX cvt sequence become single SASS inst?
+- [x] **K1 — `cvt` chains**: NEVER fused. Each PTX cvt → separate SASS
+  inst. Compiler doesn't recognize identity round-trips (f32→f16→f32
+  emits both cvts). Avoid round-trips. Commit history.
 - [x] **K2 — `mad` vs `mad.wide` SASS**: mad.lo.u32 → single IMAD;
   mad.wide/mad.hi need extra inst (covered in O4 wide multiply test).
 - [ ] **K3 — `selp`** translation (predicate select).
