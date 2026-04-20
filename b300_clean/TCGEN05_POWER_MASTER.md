@@ -202,6 +202,7 @@ Provenance documents:
 | **GRACEFUL DEGRADATION** | CUBLAS_REAL_VALIDATION.md | INT4 quantized weights: 1.20× automatic speedup; INT8: 1.06×; works for approximate K-row similarity too |
 | **GPTQ INT4 (BF16)** | CUBLAS_REAL_VALIDATION.md | Real GPTQ-style quantized inference: **1.12× AUTOMATIC** speedup, no code changes |
 | **FP8 GPTQ** | CUBLAS_REAL_VALIDATION.md | FP8 quantized inference: **1.21× AUTOMATIC** speedup at group_size 512+ |
+| **CRITICAL CORRECTION** | CUBLAS_BIT_ENTROPY_CORRECTION.md | **Speedup is PRIMARILY BIT ENTROPY of B, not K-row similarity**. Each random mantissa bit costs ~70 TFLOPS. INT4 benefits from low entropy, not from structure. |
 | **trans-aware optimization** | CUBLAS_REAL_VALIDATION.md | Both trans_B=N (K-row identical) and trans_B=T (N-row identical) give ~1.4×; layout-agnostic |
 | Sub-tile partial break | SUBTILE_PARTIAL_BREAK.md | Linear ~19W per broken byte; first byte +32W activation |
 
