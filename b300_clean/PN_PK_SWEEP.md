@@ -159,3 +159,58 @@ For HIGH power:
 - p_n that doesn't align: HIGH
 
 The 2-pattern cache holds {original, flipped} reliably across precisions.
+
+## FP8 e4m3 p_n × pk results (M=N=256, K=32, 2-CTA)
+
+```
+FP8 p_n=1 with K-flip pk:
+  pk=inf : 481 W
+  pk=1   : 506 W (+25W ← intermediate between BF16/NVFP4 K=64)
+  pk=2   : 495 W
+  pk=3   : 493 W
+  pk=4   : 490 W
+  pk=8   : 488 W
+  pk=16  : 486 W
+
+FP8 pk=3 with various p_n:
+  p_n=1   : 495 W LOW
+  p_n=2   : 496 W LOW
+  p_n=4   : 497 W LOW
+  p_n=8   : 494 W LOW
+  p_n=16  : 485 W LOW (sub-tile boundary)
+  p_n=32  : 644 W ← WORST (chunk-4 sub-tile)
+  p_n=64  : 572 W HIGH
+  p_n=128 : 505 W partial
+```
+
+## Cross-precision K-flip cost (pk=1 vs pk=inf)
+
+```
+Format       cy/MMA  K-flip cost   Notes
+BF16 K=16    128     +8 W          smallest K, smallest flip cost
+NVFP4 K=64   128     +11 W
+FP8 K=32     128     +25 W         intermediate
+NVFP4 K=96   128     +33 W         largest K, largest flip cost
+```
+
+Same cy/MMA across all precisions = same per-cycle compute = consistent test.
+
+K-flip cost roughly proportional to K size. K=96 ULTRA pays most for K-flips
+because every K-row has more "context" that must be re-evaluated.
+
+## Cross-precision WORST p_n (pk=3)
+
+```
+Format       sub-tile  WORST p_n  WORST power  baseline
+BF16 K=16    8         16         555 W        469 W (LOW)
+NVFP4 K=64   16        64         480 W        408 W (LOW)
+FP8 K=32     8         32         644 W        497 W (LOW)
+NVFP4 K=96   16        64         575 W        488 W (LOW)
+```
+
+WORST p_n = 4 × sub-tile size for FP4/FP8 formats (chunk-4 sub-tile).
+For BF16 sub-tile=8, WORST is p_n=16 (chunk-2 sub-tile, different!).
+
+The WORST chunk size at sub-tile level differs between formats:
+- BF16: chunk-2 (++--...) at sub-tile level = 16 elements
+- NVFP4/FP8: chunk-4 at sub-tile level = 4 × 16 = 64 (for NVFP4) or 4 × 8 = 32 (for FP8)
