@@ -531,3 +531,39 @@ For prefill / training: 1.41× speedup directly applies.
 - HIGH on the DRAM-bound interpretation for small M (matches HBM bandwidth)
 - HIGH on practical implication for ML deployment
 - MEDIUM on whether prefill phase typically uses square shapes (depends on tile splits)
+
+---
+
+## Realistic training matmul shapes
+
+Common matmul shapes for training (4096-class models):
+
+| Shape | Random TFLOPS | K-id TFLOPS | Ratio | Note |
+|-------|--------------:|------------:|------:|------|
+| 4096³ | 1425 | 1838 | **1.28×** | Square small |
+| 8192×8192×4096 | 1528 | 2133 | **1.39×** | M=N, smaller K |
+| 4096×8192×4096 | 1488 | 2081 | **1.39×** | M<N, K=M |
+| 16384×4096×16384 | 1569 | 2174 | **1.38×** | M=K, smaller N |
+| 4096×16384×4096 | 1508 | 1547 | 1.02× | N>>M, breaks pattern |
+
+For most training shapes that respect M ≥ N OR M = K: 1.28-1.39× speedup.
+
+## Updated practical guidance
+
+For Llama 8B-class training (hidden=4096):
+- Q/K/V projections: M=batch*seq, N=4096, K=4096 → 1.28× (if M=4096+)
+- FFN gate/up: M=batch*seq, N=14336, K=4096 → 1.01× (N>>M, no benefit)
+- FFN down: M=batch*seq, N=4096, K=14336 → 1.38× (works, K=N possible swap)
+- Attention scoring: M=4096, N=4096, K=batch*seq → varies
+
+So **about half of typical FFN matmuls benefit** from the optimization,
+specifically those where N is small or M ≥ N.
+
+## Key insight: N ≤ K is the heuristic
+
+Looking at the data: shapes where N ≤ K (or N ≤ M) tend to benefit.
+Shapes where N >> M and N >> K (Llama FFN with hidden×expand): no benefit.
+
+This is consistent with cuBLAS choosing different algorithms based on
+where the bottleneck might be (compute vs memory bandwidth).
+
