@@ -648,3 +648,53 @@ For real INT4 quantized inference:
 
 These are CONSERVATIVE estimates from measured data. Real workloads with
 proper structuring should achieve these or higher.
+
+---
+
+## Microbench vs cuBLAS at boost (constant data)
+
+| Implementation | TFLOPS | % of theoretical (2464) |
+|----------------|-------:|------------------------:|
+| Microbench (custom m128n128k16) | 1922 | 78% |
+| cuBLAS (cluster_group::2 m256n256) | **2252** | **92%** |
+
+cuBLAS is 17% faster than my microbench because:
+- cuBLAS uses cluster_group::2 (2-CTA cluster) for higher per-MMA work
+- cuBLAS has better instruction scheduling/pipelining
+- cuBLAS uses optimized TMA loading
+
+Both achieve their respective HW ceilings (no power throttling at constant
+data). The remaining 22% gap below theoretical is from:
+- mbarrier wait overhead (microbench: ~1-2% per iter)
+- TMEM alloc/dealloc one-time
+- Pipeline fill/drain
+- Scheduling inefficiency
+
+## Achievable "true peak" by implementation
+
+For B300 BF16 GEMM:
+- **Theoretical**: 2464 TFLOPS (148 SMs × 4096 MACs × 2 ops × 2.032 GHz)
+- **cuBLAS const data**: 2252 TFLOPS (92%)
+- **cuBLAS random data**: 1486 TFLOPS (60%) - throttled
+- **Microbench const**: 1922 TFLOPS (78%)
+- **Microbench random**: 1220 TFLOPS (50%) - throttled
+
+So even cuBLAS leaves 8% on the table vs theoretical peak, and microbench
+leaves 22%. Custom kernel could potentially close some gap with more
+aggressive cluster/multi-warp tactics.
+
+## Final hierarchy summary
+
+```
+Theoretical max:           2464 TF (100%)
+cuBLAS at const data:      2252 TF (92%)  <- TRUE practical peak achievable
+cuBLAS random capped:      1486 TF (60%)
+Microbench const:          1922 TF (78%)
+Microbench random:         1220 TF (50%)
+INT4 quantized cuBLAS:     1860-1990 TF (~80%)
+```
+
+The LARGEST headroom available for ML workloads:
+- From random cuBLAS to const cuBLAS: 1.51× speedup (data optimization)
+- From const cuBLAS to theoretical: 1.09× (algorithm optimization)
+- Combined: 1.66× possible vs current cuBLAS random
