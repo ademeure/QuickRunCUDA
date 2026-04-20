@@ -287,3 +287,67 @@ For inference power efficiency:
 - **HIGH** for the 75/25 split (469 W total split into 349/119).
 - **MED** for the architectural interpretation (K is the cycle axis);
   could be confirmed by reading PTX/MMA hardware spec.
+
+## A-side axis decomposition (NVFP4 K=96) — A has NO axis sensitivity
+
+Added mode 13 (A uniform-M, varies K) and mode 14 (A uniform-K, varies M).
+Compared to A=random baseline:
+
+| A pattern                        | power | vs random |
+|----------------------------------|-------|-----------|
+| A random (mode 0)                | 872 W | 0         |
+| A uniform-M (varies K only, 13)  | 865 W | -7 W      |
+| A uniform-K (varies M only, 14)  | 872 W | 0 W       |
+| A constant +1.0 (mode 10)        | 843 W | -29 W     |
+| A all zero (mode 5)              | 757 W | -115 W    |
+
+### A is axis-agnostic for toggle variation
+
+Unlike B where K-axis dominates 75%, A shows essentially NO response to
+which axis varies. Only arithmetic patterns matter:
+- A=0: triggers multiplier zero-detect (-115 W)
+- A=const non-zero: small toggle reduction (-29 W)
+- A variations along any axis: no savings (0-7 W)
+
+### Complete architectural model
+
+| mechanism             | A-side         | B-side          |
+|-----------------------|----------------|-----------------|
+| Primary lever         | arithmetic zero | toggle-skip    |
+| K-axis temporal       | negligible     | 75 % (349 W)    |
+| N-axis spatial        | negligible     | 25 % (119 W)    |
+| Arithmetic zero-detect| yes (-113 W)   | no              |
+| Toggle-skip on const  | small (-29 W)  | yes (-456 W)    |
+| Mechanism reason      | per-lane input | broadcast bus   |
+
+### Reconciliation with NVFP4 K=96 random (867-872 W) budget
+
+```
+  tcgen05 issue floor (A=B=0):        394 W
++ B-bus K-axis toggle (mode 11 - floor): 461 W
++ A arithmetic vs const (mode 0 - 10):   29 W
+-----------------------------------
+  sum:                                884 W  (12 W from interaction)
+```
+
+Close to measured 867-872 W.
+
+### Practical implication
+
+For inference power optimization, **asymmetry dictates strategy**:
+
+1. **B-side (weights, typically)**: sort/cluster along K-axis to
+   minimize temporal toggling. Weight-quantization schemes that
+   preserve K-axis clustering (e.g., block-structured quantization
+   along K) can save up to 349 W per CTA.
+
+2. **A-side (activations, typically)**: only all-zero activations
+   matter for power. Random bit patterns in A use same power as
+   any other non-zero activation. Post-ReLU sparsity directly saves
+   A-side power.
+
+3. **Maximum realistic savings**: random A + K-clustered B =
+   ~575 W per CTA (34 % below random baseline 867 W).
+
+4. **Theoretical max**: A=0 activations + B-clustered weights could
+   reach ~400 W = 53 % below random.

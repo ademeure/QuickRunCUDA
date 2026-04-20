@@ -18,15 +18,27 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
     unsigned long long* mbar_p = (unsigned long long*)(smem_B + b_size);
     unsigned* tmem_p = (unsigned*)(mbar_p + 1);
     for (int i = 0; i < a_size; i++) {
-        unsigned r = (i + blockIdx.x * 1024u) * 0x9E3779B1u; r ^= r >> 16; r *= 0x85EBCA6Bu;
+        int k = i / (MMA_M/8);
+        int mpack = i % (MMA_M/8);
+        unsigned seed;
+        if (mode == 13) seed = k;       // A uniform-M: varies along K only
+        else if (mode == 14) seed = mpack;  // A uniform-K: varies along M only
+        else seed = i;
+        unsigned r = (seed + blockIdx.x * 1024u) * 0x9E3779B1u; r ^= r >> 16; r *= 0x85EBCA6Bu;
         if (mode == 2 || mode == 3) r &= ~0x88888888u;
         if (mode == 5 || mode == 7) r = 0u;
         if (mode == 10) r = 0x22222222u;
         smem_A[i] = r;
     }
     for (int i = 0; i < b_size; i++) {
-        unsigned r = (i + blockIdx.x * 1024u + 0xC0FFEE00u) * 0x9E3779B1u; r ^= r >> 16; r *= 0x85EBCA6Bu;
-        if (mode == 1 || mode == 3) r &= ~0x88888888u;  // NVFP4 sign mask (bit 3 of each FP4)
+        int k = i / (MMA_N/8);
+        int npack = i % (MMA_N/8);
+        unsigned seed;
+        if (mode == 11) seed = npack;       // K-uniform: B varies along N only
+        else if (mode == 12) seed = k;      // N-uniform: B varies along K only
+        else seed = i;
+        unsigned r = (seed + blockIdx.x * 1024u + 0xC0FFEE00u) * 0x9E3779B1u; r ^= r >> 16; r *= 0x85EBCA6Bu;
+        if (mode == 1 || mode == 3) r &= ~0x88888888u;
         if (mode == 6 || mode == 7) r = 0u;
         if (mode == 9) r = 0xAAAAAAAAu;
         if (mode == 8) r = 0x22222222u;
