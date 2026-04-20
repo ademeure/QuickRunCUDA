@@ -114,3 +114,59 @@ This iteration applied:
 - Sub-tile dedup measurement separately (not tested here)
 - SASS analysis of the actual sign-handling circuits
 - Testing larger M/N tiles to see if the savings scale
+
+## ULTRA path: M=256 N=256 2-CTA cluster
+
+Tested the configuration where K=96 ULTRA acceleration shows up
+(cy/MMA ≈ same as K=64 → K=96 delivers 50% more ops/cycle).
+
+```
+K=64 M=N=256 2-CTA:                    K=96 M=N=256 2-CTA (ULTRA):
+random (0):      340 W                  459 W
+all-pos (1):     310 W (-9%)            394 W (-14%)
+all-neg (2):     313 W (-8%)            397 W (-14%)
+K-unif/N (3):    338 W (-1%)            448 W (-2%)
+single/K (4):    334 W (-2%)            444 W (-3%)
++-+- (31):       313 W (-8%)            397 W (-14%)
+
+cy/MMA:          254                     255 (essentially same!)
+ops/cycle/SM:    33k (K=64*32K^2*2/254)  49k (K=96*32K^2*2/255 = 1.49× MORE)
+```
+
+### K=96 ULTRA energy efficiency
+
+- K=64 256² 2-CTA: 340W / 4.91 PFLOPS = 69 pJ/op
+- K=96 256² 2-CTA: 459W / 7.29 PFLOPS = 63 pJ/op (-9% energy/op)
+
+**The ULTRA path IS more energy-efficient per FLOP** despite using
+35% more total power. The 50% throughput boost more than compensates.
+
+### Sign-bit savings characteristic at ULTRA
+
+K=96 ULTRA shows slightly larger sign-bit % savings (-14% vs K=64's -9%).
+This is consistent with K=96 having more "swing" between random and
+constant patterns, possibly due to more SF reads per MMA (6 vs 4).
+
+The LARGER absolute savings (-65W vs -30W) at K=96 mean structured-sign
+weight encoding could give meaningful power savings in NVFP4 ULTRA inference.
+
+## Updated complete table
+
+```
+Config              K=64 baseline  K=64 best  K=96 baseline  K=96 best  K=96 vs K=64 baseline
+M=128 N=128 1-CTA   343 W          307 (-10%) 423 W          367 (-13%) +80 W (+23%)
+M=256 N=256 2-CTA   340 W          310 (-9%)  459 W          394 (-14%) +119 W (+35%) ULTRA
+```
+
+Both configurations show similar 9-14% sign-bit savings via constant patterns.
+The K=96 ULTRA path uses ~35% more power but delivers ~50% more compute,
+giving net 9% lower energy per FLOP than K=64.
+
+## Confidence (FINAL)
+
+- **HIGH**: Sign-bit savings 10-14% from constant patterns (multi-sample, both K)
+- **HIGH**: K=96 baseline higher than K=64 in absolute terms  
+- **HIGH**: K=96 ULTRA delivers 50% more ops/cycle with ULTRA tile config
+- **HIGH**: K=96 has ~9% better energy/op than K=64 (despite higher power)
+- **MEDIUM**: Mechanism for sign-bit dependence is sign-transition energy in multipliers
+- **REFUTED** (rule #9): "K-uniform-per-N gives 28% savings" - was contaminated baseline artifact
