@@ -308,7 +308,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 - [x] **P1 — Max threads/block**: exactly 1024 (T=1024 OK; T=1025+ →
   CUDA error 1 "invalid argument" at launch). Same architectural
   ceiling as Hopper/Ampere/Volta. Commit history.
-- [ ] **P2 — Max SHMEM / block** at full opt-in: 227 KB or some other limit.
+- [x] **P2 — Max SHMEM/block**: exactly **227 KB** (232448 bytes).
+  228 KB → CUDA error 1. Default (no opt-in) is much lower; full 227 KB
+  requires `cudaFuncAttributeMaxDynamicSharedMemorySize`. Commit history.
 - [ ] **P3 — Max registers / thread**: 255 limit; what happens at 256?
 - [ ] **P4 — Max register spill** depth before crash.
 - [ ] **P5 — Max LMEM** size per thread.
