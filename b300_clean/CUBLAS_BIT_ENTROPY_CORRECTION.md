@@ -435,3 +435,52 @@ For deployment on B300:
 So modern INT4 inference is already accessing ~30-40% of available headroom.
 W4A4 gets ~50% of available headroom. Future quantization advances toward
 2-bit/1-bit could approach the 30% ceiling.
+
+---
+
+## Robustness verification: hardware ceiling is value-independent
+
+Tested A=B=const for 10 different constant values:
+
+| Value | TFLOPS |
+|-------|-------:|
+| 0x0000 (0) | 2253 |
+| 0x3F00 (0.5) | 2252 |
+| 0x3F80 (1) | 2252 |
+| 0x4000 (2) | 2253 |
+| 0x4180 (16) | 2252 |
+| 0x4280 (64) | 2252 |
+| 0x7F7F (3.4e38) | 2252 |
+| 0x8000 (-0) | 2253 |
+| 0xBF80 (-1) | 2252 |
+| 0x4040 (3) | 2253 |
+| 0x0001 (subnormal) | 2253 |
+| 0x7F80 (+Inf) | 2252 |
+| 0x7FC0 (NaN) | **2237** (slight drop, +9-15W extra power for NaN handling) |
+| 0xFF80 (-Inf) | 2252 |
+
+**ANY constant value (except NaN) gives 2252-2253 TFLOPS.** Magnitude, sign,
+specific value don't matter. NaN is slightly slower (~0.7%) due to special
+handling overhead.
+
+## A ≠ B constants
+
+| A val | B val | TFLOPS |
+|-------|-------|-------:|
+| 0.5 | 0.5 | 2252 |
+| 0.5 | 2.0 | 2244 (-0.4%) |
+| 0 | 1 | 2250 |
+| 1 | 0 | 2252 |
+| 16 | -16 | 2252 |
+
+Mixed constants ~99.6% of matched constants. Negligible difference.
+
+## Final verification: hardware ceiling robustness
+
+The 2252 TFLOPS BF16 hardware ceiling is **VALUE-INVARIANT** when both operands
+are constant. The mechanism is purely "no per-cycle bit toggle" → no power → no throttle.
+
+This robustly verifies:
+1. The TRUE hardware ceiling is ~2252 TFLOPS BF16 (vs cuBLAS spec 2242)
+2. The cuBLAS spec is power-throttling-limited
+3. Any data with low per-cycle entropy approaches this ceiling
