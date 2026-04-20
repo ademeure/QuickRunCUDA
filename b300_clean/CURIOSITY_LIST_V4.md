@@ -23,17 +23,20 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   the throughput delta.
 - [ ] **A5 — Predicate register file**: how many predicates can be live?
   Push past 7 to see spill behavior.
-- [ ] **A6 — Per-pipe latency table**: real measured cycle latencies for
-  EVERY major pipe (FFMA, FFMA-fast, IMAD, ULDC, LDG-cached, LDG-uncached,
-  MUFU, MIO, branch). Reference table for nvcc-cost-modeling.
+- [x] **A6 — Per-pipe latency table**: measured for 13 op types at 1500 MHz.
+  ALU pipe (0.5/SMSP/cy): LOP3/IADD3/SHF/PRMT/BFI. XU (0.125/cy): BREV/
+  POPC/CLZ. LSU (0.25/cy): SHFL. FFMA 0.66/cy at 2 warps (→ 0.98 at 4+).
+  See `b300_clean/A6_PER_PIPE_REFERENCE.md`. Commit: this batch.
 - [ ] **A7 — Active mask transition cost**: warp diverges then reconverges;
   measure cost of BSSY / BSYNC.
 - [ ] **A8 — SETP throughput**: how many predicate sets per cycle per warp.
 
 ## B. Pipe interleaving + ILP at pipe-level
 
-- [ ] **B1 — FFMA + IMAD parallel issue**: throughput of mixed kernel vs
-  sum-of-isolated. Find which pipes are truly parallel.
+- [x] **B1 — FFMA + IMAD parallel issue** (partial — IADD3 used): mixed
+  FFMA+IADD3 only 14.2% overlap (unified cluster). FFMA+SHFL 14.7%.
+  FFMA+MUFU ~100% (per commit 8012b98). Issue-port duration > pipe diversity.
+  See `b300_clean/A6_PER_PIPE_REFERENCE.md` + `b300_clean/B1_DUAL_ISSUE_FFMA_IADD3.md`.
 - [ ] **B2 — FFMA + LDG parallel issue**: known classic, but measure exact
   overlap fraction at 1, 2, 4 LDG-per-FFMA.
 - [ ] **B3 — MUFU + FFMA**: catalog says yes; verify and measure overlap.
@@ -55,12 +58,11 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
     0.5/SMSP/cy = 14.16 TIOPS @ 1500 MHz; 3 unique reads = no port penalty.
     See `b300_clean/C3_LOP3_LUT_DEEP.md`.
 - [ ] **C4 — `IADD3` with predicate output**: vs IADD3 + ISETP. Cycle cost.
-- [ ] **C5 — `BREV` (bit reverse)**: throughput, latency. Often-overlooked
-  for radix sort.
-- [ ] **C6 — `POPC` / `FLO`**: throughput, latency.
-- [ ] **C7 — `PRMT` (byte permute)**: 256 modes; when nvcc uses it.
-- [ ] **C8 — `BMSK` (bit field mask gen)**: throughput.
-- [ ] **C9 — `SHF` (funnel shift)**: throughput.
+- [x] **C5 — `BREV`**: 3.54 TIPS_inst at 1500 MHz = 0.125/SMSP/cy (XU pipe, 8 cy/inst). See A6.
+- [x] **C6 — `POPC` / `FLO`**: 3.54 / 3.53 TIPS_inst = same as BREV (XU pipe). See A6.
+- [x] **C7 — `PRMT`**: 14.08 TIPS_inst = 0.5/SMSP/cy (ALU pipe peak). See A6.
+- [x] **C8 — `BMSK`/BFE**: 7.07 TIPS_inst = 0.25/SMSP/cy (XU sub-pipe or ALU-half). See A6.
+- [x] **C9 — `SHF`**: 14.12 TIPS_inst = 0.5/SMSP/cy (ALU pipe peak, L and R identical). See A6.
 - [ ] **C10 — `R2P` / `P2R`**: predicate-to-register conversion cost.
 
 ## D. Memory subsystem ninja
