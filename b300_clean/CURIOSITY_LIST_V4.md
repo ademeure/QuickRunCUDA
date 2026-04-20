@@ -280,8 +280,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 - [x] **O2 — Tensor core warmup**: **NO warmup penalty** for mma.sync.
   First MMA = steady-state MMA (~20 cy inc. clock64 overhead, 16 cy
   pipeline). No need for dummy-MMA warmup. See `b300_clean/O2_TENSOR_WARMUP.md`.
-- [ ] **O3 — Branch density vs back-pressure**: kernel with 50% branches
-  vs 0%.
+- [x] **O3 — Branch density vs back-pressure**: 1st branch +2.7 cy
+  (hides under FFMA per B7), each subsequent +5-6 cy linearly. >2
+  branches/FFMA saturates SMSP issue port. Commit history.
 - [x] **O4 — IMAD wide multiply**: 32x32→64 is 2× IMAD cost, 32x32→32hi
   is 1.9×, 64x64→64 (low) same as IMAD, **__umul64hi is 8.8× SLOWER**
   (emulated). Avoid splitmix64-style PRNGs in hot loops. Commit history.
