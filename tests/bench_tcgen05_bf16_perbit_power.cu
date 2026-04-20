@@ -482,6 +482,27 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 unsigned short ve = h(n_seed_e);
                 unsigned short vo = h(n_seed_o);
                 w = ((unsigned)vo << 16) | ve;
+            } else if (mode >= 3020 && mode <= 3027) {
+                // SINGLE UNIQUE POSITION: 1 sub-tile unique, 7 shared.
+                // mode 3020+P: sub_tile P is unique (using pattern_id P+1), all else use pattern 0.
+                // Tests sticky activation: P=0 activates at start (~full cost),
+                //                         P=7 activates at end (~minimum cost).
+                int P = mode - 3020;
+                int npair = idx % 64;
+                int sub_tile = npair / 8;
+                int pos_in_tile = npair % 8;
+                int pattern_id = (sub_tile == P) ? (P + 1) : 0;
+                int n_seed_e = pos_in_tile * 2 + pattern_id * 100;
+                int n_seed_o = pos_in_tile * 2 + 1 + pattern_id * 100;
+                auto h = [](int nn) -> unsigned short {
+                    unsigned hh = 0xC0FFEE13u ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    return (unsigned short)(hh & 0xFFFF);
+                };
+                unsigned short ve = h(n_seed_e);
+                unsigned short vo = h(n_seed_o);
+                w = ((unsigned)vo << 16) | ve;
             } else if (mode >= 3000 && mode <= 3007) {
                 // POSITION-INVARIANCE TEST: 4 sub-tiles unique, 4 shared (=pattern_id 0)
                 // Different placements:
