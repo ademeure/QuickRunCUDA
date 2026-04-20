@@ -4,9 +4,9 @@
 //   sparsity_pct: 0..100
 //   value_kind: 0=zeros (0x00), 1=all-ones (0xFF), 2=alt (0x55)
 //
-// Arg layout:
-//   u0 = sparsity_pct (0..100)
-//   u1 = (gran<<8) | value_kind
+// Arg layout (so main and init can share):
+//   u0 = iters       (main reads this; init ignores)
+//   u1 = (sparsity_pct<<16) | (gran<<8) | value_kind
 //   u2 = ws_bytes
 //
 // Race-free: each thread emits the FULL value of its assigned word in one shot.
@@ -25,9 +25,10 @@ __device__ __forceinline__ unsigned hash_w(unsigned x) {
 #define UNROLL 32
 #endif
 
-extern "C" __global__ void init(float* A, float* B, float* C, int sparsity_pct, int gran_value, int ws_bytes) {
-    int gran       = (gran_value >> 8) & 0xFF;        // 1, 4, 32, 128
-    int value_kind = gran_value & 0xFF;                // 0, 1, 2
+extern "C" __global__ void init(float* A, float* B, float* C, int u0, int packed, int ws_bytes) {
+    int sparsity_pct = (packed >> 16) & 0xFFFF;
+    int gran         = (packed >> 8) & 0xFF;          // 1, 4, 32, 128
+    int value_kind   = packed & 0xFF;                  // 0, 1, 2
     if (gran <= 0) gran = 1;
     unsigned char rv;
     if (value_kind == 0) rv = 0x00;
