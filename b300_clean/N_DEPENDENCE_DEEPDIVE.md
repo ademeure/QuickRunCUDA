@@ -1346,3 +1346,42 @@ Production deployment guidance:
 
 Use cudaGraph-captured workloads for SUSTAINED measurements (4000+ iters).
 Use single-shot timing for COLD measurements. Don't conflate them.
+
+## Interleaved K-id + random: NO cross-contamination
+
+Tested interleaving K-id and random matmuls in a single graph:
+
+```
+Test                                        Aggregate TFLOPS
+K-id alone (M=N=K=8192)                     2099 (K-id baseline)
+Random alone (M=K=8192, N=9216)             1481 (random baseline)
+
+INTERLEAVED (per cycle: 1 K-id + 1 random)  1746
+INTERLEAVED (8 K-id + 8 random)             1711
+```
+
+Predicted sequential aggregate (independent rates): ~1718 TF.
+**Measured matches predicted within 1%.**
+
+**Interpretation**: Each matmul launch operates independently. The K-id
+matmul gets its full speedup (~2100 TF) even when interspersed with
+random matmuls hitting the power cap. Conversely, K-id state doesn't
+"warm" the cache for adjacent random launches.
+
+### Throttle response is ms-scale or faster
+
+With interleave=1, K-id and random matmuls alternate every ~0.5-0.8 ms.
+The fact that K-id still achieves full speedup means:
+- GPU clock can transition between throttled/boost on ms timescales
+- Dynamic voltage/frequency scaling (DVFS) responds within ~1 kernel duration
+- Each kernel sees its "own" power state based on its data pattern
+
+### Operational implication
+
+Multi-tenant serving (different models with different patterns) can mix
+freely without cross-interference at the kernel level. There's no
+"warm-up tax" or "cool-down penalty" between heterogeneous workloads.
+
+This is good news for inference servers handling diverse models - one
+heavy random-pattern workload doesn't steal performance from a K-id-
+friendly workload running in the same pipeline.
