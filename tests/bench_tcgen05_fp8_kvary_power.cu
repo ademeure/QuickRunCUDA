@@ -202,6 +202,16 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 unsigned char b2 = h(k_group, n_idx_2);
                 unsigned char b3 = h(k_group, n_idx_3);
                 w = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+            } else if (mode >= 6100 && mode <= 6107) {
+                // FP8 SUB-TILE-level sparse zeros: K_zero my-pseudo-sub-tiles = zero, rest random
+                int K_zero = mode - 6100;
+                int n_pack = idx % 32;
+                int sub_tile = n_pack / 4;
+                if (sub_tile < K_zero) {
+                    w = 0;
+                } else {
+                    w = r;
+                }
             } else if (mode >= 3030 && mode <= 3033) {
                 // FP8 SINGLE UNIQUE HW POSITION: HW sub-tile H (0..3) is fully unique
                 // (covers 2 of my pseudo-sub-tiles to match HW 32-byte boundary)

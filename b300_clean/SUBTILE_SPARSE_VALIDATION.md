@@ -77,3 +77,37 @@ the most "compressible" / repeated values; remaining can be arbitrary.
 - HIGH on per-byte sparsity NOT helping (HW dedup is pattern-based, not value-based)
 - HIGH on K_zero=1 being WORSE than K_zero=0 (transition penalty)
 - Provides INDEPENDENT confirmation of BF16 two-half processing
+
+---
+
+## Cross-precision K_zero comparison
+
+Same K_zero sparse-zero pattern tested across all 3 precisions:
+
+| K_zero | BF16 (W) | FP8 (W) | NVFP4 (W) |
+|-------:|---------:|--------:|----------:|
+|      0 (all random) | 611 | 641 | 469 |
+|      4 (Half A zero, Half B random) | **359** | 606 | 476 |
+|      5 (5 zero, 3 random in Half B) | **298 (BASELINE!)** | 558 | 435 |
+
+**Only BF16 shows the dramatic two-half savings** (-313W to baseline).
+FP8 saves only ~83W; NVFP4 saves only ~34W in same configuration.
+
+This further validates that **two-half processing is BF16-specific**.
+For FP8 and NVFP4, sub-tile sparse zeros only give proportional savings
+based on number of sub-tiles affected.
+
+## Updated software optimization for cross-precision
+
+For BF16:
+- Sort B columns so sparse / repeated patterns end up at LOW N
+- Achieves up to 313W save per CTA
+
+For FP8:
+- Sub-tile dedup applies (32-byte boundary)
+- No two-half advantage; spread structure across N evenly
+
+For NVFP4:
+- Sub-tile dedup at 64-N boundary (= 32 bytes)
+- SF entropy adds ~27W independently
+- No two-half advantage

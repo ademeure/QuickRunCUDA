@@ -171,6 +171,16 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                     unsigned char nib = h(n_in_tile + pattern_id * 100);
                     w |= ((unsigned)(nib & 0x0F)) << (4*p);
                 }
+            } else if (mode >= 6100 && mode <= 6107) {
+                // NVFP4 SUB-TILE-level sparse zeros: K_zero my-pseudo-sub-tiles = zero, rest random
+                int K_zero = mode - 6100;
+                int n_pack = idx % 16;
+                int sub_tile = n_pack / 2;
+                if (sub_tile < K_zero) {
+                    w = 0;
+                } else {
+                    w = r;
+                }
             } else if (mode >= 3100 && mode <= 3108) {
                 // PATTERN COUNT for NVFP4: rotating distinct sub-tile patterns 1..8
                 int N_distinct = mode - 3100;
