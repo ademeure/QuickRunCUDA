@@ -19,9 +19,21 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
         smem_A[i] = r;  // A always full random (signs random)
     }
     for (int i = 0; i < 2048; i++) {
-        unsigned r = (i + blockIdx.x * 1024u + 0xC0FFEE00u) * 0x9E3779B1u; r ^= r >> 16; r *= 0x85EBCA6Bu;
+        int k = i / 128;
+        int npack = i % 128;
+        unsigned r;
+        if (mode == 11) {
+            // K-uniform: B varies along N only (same across all K)
+            r = (npack + blockIdx.x * 1024u + 0xC0FFEE00u) * 0x9E3779B1u;
+        } else if (mode == 12) {
+            // N-uniform: B varies along K only (same across all N)
+            r = (k + blockIdx.x * 1024u + 0xC0FFEE00u) * 0x9E3779B1u;
+        } else {
+            r = (i + blockIdx.x * 1024u + 0xC0FFEE00u) * 0x9E3779B1u;
+        }
+        r ^= r >> 16; r *= 0x85EBCA6Bu;
         r &= ~0x7C007C00u; r |= 0x38003800u;
-        if (mode == 1 || mode == 3) r &= ~0x80008000u;  // B positive only
+        if (mode == 1 || mode == 3) r &= ~0x80008000u;
         if (mode == 6 || mode == 7) r = 0u;
         if (mode == 9) r = 0xBF00BF00u;
         if (mode == 8) r = 0x3F003F00u;

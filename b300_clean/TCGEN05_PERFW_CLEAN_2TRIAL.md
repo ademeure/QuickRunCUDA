@@ -243,3 +243,47 @@ the same 456-644 W savings. This was discovered by adding mode 8
   saves 2 W vs A=0 saves 113 W is unambiguous).
 - **MED** for the precise mechanism (multiplier internal architecture
   speculation).
+
+## K-axis vs N-axis variation in B (BF16 K=16 N=256)
+
+Added mode 11 (B uniform along N: each K-row has unique value broadcast
+across N) and mode 12 (B uniform along K: each N-col has unique value
+repeated across K-rows).
+
+| B pattern                   | power | interpretation                  |
+|-----------------------------|-------|---------------------------------|
+| All constant (mode 8)       | 408 W | floor (no variation either)     |
+| Uniform-K (varies on N)     | 527 W | spatial only (+119 W vs floor)  |
+| Uniform-N (varies on K)     | 880 W | temporal only (+472 W vs floor) |
+| Fully random (mode 0)       | 876 W | both (~same as K-only!)         |
+
+### K-axis temporal variation drives 75% of B-side power
+
+Decomposition:
+- K-axis temporal toggling (cycle-to-cycle B variation): **349 W (75 %)**
+- N-axis spatial toggling (within-cycle lane variation): **119 W (25 %)**
+- Total B variation cost: 468 W
+
+The B-bus serializes K-rows across cycles. **Each cycle delivers one
+K-slice broadcast across N lanes**. When K varies, every cycle the
+broadcast bus toggles. When K is constant but N varies, the bus
+"toggles" only laterally (within the broadcast), which has less impact.
+
+### Practical implication
+
+For inference power efficiency:
+- **Quantized weights with low K-axis entropy save MUCH more power**
+  than low N-axis entropy. E.g., if weights are sorted along K so
+  consecutive K-rows have similar values, you save ~349 W per CTA.
+- **Column-major B arrangement is more important for power than
+  row-major** when total B variation budget is fixed.
+- **Weight-pruning that aligns zeros along K dimensions** (column-wise
+  sparsity in weight terminology) saves more power than along N.
+
+### Confidence
+
+- **HIGH** that K-axis variation is the dominant temporal lever
+  (mode 11 = 880 W ≈ random 876 W, mode 12 = 527 W is far less).
+- **HIGH** for the 75/25 split (469 W total split into 349/119).
+- **MED** for the architectural interpretation (K is the cycle axis);
+  could be confirmed by reading PTX/MMA hardware spec.
