@@ -1050,3 +1050,57 @@ data-pattern-dependent.
 Note that even during NCU profiling (which typically runs at reduced clock
 1.71 GHz baseline), the K-id case clocks 11.5% higher than random. The
 HW dedup activates QUICKLY (well within NCU's per-launch sampling window).
+
+## Practical peak achievable in production (random data)
+
+Swept square shapes with random BF16 to find the actual cuBLAS ceiling:
+
+```
+Square shape    Random TFLOPS  Notes
+M=N=K=4096      1402           too small (under-saturated)
+M=N=K=6144      1478
+M=N=K=8192      1477
+M=N=K=12288     1540
+M=N=K=16384     1570
+M=N=K=20480     1577 ← PEAK random
+M=N=K=24576     1567
+M=N=K=28672     1543
+M=N=K=32768     1521
+M=N=K=40960     1468 (memory pressure)
+```
+
+**Practical random-data peak: 1577 TF at M=N=K=20480 (~64% of constant ceiling).**
+
+With structured 2:4 sparsity:
+```
+Shape           2:4 TFLOPS    vs random
+M=N=K=8192      1645          1.11×
+M=N=K=12288     1719          1.12×
+M=N=K=16384     1740 ← PEAK   1.11×
+M=N=K=24576     1735          1.11×
+```
+
+**Practical 2:4-sparse peak: 1740 TF at M=N=K=16384 (+11% over random).**
+
+### Complete practical ceiling table
+
+| Workload | Achievable TFLOPS | % of HW ceiling |
+|----------|-------------------|-----------------|
+| Random BF16 (typical inference) | ~1480-1577 | 65-70% |
+| 2:4 structured sparse BF16 | ~1645-1740 | 73-77% |
+| K-id synthetic (impossible) | ~2098 | 93% |
+| Full constant (impossible) | ~2253 | 100% (HW ceiling) |
+
+### Reference shapes for practical peak
+
+For peak random throughput:
+- Use square shapes around M=N=K=16384-20480
+- Shapes >32K decline due to L2/HBM pressure
+- 256-aligned dimensions matter (~3% effect)
+
+For peak with structured sparsity:
+- Same shape range (16K)
+- Requires actual 2:4 weight pattern (real models can have this via pruning)
+
+This is the OPERATIONAL guidance for B300 deployment - what you can
+actually expect, not the theoretical or synthetic numbers.
