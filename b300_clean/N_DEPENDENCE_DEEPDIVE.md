@@ -264,3 +264,57 @@ This means in real ML inference, you cannot get throttle relief by
 making the activation tensor (often A in cuBLAS NN convention) low-entropy.
 You'd need the WEIGHT tensor (B) to have the K-id-like structure AND the
 shape to fall in N ∈ {K/2, K, 2K}. The combination is rare in practice.
+
+## Transposition asymmetry: confirms memory-access mechanism
+
+Tested all 4 trans_A × trans_B combinations at M=N=K=8192 (cublas_trans):
+
+```
+trans_A trans_B mode  TFLOPS  Speedup
+0       0       rand  1493
+0       0       Kid   2111    1.41×  ← FULL SPEEDUP
+1       0       rand  1495
+1       0       Kid   2100    1.40×  ← FULL SPEEDUP
+0       1       rand  1502
+0       1       Kid   1567    1.04×  ← NO SPEEDUP
+1       1       rand  1501
+1       1       Kid   1565    1.04×  ← NO SPEEDUP
+```
+
+**Transposing B (transB=1) completely kills K-id speedup** even at N=K=8192!
+trans_A flag has no effect. The mechanism cares about how B is read from memory.
+
+### Why transposition matters
+
+The fill_krow_id pattern fills `data[k*N + n] = f(n)` (treating data as
+row-major K×N). cuBLAS interprets this as:
+
+- **transB=0**: B[k,n] = data[k + n*K]. With K=N, reduces to f(k) for each n.
+  Reading B[k,n] for fixed n, varying k: addresses k=0,1,2,..., stride 1.
+  All loads return SAME value → HW dedup detects → multiplier gated → boost stays.
+
+- **transB=1**: B[n,k] = data[n + k*N]. With K=N, reduces to f(n) for each k.
+  Reading B[n,k] for fixed n, varying k: addresses n, n+N, n+2N, ..., stride N.
+  Loads at stride-N return DIFFERENT memory locations (different f values for
+  same logical "column" because gather-style access). HW dedup doesn't activate.
+
+### Mechanism: memory-access pattern, not logical data pattern
+
+The HW dedup cache tracks "is current sub-tile bit-identical to recent loads?"
+This requires:
+1. Memory access pattern that returns same value on consecutive loads
+2. Such patterns have specific shape requirements (N ∈ {K/2, K, 2K} maps the
+   dedup cache window to either 1 or 2 unique sub-patterns per N-tile)
+
+The N=K rule + transB asymmetry together prove this is a **memory-access-level
+power gating mechanism**, not a higher-level pattern detector.
+
+## Practical strict bounds
+
+For a real ML workload to hit this speedup window:
+- Weight tensor (B in cuBLAS NN) must be column-constant in memory
+- Memory layout must be K-stride-1 (transB=0)
+- Shape must be N ∈ {K/2, K, 2K}
+
+The COMBINATION is essentially never satisfied in practice. Confirms that
+practical inference benefit is ~2-6%, NOT 40%.
