@@ -189,6 +189,8 @@ Provenance documents:
 | A vs B zero asym | A_B_ZERO_ASYMMETRY.md | A=0 saves 121W, B=0 saves 313W (full gating) |
 | Latency data-indep | LATENCY_DATA_INDEPENDENT.md | per-MMA timing IDENTICAL across patterns - dedup is power-only |
 | **PRACTICAL: 18% gain** | PRACTICAL_THROUGHPUT_GAIN.md | Structured B at boost = 4.06s vs random 4.78s (avoids 1590MHz throttle) |
+| **Power cap sweep: 2.09× at 400W** | PRACTICAL_THROUGHPUT_GAIN.md (appendix) | Optimization speedup grows as cap tightens: 1.18x@1100W → 2.09x@400W |
+| Per-SM scaling | PER_SM_POWER_SCALING.md | 3.1W per SM random, 1.0W per SM const, linear up to 148 |
 
 ---
 
