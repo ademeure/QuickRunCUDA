@@ -56,6 +56,9 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
             } else if (mode == 1700) {
                 // A = constant +1.0
                 w_a = 0x3F803F80u;
+            } else if (mode == 1799) {
+                // A = all zero (special test for A-side gating)
+                w_a = 0u;
             } else if (mode >= 1701 && mode <= 1710) {
                 // A K-vary: K_unique values across K dim, same across M (broadcast test)
                 int K_unique_k = 1 << (mode - 1700);  // 2,4,8,...
