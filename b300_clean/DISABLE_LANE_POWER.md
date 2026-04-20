@@ -116,3 +116,27 @@ For BF16 m128n128 with N columns to disable:
 - N_disabled × 2.4 W = power saved
 - Cycle count UNCHANGED (still 64 cy/MMA)
 - Combined with sub-tile dedup: see composition table above
+
+---
+
+## Maximum power reduction extremes
+
+| Configuration | Power (W) | Reduction from random |
+|---------------|----------:|----------------------:|
+| Random A & B (baseline) | 610 | 0% |
+| K-row grouping K_unique=2 + sub-tile-friendly + half disabled | **254** | -58% |
+| B all-zero + half disabled | **224** | -63% |
+| B all-zero + ALL disabled (mostly idle) | ~199 (extrapolated from Tier A 294 - 95) | -67% |
+| GPU idle | ~150 | -75% |
+
+**Realistic best case for active GEMM**: 254W = 58% reduction from random baseline.
+
+This is achievable with:
+1. Quantize B to fit ≤16 unique values per K-row sub-tile (free dedup)
+2. Sort K rows so consecutive rows match (K-row dedup ~+5W per BF16)
+3. Pre-compute and disable unused output columns (sparse attention)
+
+For a 1100W TDP GPU under random-data load:
+- Standard cuBLAS: ~610W per CTA × 148 SMs / 2 (cluster) = ~45000W theoretical (clamped)
+- With optimization: ~254W per CTA = ~19000W theoretical
+- Power cap allows higher clock for the optimized version → MORE perf at same wattage
