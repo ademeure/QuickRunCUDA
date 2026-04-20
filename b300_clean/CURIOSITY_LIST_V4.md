@@ -130,8 +130,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 
 ## F. Sync primitive deep ninja
 
-- [ ] **F1 — `bar.sync 0..15`**: 16 named barriers per CTA. Independent
-  arrival/wait combos.
+- [x] **F1 — `bar.sync 0..15`**: 16 named barriers ARE independent
+  resources (~31 cy each for 128 threads). Different IDs don't share.
+  Cost adds linearly when multiple per iter. Useful for SW pipelines.
+  Commit history.
 - [ ] **F2 — `bar.warp.sync` arbitrary mask** vs `__syncwarp(0xFFFFFFFF)`.
 - [ ] **F3 — `mbarrier.arrive_drop`** semantic: when does it actually drop?
 - [ ] **F4 — Cluster barrier with subset of CTAs**: can you have 2/4 CTA
