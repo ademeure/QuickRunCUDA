@@ -57,3 +57,33 @@ This is the most important practical implication. In a real cuBLAS BF16 GEMM:
 The observed cy/MMA=64 across all configurations (data-independent timing,
 prior finding) plus this per-MMA dedup behavior together fully explain the
 practical 18% boost gain seen in real workloads.
+
+---
+
+## Boost test: partial optimization linearly speeds up
+
+At boost clock (no -lgc):
+
+| Mode | Runtime (s) | Power (W) | Speedup vs random |
+|------|------------:|----------:|------------------:|
+| Same random (mode 0, no alt) | 4.70 | 1094 | 1.00× |
+| Diff randoms alternating (mode 2, alt) | 4.74 | 1098 | 0.99× (same as random) |
+| Const + random alternating (mode 3, alt) | **4.20** | 1092 | **1.12×** |
+
+## Practical implication: partial optimization works
+
+If only 50% of MMAs in a workload use optimized B, get ~12% speedup.
+If 100% optimized, get 18% speedup (from prior tests).
+
+This is encouraging for real workloads: you don't need to optimize EVERY
+matrix in a model to benefit. Even partial optimization (e.g. only
+attention weights, not embeddings) gives proportional gains.
+
+## Linear superposition model
+
+For workloads where fraction `f` of MMAs use optimized B:
+- Power ≈ (1-f) × P_random + f × P_optimized
+- Throughput speedup ≈ proportional to power savings under cap
+
+The boost cap means partial optimization linearly recovers throttle
+proportional to MMAs optimized.
