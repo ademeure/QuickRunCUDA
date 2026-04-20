@@ -75,3 +75,31 @@ The MAGNITUDE differs because:
 - HIGH on per-MAC equivalence (algebra checks out)
 - MEDIUM on the absolute mma.sync utilization (depends on occupancy)
 - LOW on whether other mma.sync shapes (m16n16k16, m8n8k4) behave same
+
+---
+
+## mma.sync FP8 e4m3 m16n8k32 — same dedup mechanism
+
+| Mode | A | B | Power (W) |
+|------|---|---|----------:|
+| 0 | const +1.0 | const +1.0 | 197 |
+| 1 | const | random | 240 (+43) |
+| 2 | random | const | 218 (+21) |
+| 3 | random | random | 251 (+54) |
+| 4 | const | zero | 195 |
+| 5 | zero | zero | 190 |
+
+A vs B asymmetry: 22W (B random +43, A random +21).
+
+vs BF16 mma.sync (m16n8k16):
+- BF16 random gap: +31W
+- FP8 random gap: +54W (~75% more)
+- Reason: FP8 has K=32 (2x more multiplier work per inst)
+
+**Dedup mechanism is precision-INDEPENDENT** — present in both BF16 and FP8
+mma.sync. The fundamental BF16/FP8 multiplier hardware shares the same
+dedup capability.
+
+cy/inst:
+- BF16 mma.sync: 24.4 cy
+- FP8 mma.sync: 31.79 cy (FP8 has K=32 vs BF16 K=16)
