@@ -885,3 +885,38 @@ The full rule is now:
 
 ALL FIVE conditions required for the full 1.42× speedup. Real workloads
 satisfy NONE of conditions 1-4 simultaneously, let alone the data structure.
+
+## Sparsity dip explained: pattern-detector thrashing
+
+Power measurement during sustained sparse workloads at N=K=8192:
+
+```
+Sparsity   Clock     Power     TFLOPS    Notes
+0% dense   1492 MHz  796 W     1480      baseline (random)
+30% sparse 1382 MHz  943 W     1410      DIP — power INCREASES
+90% sparse 1596 MHz  695 W     1730      efficient — zero shortcuts dominate
+```
+
+**At 30% sparsity, power goes UP not down!** The mixed zero/nonzero pattern
+causes the multiplier's pattern-detection circuits to thrash trying to
+recognize structure, consuming MORE energy than purely random data.
+
+The U-shape mechanism:
+- 0% (all random): detector finds nothing, baseline circuit activity
+- 30% (mixed):     detector thrashes, MAX activity → power +18%
+- 90% (sparse):    zero-mult shortcuts dominate, power -13%
+- 100% (all zero): full gate, power minimum
+
+This explains the counterintuitive 5% throughput regression at 30-50% random
+sparsity: the GPU power-caps harder than dense because mixed patterns are
+the WORST case for the detection circuits.
+
+### Implication
+
+Pruning algorithms that produce 30-50% RANDOM sparsity DEGRADE dense GEMM
+throughput. To benefit, sparsity must be either:
+- > 75% (zero shortcuts dominate), OR
+- STRUCTURED (predictable positions, e.g., 2:4)
+
+Random unstructured pruning is the worst case. NVIDIA's marketing of 2:4
+sparsity is genuinely correct: structured zeros work, random zeros hurt.
