@@ -872,3 +872,57 @@ FP8 has its own ceiling at ~4420 TF.
 
 The convergence proves: the hardware ceiling is multiplier-bound, not accumulator-bound.
 Any optimization that reduces multiplier work approaches this ceiling.
+
+---
+
+## Adversarial / extreme data patterns
+
+| Pattern | TFLOPS | vs mantissa-random |
+|---------|-------:|-------------------:|
+| Constant (any value) | 2252 | 1.34× |
+| **FULL 16-bit random (sign+exp+mant)** | **1418** | **0.84× (WORSE)** |
+| Sign + mantissa random, exp=126 | 1502 | 0.89× |
+| **Mantissa-only random (typical baseline)** | 1684 | 1.00× |
+| All NaN | 1786 | 1.06× |
+| All subnormal | 1952 | 1.16× |
+| Alternating Inf-zero | 2235 | 1.33× |
+
+## Surprising findings
+
+1. **FULL 16-bit random is the WORST case** (1418 TF, 58% of theoretical)
+   - Includes random exp bits → wide magnitude range → more multiplier work
+   - This is likely the cuBLAS spec measurement scenario
+
+2. **Random NaN is 6% FASTER than typical mantissa random**
+   - NaN propagation might be detected and short-circuited
+   - Or NaN's specific bit pattern (0x7Fxx) has lower entropy
+
+3. **Subnormals are 16% FASTER**
+   - Subnormal exp = 0 (single value), only mantissa varies
+   - Less bit toggling than normal random
+
+4. **Alternating Inf-zero is 33% FASTER**
+   - Only 2 unique values (0x0000 and 0x7F80)
+   - Limited bit toggle activity, similar to constant
+
+## Total throughput range
+
+Worst (full 16-bit random) vs best (constant):
+- 1418 → 2252 TFLOPS
+- **1.59× speedup** = full optimization potential
+- Even bigger than my earlier 1.34× (mantissa-random→const) estimate
+
+For LLM inference deployments where weight distribution may include:
+- Random sign (typical) → -10% throughput  
+- Random exp (rare in trained models) → -16% throughput
+- Random mantissa (typical) → baseline
+
+So pure mantissa-random workloads represent the "good" case. Full 16-bit
+random is degenerate and unrealistic for trained models.
+
+For trained Llama weights:
+- Sign mostly random (50/50)
+- Exp narrow distribution (most values near zero, exp ~125-127)
+- Mantissa random
+- Closer to "sign+mantissa random" pattern → ~1502 TF baseline
+- INT4 quantized: ~1860 TF (1.24× from baseline)
