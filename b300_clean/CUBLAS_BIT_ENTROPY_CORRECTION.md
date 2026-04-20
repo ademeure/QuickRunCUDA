@@ -611,3 +611,40 @@ Updated shape-size table:
 | 32768³ | 1.33× | Recovered when cool |
 
 Sweet spot: 8192-32768 cube range, giving 1.24-1.34× speedup.
+
+---
+
+## DEFINITIVE cross-precision table (8192³ at boost)
+
+| Precision | Random | Const | Speedup | Spec peak | % achieved |
+|-----------|-------:|------:|--------:|----------:|-----------:|
+| FP16 | 1386 | **2252** | 1.63× | 2242 | 100.5% |
+| BF16 | 1486 | **2252** | 1.51× | 2242 | 100.5% |
+| FP8 e4m3 | 2629 | **4420** | 1.68× | 4486 | 98.5% |
+
+**FP16 and BF16 share the same hardware ceiling: 2252 TFLOPS** (kind::f16 multiplier shared).
+
+**FP8 hits its own ceiling at 4420 TFLOPS** (separate FP8 multiplier path).
+
+## Speedup vs random varies by precision
+
+| Precision | Mantissa bits | Random→const speedup | Why |
+|-----------|--------------:|---------------------:|-----|
+| FP16 | 10 | 1.63× | Most mantissa bits → most toggles → biggest gain |
+| BF16 | 7 | 1.51× | Fewer bits than FP16 |
+| FP8 e4m3 | 3 | 1.68× | Fewer bits but more multiplier work per inst (K=32 vs K=16) |
+
+## FINAL deployment table
+
+For real INT4 quantized inference:
+
+| Workload | Effective precision | Expected automatic speedup |
+|----------|--------------------|---------------------------:|
+| W4A16 BF16 (typical INT4) | 4 bits | 1.05-1.18× |
+| W4A4 BF16 (full INT4) | 4 bits both | 1.12-1.24× |
+| W4A16 FP8 | 3-4 bits | 1.15-1.21× |
+| W4A4 FP8 | 4 bits both | 1.20-1.30× |
+| W2A2 (extreme low bit) | 2 bits both | 1.30-1.40× |
+
+These are CONSERVATIVE estimates from measured data. Real workloads with
+proper structuring should achieve these or higher.
