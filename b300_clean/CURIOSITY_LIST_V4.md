@@ -114,7 +114,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   See `b300_clean/D9_E4_LDG_ATOM_SASS.md`.
 - [ ] **E5 — Atomic across L2 partitions**: latency penalty when address
   hashes to "far" partition.
-- [ ] **E6 — atomicMin/Max FP throughput** vs atomicAdd.
+- [x] **E6 — atomicMin/Max FP throughput**: int min/max 10.5 Gops/s
+  (33% FASTER than atomicAdd float 7.9 Gops/s). atomicCAS-based min
+  2.4× slower than native atomicMin. half atomic ≈ float (no benefit).
+  Commit history.
 - [ ] **E7 — sysmem atomics**: cudaAtomic on host-mapped memory.
 - [ ] **E8 — atomic w/ fence release/acquire** SASS effect.
 
