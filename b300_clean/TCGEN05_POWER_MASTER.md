@@ -195,6 +195,8 @@ Provenance documents:
 | M dimension halves | M_DIMENSION_HALVES.md | BF16 halves preserved at M=64 (N-direction structural) |
 | Cross-MMA dedup | CROSS_MMA_DEDUP.md | Per-MMA only; alt MMAs avg the powers; partial opt gives 12% gain |
 | Power floor | POWER_FLOOR.md | 287W absolute minimum for 148 SMs of active tcgen05 |
+| **cuBLAS real GEMM** | CUBLAS_REAL_VALIDATION.md | **1.49× speedup in cuBLAS BF16 8192³ (2139 vs 1432 TFLOPS)** |
+| Sub-tile partial break | SUBTILE_PARTIAL_BREAK.md | Linear ~19W per broken byte; first byte +32W activation |
 
 ---
 
