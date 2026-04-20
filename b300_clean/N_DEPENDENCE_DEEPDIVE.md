@@ -145,3 +145,59 @@ boost level. Don't trust prior measurements without clock verification.
 | Full-const universal | extreme2 0 0 | Flat 2218-2262 TF across all N |
 | K=6144 scaling | tested N=K, 2K | Works when N aligned, NOT inherently broken |
 | Clock state | nvidia-smi during run | 1005 MHz contamination ruled out post-rgc |
+
+## NCU verification: pure clock throttle mechanism
+
+Captured cycle/instruction counts at N=K vs N=K+32:
+
+| Metric | N=8192 (1.46×) | N=8224 (1.00×) | Ratio |
+|--------|----------------|----------------|-------|
+| TFLOPS | 2096 | 1441 | 1.45× |
+| sm__cycles_active | 137.0M | 140.4M | 1.02× (work scales with N) |
+| sm__pipe_tensor_cycles_active | 536.9M | 553.6M | 1.03× (work scales) |
+| smsp__inst_executed | 23.4M | 24.2M | 1.03× (work scales) |
+
+**Cycles and instructions are essentially IDENTICAL** (~3% scaling matches the
+N=8224/N=8192 ratio of 1.004×, plus partial-tile overhead).
+
+TFLOPS difference of 45% is **purely clock frequency**:
+- N=8192: clock stays at boost ~2032 MHz → 2096 TF (HW gates multiplier on detection)
+- N=8224: clock drops to ~1400 MHz → 1441 TF (multiplier stays hot, hits power cap)
+- Expected ratio: 2032/1400 = 1.45× ✓ matches measured
+
+This conclusively places the mechanism at HW data-dependent power throttle,
+NOT compute-time reduction. Same kernel, same instruction count, same cycles -
+only clock differs based on whether HW dedup detects the pattern.
+
+## FP8 confirmation: precision-independent
+
+Same N-dependence pattern at FP8:
+```
+N      Random  K-id    Speedup
+8192   2622    4062    1.55×  ← speedup
+9216   2607    2655    1.02×
+12288  2620    2690    1.03×
+16384  2619    4059    1.55×  ← speedup
+24576  2608    2689    1.03×
+32768  2607    2699    1.04×
+```
+FP8 K-id at N=K: 4062 TF = 90% of FP8 spec peak (4500 TF).
+
+## Boundary sharpness: razor-sharp at exactly N=K
+
+```
+N=8128  1475 TF (no speedup)       N=8160  1472 TF (no speedup)
+N=8192  2100 TF (FULL SPEEDUP)
+N=8224  1439 TF (no, slight degr)  N=8256  1443 TF (no)
+```
+
+Off by exactly one tile_N (32 elements) → total speedup loss.
+M variation is far more tolerant: M=K±32 still gives ~95% of peak speedup.
+
+## Asymmetry: M is "outer", N is "inner" in scheduling
+
+The M direction tolerates variation; N requires exact alignment because:
+- B operand is loaded indexed by N (B[k][n])
+- The K-id pattern has all K rows = f(n)
+- HW dedup detects identical-row content via (m, n) coordinate hash
+- Misalignment in N shifts the cyclic pattern; misalignment in M doesn't
