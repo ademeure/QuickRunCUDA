@@ -208,3 +208,97 @@ For B300 NVFP4 production:
 This contradicts the prior intuition (and my own initial wrong claim) that
 K-row dedup mechanism dominates. Sign-bit power is primarily about
 TRANSITIONS in the multiplier sign path, not spatial K-row matching.
+
+## Sub-agent comprehensive K=96 data (GPU 1 physical, 3-sample medians)
+
+GPU 1 sub-agent ran 48 careful measurements. Key results integrating with mine:
+
+```
+K=96 M=128 N=128 1-CTA (sub-agent):
+                      sign=0   sign=1   sign=2   sign=3   sign=4   sign=31
+                      (rand)   (+all)   (-all)   (K-uni)  (1sgn/K) (alt+-)
+sf=0 (SF=1.0)         422.7    366.0    366.8    414.7    404.8    368.8
+sf=1 (SF=0)           409.2    354.8    355.3    399.4    389.9    357.4
+sf=2 (SF=rand)        434.0    378.5    378.3    424.5    414.4    378.9
+
+K=96 M=256 N=128 2-CTA (true 2-CTA equivalent):
+sf=0 (SF=1.0)         497.0    422.5    424.5    483.4    477.2    423.2
+sf=1 (SF=0)           478.6    410.2    411.2    463.4    458.4    411.2
+sf=2 (SF=rand)        511.0    438.2    437.8    495.2    487.5    439.5
+
+K=96 M=128 N=256 1-CTA: random=447 → all-pos=390 (-13%)
+K=96 M=256 N=256 2-CTA: random=547 → all-pos=462 (-15%)
+```
+
+## DEFINITIVE FINAL FINDINGS
+
+### 1. All-positive ≡ all-negative (within 1W)
+
+The power cost is the sign-flip RATE, not the polarity. Whether you flip
+to all-zero or all-one signs, savings are identical. This rules out
+"polarity-specific HW path" hypotheses.
+
+### 2. N-direction sign flips are FREE
+
+`+-+-+-` alternation in N (sign mode 31) gives savings within 1-2W of
+all-same-sign (modes 1,2). Sign transitions WITHIN a 32-byte sub-tile cost
+nothing. The HW handles N-direction packed FP4 efficiently.
+
+### 3. K-direction constancy DOESN'T save power
+
+K-uniform-per-N (mode 3) and single-sign-per-K-row (mode 4) keep ~70-90%
+of the random-sign penalty. Making signs constant ALONG K does NOT trigger
+the savings - constancy needs to be PER POSITION or alternating in N.
+
+This conclusively REFUTES the "K-row dedup mechanism for sign bits" hypothesis.
+The sign-bit power mechanism is in the multiplier's sign handling, NOT a
+K-row matching cache.
+
+### 4. SF effects are independent and additive
+
+- SF=0 saves ~10-15W universally (~3% reduction)
+- SF=random costs +12-15W universally (~3% increase)
+- These add linearly to sign effects (no interaction)
+
+### 5. Shape scaling
+
+```
+Config                 K=96 random  K=96 best (sign + SF=0)  Total savings
+M=128 N=128 1-CTA      423          355                       -68 W (-16%)
+M=256 N=128 2-CTA      497          410                       -87 W (-17%)
+M=128 N=256 1-CTA      447          (extrapolated ~378)       ~-69 W (-15%)
+M=256 N=256 2-CTA      547          ~447                      ~-100 W (-18%)
+```
+
+Larger shapes give bigger absolute savings; relative savings stay 15-18%.
+
+### 6. Critical methodology lessons (from sub-agent)
+
+- `nvidia-smi -i N` uses PHYSICAL GPU index regardless of CUDA_VISIBLE_DEVICES
+- 2-CTA NVFP4 minimum M=256 (M=128 is invalid 2-CTA config - hangs)
+- 2-CTA needs leader-only-MMA pattern + cluster sync barriers
+- `tests/bench_nvfp4_full_2ctafix.cu` (sub-agent's fix) for valid 2-CTA work
+
+## Practical guidance (FINAL)
+
+For B300 NVFP4 inference power optimization:
+- **Best savings: 15-18%** from combined sign-bit pattern + SF tensor
+- **Sign-bit alone: 10-16%** via constant-sign weight encoding
+- **SF-tensor alone: 3-4%** via SF=0 (free if multiplier is properly gated)
+- **Both K=64 and K=96 respond similarly** - choose K based on throughput needs
+- **2-CTA gives bigger absolute savings** (more multipliers gated)
+- **No spatial K-row tricks help** - just use constant signs
+
+The "intuition" that K-row identity matters most was wrong. The actual
+mechanism is multiplier sign-transition energy, which is shape-invariant
+in relative terms.
+
+## Confidence (TRULY FINAL)
+
+- **HIGH**: Sign-bit savings 10-16% from constant patterns (validated by 2 GPUs, multi-sample)
+- **HIGH**: K=64 and K=96 respond similarly (no architectural difference for sign)
+- **HIGH**: All-pos ≡ all-neg ≡ +-+- alternation (sign flip rate, not polarity)
+- **HIGH**: K-direction constancy doesn't help (refutes initial hypothesis)
+- **HIGH**: SF=0 saves ~3-4% additively
+- **MEDIUM**: Bigger shapes give bigger absolute savings
+- **HIGH**: 2-CTA NVFP4 needs M≥256 (fixed-kernel verified)

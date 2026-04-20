@@ -83,12 +83,12 @@ void kernel(float* A, float* B, float* C, int iters, int sign_mode, int u2) {
     unsigned tsfa_addr = tmem_addr + 128;
     unsigned tsfb_addr = tmem_addr + 256;
 
-    // SF init: ALWAYS UE4M3 1.0 (byte 0x38). Write enough for K=96 (768 bytes per N=128)
-    // 32x32b.x4 = 128 cols per chunk. Need K_segs=K/16 cells per N. Total cells = 128 N × K/16
-    // K=64: 128 cells, K=96: 192 cells. Each cell is 32-bit word = 4 sf bytes.
-    // Write 4 chunks × 128 cols = 512 cells = enough for K=128 (256 needed).
+    // SF init: u2 controls (0=1.0, 1=zero, 2=patterned 0xAA)
     {
         unsigned one_pack = 0x38383838u;
+        if (u2 == 1) one_pack = 0x00000000u;
+        else if (u2 == 2) one_pack = 0x39393939u; // close-to-1.0 alt pattern
+        else if (u2 == 3) one_pack = 0x36363636u; // 0.5
         for (int chunk = 0; chunk < 4; chunk++) {
             unsigned col_base = chunk * 128 + (threadIdx.x * 4);
             unsigned addr = tmem_addr + col_base;
