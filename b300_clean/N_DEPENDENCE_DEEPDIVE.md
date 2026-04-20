@@ -318,3 +318,62 @@ For a real ML workload to hit this speedup window:
 
 The COMBINATION is essentially never satisfied in practice. Confirms that
 practical inference benefit is ~2-6%, NOT 40%.
+
+## HW dedup cache depth: 2 slots, but shape-modulated
+
+Tested data with K-period structure (B has 'period' distinct row patterns
+repeating along K axis). At M=K=8192:
+
+```
+N=K=8192:
+  period=1 (K-id):              2104 TF  ← 1.42× FULL SPEEDUP
+  period=2 (alternating AB):    2101 TF  ← 1.42× FULL SPEEDUP
+  period=3 (cyclic ABC):        1516 TF  ← NO speedup
+  period=4 (cyclic ABCD):       1523 TF  ← NO speedup
+  period=8 onwards:             ~1480 TF (random baseline)
+
+N=2K=16384:
+  period=1:  2082 TF  ← FULL SPEEDUP
+  period=2:  1527 TF  ← NO SPEEDUP (cache exhausted by 2 concurrent N-tiles)
+  period=3:  1518 TF  ← NO
+
+N=K/2=4096:
+  period=1:  2073 TF  ← FULL SPEEDUP
+  period=2:  2071 TF  ← FULL SPEEDUP (less concurrent pressure)
+```
+
+### Key insights
+
+1. **Dedup cache holds 2 unique sub-patterns max** at single N-tile
+   (period=1 and period=2 both work at N=K).
+
+2. **Cache pressure is shape-modulated**: at N=2K, two concurrent N-tile
+   workloads compete for the cache slots. Period=1 (single pattern)
+   fits in 1 slot leaving room; period=2 (two patterns per N-tile) ×
+   2 concurrent N-tiles = 4 slots needed → exhausted.
+
+3. **Period ≥ 3 NEVER works**, regardless of shape.
+
+### Practical implication
+
+For real ML data to trigger throttle relief:
+- Weight tensor MUST have ≤ 2 distinct K-row patterns
+- AND shape must be in N ∈ {K/2, K} (not even 2K for non-trivial patterns)
+- AND transB=0 layout
+
+Real LLM weight matrices have full bit-entropy → period would need to be
+the full K (no repetition) = effectively period→∞ → no speedup.
+
+### Implied HW structure
+
+The B-side power-gating circuit appears to maintain a tiny content-addressable
+cache (2 entries per byte position?). When current load matches a cached
+sub-tile, multiplier circuits stay gated and clock stays at boost. When the
+cache misses (3rd unique pattern arrives), all circuits energize and power
+draw rises, triggering throttle.
+
+This is consistent with the prior 32-byte sub-tile dedup model, refined:
+- Sub-tile granularity: 32 bytes (16 BF16 / 32 FP8 / 64 NVFP4)
+- Cache depth per sub-tile: 2 entries
+- Replacement: likely LRU
+- Activation: persistent within K-row pass; resets between batches
