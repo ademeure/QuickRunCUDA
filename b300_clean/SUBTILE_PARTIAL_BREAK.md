@@ -73,3 +73,34 @@ with broken positions, not as a sharp cliff.
 - HIGH on first-byte activation overhead being measurable
 - MEDIUM on the linear fit (not perfect, ~10W residuals)
 - HIGH on the practical implication for partial-match optimization
+
+---
+
+## Symmetric test: sub-tile 0 also broken (mode 6500-6516)
+
+Same as 6400-6416 but ALL sub-tiles (including sub-tile 0) use unique
+patterns for broken positions:
+
+| K_zero | All-broken (W) | Sub-tile-0-baseline (W) | Δ |
+|-------:|---------------:|------------------------:|---:|
+|      0 |            305 |                     305 | 0 |
+|      1 |            334 |                     337 | -3 |
+|      2 |            361 |                     361 | 0 |
+|      4 |            402 |                     405 | -3 |
+|      8 |            471 |                     478 | -7 |
+|     12 |            542 |                     548 | -6 |
+|     16 |            612 |                     611 | +1 |
+
+**ESSENTIALLY IDENTICAL** (within 7W noise across all K_zero values).
+
+## Conclusion: dedup is sub-tile-position-uniform
+
+The cache treats all sub-tiles equally. Whether sub-tile 0 has the
+"baseline" pattern or its own unique pattern doesn't matter. The dedup
+cost depends on per-sub-tile-position differences from the running
+cache state, with all sub-tiles treated symmetrically.
+
+This refines the model: there's no "first sub-tile is special" or
+"reference sub-tile" effect. The dedup is a per-sub-tile compare against
+the cache (or previous sub-tile), with cost proportional to the per-byte
+mismatch count.

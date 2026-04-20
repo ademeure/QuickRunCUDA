@@ -577,6 +577,36 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 } else {
                     w = r;
                 }
+            } else if (mode >= 6500 && mode <= 6532) {
+                // INVERSE PARTIAL: break ALL sub-tiles by varying degree (sub-tile 0 also broken)
+                // K_zero = mode - 6500 N positions per sub-tile differ from THE BASELINE
+                // All 8 sub-tiles use h(n + sub_tile * 100) for broken positions, h(n) for matching
+                int K_zero = mode - 6500;
+                int npair = idx % 64;
+                int sub_tile = npair / 8;
+                int pos_in_tile = npair % 8;
+                int n_pos = pos_in_tile * 2;
+                int n_pos_o = n_pos + 1;
+                auto h = [](int nn) -> unsigned short {
+                    unsigned hh = 0xC0FFEE13u ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    return (unsigned short)(hh & 0xFFFF);
+                };
+                unsigned short ve, vo;
+                // ALL sub-tiles (including 0) use sub_tile-specific value for broken positions
+                int eff_sub_tile = sub_tile + 1;  // ensure sub_tile 0 ALSO uses unique pattern
+                if (n_pos < K_zero) {
+                    ve = h(n_pos + eff_sub_tile * 100);
+                } else {
+                    ve = h(n_pos);
+                }
+                if (n_pos_o < K_zero) {
+                    vo = h(n_pos_o + eff_sub_tile * 100);
+                } else {
+                    vo = h(n_pos_o);
+                }
+                w = ((unsigned)vo << 16) | ve;
             } else if (mode >= 6400 && mode <= 6432) {
                 // PARTIAL SUB-TILE BREAK: K_zero N positions in each sub-tile differ from baseline
                 // K_zero = mode - 6400 (0..32 N positions per sub-tile differ)
