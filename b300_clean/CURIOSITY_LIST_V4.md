@@ -113,7 +113,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 
 ## E. Atomics & RMW edge cases
 
-- [ ] **E1 — atomicAdd misaligned (e.g. ½ word offset)**: error or split?
+- [x] **E1 — atomicAdd misaligned**: HARD TRAP (CUDA error 716
+  "misaligned address"). NOT silently split — atoms must be naturally
+  aligned. 16-bit needs PTX inline asm or CAS emulation. Commit history.
 - [ ] **E2 — atomicAdd b16 packed `__half`** vs scalar throughput.
 - [x] **E3 — atomicCAS contention scaling**: aggregate **FLAT at 1.1
   successful CAS/μs** for any N threads (1-128). Each CAS = ~900 ns
