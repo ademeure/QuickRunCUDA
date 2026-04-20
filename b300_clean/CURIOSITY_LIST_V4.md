@@ -300,7 +300,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 
 ## P. SM-level resource limits
 
-- [ ] **P1 — Max threads / block** boundary: 1024 → exact failure mode.
+- [x] **P1 — Max threads/block**: exactly 1024 (T=1024 OK; T=1025+ →
+  CUDA error 1 "invalid argument" at launch). Same architectural
+  ceiling as Hopper/Ampere/Volta. Commit history.
 - [ ] **P2 — Max SHMEM / block** at full opt-in: 227 KB or some other limit.
 - [ ] **P3 — Max registers / thread**: 255 limit; what happens at 256?
 - [ ] **P4 — Max register spill** depth before crash.
