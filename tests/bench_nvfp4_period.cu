@@ -23,6 +23,7 @@
 
 // Total B SMEM size in unsigned words (8 FP4 per word)
 #define B_SMEM_WORDS (MMA_K * MMA_N / 8)
+#define A_SMEM_WORDS (MMA_K * MMA_M / 8)
 
 extern "C" __global__ __launch_bounds__(32, 1)
 #if CTA_GROUP == 2

@@ -1,41 +1,54 @@
-// MXFP4 e2m1 with block_scale.block32 sign-period sweep (vs NVFP4's block16)
-// FP4 layout: 8 FP4 per word; sign mask = 0x88888888
+// FP16 tcgen05.mma sign-period sweep at M=256 N=256 (2-CTA cluster)
+// Period_size in N direction; non-sign bits held at random
+// Args: -1 period_size
 
 #define MMA_M 256
 #define MMA_N 256
-#define MMA_K 64
-#define SIGN_MASK 0x88888888u
+#define MMA_K 16
+
+#define SIGN_MASK 0x80008000u   // bit 15 of each FP16 in packed unsigned
 
 extern "C" __global__ __launch_bounds__(32, 1) __cluster_dims__(2, 1, 1)
 void kernel(float* A, float* B, float* C, int iters, int period_size, int u2) {
-    __shared__ __align__(1024) unsigned smem_A[3072];
-    __shared__ __align__(1024) unsigned smem_B[3072];
+    __shared__ __align__(1024) unsigned smem_A[2048];
+    __shared__ __align__(1024) unsigned smem_B[2048];
     __shared__ __align__(8)    unsigned long long mbar;
     __shared__ __align__(4)    unsigned tmem_slot;
 
-    int smem_size = MMA_K * MMA_N / 8;  // FP4: 8 per word
-
+    // A: random per-block (M is split between 2 CTAs)
     if (threadIdx.x < 32) {
-        for (int idx = threadIdx.x; idx < smem_size; idx += 32) {
+        for (int i = 0; i < 64; i++) {
+            unsigned idx = threadIdx.x + i * 32;
             smem_A[idx] = 0xDEADBEEFu ^ (idx + blockIdx.x * 1024) * 0xCAFEBABEu;
         }
     }
-    int npacks = MMA_N / 8;
+    // B: each unsigned has 2 FP16. Each CTA fills its B SMEM (1024 words for N=256, K=16, half-N per CTA).
+    // Wait: with 2-CTA M=256 N=256, B is shared across CTAs for the same K, N.
+    // For 2-CTA cluster, each CTA owns its own B SMEM region; cluster-shared via descriptor.
+    // For simplicity: same B fill per CTA (2 CTAs each fill their own B with same period pattern).
+    // Each unsigned word: 2 FP16, indices k * (N/2) + n_pack
+    int npacks = MMA_N / 2;  // 128 packs per K row
+    int total_b_words = MMA_K * npacks;  // 16 * 128 = 2048
     if (threadIdx.x < 32) {
-        for (int idx = threadIdx.x; idx < smem_size; idx += 32) {
+        for (int idx = threadIdx.x; idx < total_b_words; idx += 32) {
+            int k = idx / npacks;
             int npack = idx % npacks;
-            int n_base = npack * 8;
+            int n0 = npack * 2;     // first N in this word
+            int n1 = n0 + 1;        // second N
             unsigned r = 0xDEADBEEFu ^ (idx + blockIdx.x * 1024) * 0x13579BDFu;
             r ^= r >> 16; r *= 0xCAFEBABEu;
-            unsigned val = 0;
-            for (int p = 0; p < 8; p++) {
-                int n = n_base + p;
-                unsigned fp4 = (r >> (p * 4)) & 0x7;  // random non-sign bits
-                int sign = (n / period_size) & 1;
-                fp4 |= (sign << 3);
-                val |= (fp4 << (p * 4));
-            }
-            smem_B[idx] = val;
+            // Random non-sign bits for both FP16s
+            unsigned word = r & ~SIGN_MASK;
+            // Apply signs based on period
+            int s0 = (n0 / period_size) & 1;
+            int s1 = (n1 / period_size) & 1;
+            if (s0) word |= (1u << 15);
+            if (s1) word |= (1u << 31);
+            // Force non-extreme exp to avoid Inf/NaN
+            // FP16 exp at bits 7-14 (excluding sign). Force bit 14 = 0 (exp < 128, finite)
+            word &= ~0x40004000u;  // clear bit 14 of each
+            word |= 0x3C003C00u;   // set exp ~= 124 (small finite values)
+            smem_B[idx] = word;
         }
     }
     if (threadIdx.x == 0) {
@@ -52,28 +65,13 @@ void kernel(float* A, float* B, float* C, int iters, int period_size, int u2) {
     asm volatile("barrier.cluster.arrive.aligned;");
     asm volatile("barrier.cluster.wait.aligned;");
     unsigned tmem_addr = tmem_slot;
-    unsigned tsfa_addr = tmem_addr + 128;
-    unsigned tsfb_addr = tmem_addr + 256;
 
-    {
-        // MXFP4 needs UE8M0 SF (1.0 = byte 0x7F), NOT UE4M3 (0x38)
-        unsigned one_pack = 0x7F7F7F7Fu;
-        for (int chunk = 0; chunk < 4; chunk++) {
-            unsigned col_base = chunk * 128 + (threadIdx.x * 4);
-            unsigned addr = tmem_addr + col_base;
-            asm volatile(
-                "tcgen05.st.sync.aligned.32x32b.x4.b32 [%0], {%1, %2, %3, %4};\n"
-                :: "r"(addr), "r"(one_pack), "r"(one_pack), "r"(one_pack), "r"(one_pack));
-        }
-    }
-    asm volatile("tcgen05.wait::st.sync.aligned;");
-    __syncthreads();
-
-    // MXFP4 (E2M1 = format 5) with block_scale.block32. scale_format bit 23 = 1 = UE8M0
-    unsigned idesc = (5U << 7) | (5U << 10)
-                   | (((unsigned)MMA_N >> 3) << 17)
-                   | (1U << 23)                        // scale_format = UE8M0
-                   | (((unsigned)MMA_M >> 4) << 24);
+    // idesc: bf16 = a_format=1 (FP16), b_format=1, c_format=2 (FP32)
+    unsigned idesc = (1U << 4)                      // c_format = F32
+                   | (0U << 7)                      // a_format = FP16
+                   | (0U << 10)                     // b_format = FP16
+                   | (((unsigned)MMA_N >> 3) << 17) // n_dim = 32
+                   | (((unsigned)MMA_M >> 4) << 24); // m_dim = 16
 
     auto desc_encode = [](unsigned long long x) -> unsigned long long {
         return (x & 0x3FFFFULL) >> 4;
@@ -81,23 +79,28 @@ void kernel(float* A, float* B, float* C, int iters, int period_size, int u2) {
     unsigned a_smem_addr = (unsigned)__cvta_generic_to_shared(smem_A);
     unsigned b_smem_addr = (unsigned)__cvta_generic_to_shared(smem_B);
     unsigned long long LBO = 16;
-    unsigned long long SBO = 2 * (unsigned long long)(MMA_M / 2);
+    unsigned long long SBO = 2 * (unsigned long long)(MMA_M / 2);  // per-CTA M
     unsigned long long a_desc = desc_encode(a_smem_addr) | (desc_encode(LBO) << 16) | (desc_encode(SBO) << 32);
     unsigned long long b_desc = desc_encode(b_smem_addr) | (desc_encode(LBO) << 16) | (desc_encode(SBO) << 32);
+    unsigned disable_lane[8] = {0,0,0,0,0,0,0,0};
 
     unsigned long long t0=0, t1=0;
     if (threadIdx.x == 0 && blockIdx.x == 0)
         asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0));
 
     if ((blockIdx.x % 2) == 0 && threadIdx.x == 0) {
-        unsigned scaleC = 0;
+        unsigned enable_d = 0;
         for (int i = 0; i < iters; i++) {
             asm volatile(
-                "{\n\t .reg .pred PRED;\n\t setp.ne.b32 PRED, %4, 0;\n\t"
-                "tcgen05.mma.cta_group::2.kind::mxf4.block_scale.block32 [%0], %1, %2, %3, [%5], [%6], PRED;\n\t}"
+                "{\n\t .reg .pred PRED;\n\t setp.ne.b32 PRED, %12, 0;\n\t"
+                "tcgen05.mma.cta_group::2.kind::f16 [%0], %1, %2, %3, "
+                "{%4, %5, %6, %7, %8, %9, %10, %11}, PRED;\n\t}"
                 :: "r"(tmem_addr), "l"(a_desc), "l"(b_desc), "r"(idesc),
-                   "r"(scaleC), "r"(tsfa_addr), "r"(tsfb_addr) : "memory");
-            scaleC = 1;
+                   "r"(disable_lane[0]), "r"(disable_lane[1]), "r"(disable_lane[2]), "r"(disable_lane[3]),
+                   "r"(disable_lane[4]), "r"(disable_lane[5]), "r"(disable_lane[6]), "r"(disable_lane[7]),
+                   "r"(enable_d)
+                : "memory");
+            enable_d = 1;
         }
         asm volatile("tcgen05.commit.cta_group::2.mbarrier::arrive::one.b64 [%0];"
             :: "r"((unsigned)__cvta_generic_to_shared(&mbar)) : "memory");
@@ -115,7 +118,7 @@ void kernel(float* A, float* B, float* C, int iters, int period_size, int u2) {
 
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         ((unsigned long long*)C)[0] = t1 - t0;
-        printf("MXFP4 M=%d N=%d K=%d cta=2 period=%d cy/MMA=%.2f\n",
+        printf("FP16 M=%d N=%d K=%d cta=2 period=%d cy/MMA=%.2f\n",
                MMA_M, MMA_N, MMA_K, period_size, (double)(t1-t0)/iters);
     }
 }
