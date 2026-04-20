@@ -10,3 +10,8 @@ directory_watcher.log
 sass/
 ncu/
 sweep_results.txt
+
+# Big binary dump files
+int_csv
+raw
+float_csv
