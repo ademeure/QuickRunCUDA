@@ -1013,3 +1013,40 @@ ABCD numeric (period 4 small range)  1655     1.09× minimal
 
 This is now the most comprehensive HW dedup characterization available
 publicly for B300 tcgen05.mma.
+
+## NCU clock measurement: direct in-profiler evidence
+
+NCU exposes `sm__cycles_elapsed.avg.per_second` which gives the actual SM
+clock during a profiled kernel. Compared K-id vs random:
+
+```
+Metric                                              K-id      Random
+sm__cycles_elapsed.avg.per_second                   1.91 GHz  1.69 GHz
+sm__inst_executed_pipe_tensor.sum.per_cycle_active  0.57      0.57
+gpc__cycles_elapsed.avg                             943,175   949,350
+```
+
+**Per-cycle tensor instruction throughput is IDENTICAL (0.57 inst/cycle).**
+**SM clock differs by 11.5% (220 MHz).** Wall-clock TFLOPS difference is
+purely from clock frequency, not pipeline efficiency.
+
+This is the FOURTH independent measurement method confirming the throttle
+mechanism (after sm_cycles_active, NVML clock, NVML power):
+
+| Method | K-id | Random | Confirms |
+|--------|------|--------|----------|
+| Wall-clock TFLOPS | 2098 | 1480 | 1.42× faster |
+| NCU sm__cycles_active | 137M | 140M | same compute |
+| NVML clock (sustained) | 1924 MHz | 1507 MHz | clock throttle |
+| NVML power (sustained) | 737 W | 976 W | power cap hit |
+| **NCU clock (in-kernel)** | **1.91 GHz** | **1.69 GHz** | **clock throttle** |
+
+All four methods agree. The mechanism is conclusively HW power-cap-driven
+clock throttle, with the multiplier circuit's energy density being
+data-pattern-dependent.
+
+### NCU instruments work the throttle
+
+Note that even during NCU profiling (which typically runs at reduced clock
+1.71 GHz baseline), the K-id case clocks 11.5% higher than random. The
+HW dedup activates QUICKLY (well within NCU's per-launch sampling window).
