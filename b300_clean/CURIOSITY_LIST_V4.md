@@ -18,9 +18,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 - [ ] **A3 — Scoreboard slot count**: how many in-flight long-latency
   operations per warp before stall? Test by issuing N independent loads
   with varying N.
-- [ ] **A4 — Register read port count**: design FFMA chains with high port
-  pressure (all unique sources) vs low pressure (reused sources). Measure
-  the throughput delta.
+- [x] **A4 — Register read port count**: **FFMA RF has 2 read ports**;
+  3 distinct sources = 0.61/SMSP/cy vs 1-2 sources = 0.97/SMSP/cy (37% slower).
+  LOP3/ALU pipe at 0.5/SMSP/cy peak doesn't show this (pipe-bound first).
+  See `b300_clean/A4_FFMA_PORT_PRESSURE.md`.
 - [ ] **A5 — Predicate register file**: how many predicates can be live?
   Push past 7 to see spill behavior.
 - [x] **A6 — Per-pipe latency table**: measured for 13 op types at 1500 MHz.
@@ -188,8 +189,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 - [ ] **M1 — `LOP3.LUT` for fused boolean ops**: how many ops can collapse
   into one LOP3?
 - [ ] **M2 — `IADD3` + predicate** for branchless code patterns.
-- [ ] **M3 — `IMNMX` (min/max) throughput**.
-- [ ] **M4 — `FMNMX` (FP min/max) throughput**.
+- [x] **M3 — `IMNMX` (min/max) throughput**: 0.99/SMSP/cy (28 TIPS_inst)
+  for both S32 and U32 → FMA pipe peak (since they take 2 source operands).
+- [x] **M4 — `FMNMX` (FP min/max) throughput**: 0.99/SMSP/cy (28 TIPS_inst)
+  for f32, f32.NaN, f16x2 — all peak. NaN-aware variant has zero overhead.
 - [ ] **M5 — `__viaddmin / __vimax3` SIMD intrinsics**.
 - [ ] **M6 — Saturated ops (`add.sat`, `sub.sat`)** throughput.
 - [ ] **M7 — `bfind` throughput** (bit find).
