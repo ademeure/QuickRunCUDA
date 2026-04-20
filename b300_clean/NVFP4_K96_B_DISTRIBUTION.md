@@ -31,8 +31,24 @@ SF=1.0 vs SF=random for the 5-pos B: 428 → 440 W (+12 W from SF traffic).
 | component             | added W | notes |
 |-----------------------|---------|-------|
 | Magnitude variation   | ~40 W   | 5 pos → 8 pos (5 mags → 8 mags) |
-| Sign bit randomization| ~80 W   | 5 pos → 10 codes (add ± randomly to same 5 mags) |
+| Sign bit randomization| ~80 W   | 8 pos → 16 random (add ± randomly) |
 | Worst-case sign pattern (p_n=64) | +50 W | random → 100% sign-toggle at N-64 stride |
+
+### Verified by direct sanity test
+
+Direct comparison at A=random, SF=1.0, 3 trials median:
+
+| B distribution                              | power W | mantissa | sign     |
+|---------------------------------------------|---------|----------|----------|
+| Constant (any single)                       | 298     | 1 value  | none     |
+| **8 positive only** (sign=0, mantissa random) | **473** | 8 codes  | **all 0**|
+| 7 positive nonzero (sign=0, mantissa 1..7)  | 474     | 7 codes  | all 0    |
+| 16 codes excluding -0 (sign random)         | 555     | 8 mags   | random   |
+| **Full random 16** (sign random)            | **553** | 8 mags   | random   |
+
+**Killing the sign bit saves 80 W.** Same magnitude diversity (8 codes
+on B), the only difference is sign always 0 vs random — costs 80 W.
+Excluding -0 alone vs full random: -2 W (negligible).
 
 Sum: 130 (5 pos floor) + 80 (sign random) + 40 (more mags) + 50 (worst sign) = 300 W active = 450 W total. Matches observed range from 298 W (constant) → 605 W (worst).
 

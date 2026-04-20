@@ -45,6 +45,12 @@ __device__ __forceinline__ unsigned pick_fp4(unsigned byte, int mode) {
         // allowed = {0,2,3,4,5,6,7, 10,11,12,13,14,15}
         static const unsigned char allowed[13] = {0,2,3,4,5,6,7, 10,11,12,13,14,15};
         return allowed[byte % 13u];
+    } else if (mode == 6) {
+        // 8 positive codes only (sign bit always 0)
+        return byte & 0x7u;
+    } else if (mode == 7) {
+        // 7 positive nonzero codes (1..7)
+        return (byte % 7u) + 1u;
     }
     return 0u;
 }
