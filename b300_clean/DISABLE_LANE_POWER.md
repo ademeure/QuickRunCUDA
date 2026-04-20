@@ -51,3 +51,29 @@ remaining 64 N → save 64 × 2.4 = 154W from disable + 250W from sub-tile dedup
 - HIGH on per-column cost (~2.4 W/column)
 - HIGH on full disable = Tier B (not Tier A) - multiplier still active
 - MEDIUM on whether this composes with sub-tile dedup (untested combined)
+
+---
+
+## Composition with sub-tile dedup
+
+Test: combine disable_lane=2 (64 cols disabled) with sub-tile-friendly B:
+
+| Mode | disable=0 (W) | disable=2 (W) | Δ |
+|------|--------------:|--------------:|---:|
+| 200 (random) | 610 | 427 | -183 |
+| 2704 (N_unique=16 dedup) | 304 | 248 | -56 |
+| 2900 (all sub-tiles same) | 304 | 247 | -57 |
+
+When sub-tile dedup is already active, disable_lane saves LESS (-57W vs -183W).
+But final combined power is 247W — BELOW even the Tier B baseline (299W),
+because disable_lane also removes some constant-baseline contribution from
+disabled columns.
+
+## Combined power optimization
+
+Best case: disable + sub-tile-friendly + low entropy:
+- Random data, all 128 cols: 610W
+- Sub-tile-friendly + half disabled: 247W
+- **Total reduction: 363W (60%)**
+
+This combination is realistic for sparse attention + quantized weights.
