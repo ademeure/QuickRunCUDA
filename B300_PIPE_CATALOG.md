@@ -2850,25 +2850,35 @@ Same kernel, varying number of read and write `16x64b.x16` ops per inner-loop it
 
 ## 30.H DSMEM (Distributed Shared Memory) — cluster shared memory access
 
-| op                                              | cy/iter (single ld u32) | notes |
-|-------------------------------------------------|------------------------:|-------|
-| `ld.shared.u32` (local smem)                    | **23.07**               | baseline |
-| `ld.shared::cluster.u32` (DSMEM, cluster_size=4) | **23.26**               | **only 0.8% slower than local!** |
+> **CORRECTION (2026-04-17):** The original "0.8% overhead" claim was wrong due to LICM.
+> The compiler hoisted the DSMEM load before the loop; the loop measured only XOR+branch
+> overhead (~23 cy for both variants). See `investigations/04_dsmem_overhead.md`.
 
-**Validation (correctness)**: each CTA wrote a unique marker `(cluster_ctaid << 24) | 0xABCDEF` to its local smem. After cluster barrier, each CTA used `mapa.shared::cluster.u32` with `target_cta = (cluster_ctaid + 1) % 4` to map the neighbor's smem, then `ld.shared::cluster.u32`. Output table:
+### True numbers (dependent pointer chain, 1 warp, no LICM possible):
 
-| cluster_ctaid | target | local_val (mine) | remote_val (read) | expected |
-|---:|---:|---:|---:|---:|
-| 0 | 1 | 0xabcdef | **0x1abcdef** ✓ | 0x1abcdef |
-| 1 | 2 | 0x1abcdef | **0x2abcdef** ✓ | 0x2abcdef |
-| 2 | 3 | 0x2abcdef | **0x3abcdef** ✓ | 0x3abcdef |
-| 3 | 0 | 0x3abcdef | **0xabcdef** ✓ | 0xabcdef |
+| op | cy/load | notes |
+|----|--------:|-------|
+| `ld.shared.u32` (local smem) | **28** | SASS: `LDS R0,[R0+UR5]`, 5000-iter chain |
+| `ld.shared::cluster.u32` DSMEM, cluster=2 | **224** | SASS: `LD.E R8,[R6]` via global window |
+| `ld.shared::cluster.u32` DSMEM, cluster=4 | **201** | same SASS mechanism |
+| `ld.shared::cluster.u32` DSMEM, cluster=8 | **201** | same SASS mechanism |
 
-All 4 reads matched expected remote (different from local). DSMEM is genuinely accessing remote CTA's smem.
+### Throughput (ILP=4 independent chains):
 
-**DSMEM has essentially zero overhead** vs local smem within a CGA cluster. Use it freely for cross-CTA producer/consumer patterns. The `mapa.shared::cluster.u32` instruction maps a local smem address to a target CTA's smem in the cluster, then `ld.shared::cluster.u32` performs the access. The cost is dominated by the smem path itself, not cluster routing.
+| op | cy/load |
+|----|---------:|
+| Local SMEM ILP=4 | **7.0** |
+| DSMEM ILP=4 | **63.5** |
 
-**Cluster size**: tested with `__cluster_dims__(4, 1, 1)`. B300 supports cluster sizes up to 16 (limited by GPC topology — see "8 GPCs" note above).
+**DSMEM latency: ~8× higher than local SMEM. Throughput: ~9× lower at ILP=4.**
+
+### SASS mechanism: LD.E, not LDS
+
+`ld.shared::cluster.u32` compiles to `LD.E` (global memory load) when the address is in a scalar register. The `mapa` result is combined with `SR_SWINHI` via `PRMT`+`IMAD` to form a 64-bit global address into the peer SM's shared memory window. This is correct hardware behavior — the cost is L2/interconnect routing latency (~200 cy) vs the local shared memory crossbar (~28 cy). The `LDS R,[R+UR]` form appears only if ptxas promotes the mapa result to a uniform register (UR), which requires specific uniformity conditions.
+
+**Validation (correctness)**: still valid. Each CTA wrote a unique marker `(cluster_ctaid << 24) | 0xABCDEF` to its local smem. After cluster barrier, each CTA used `mapa.shared::cluster.u32` with `target_cta = (cluster_ctaid + 1) % 4` to map the neighbor's smem, then `ld.shared::cluster.u32`. All 4 reads matched expected remote values (different from local). DSMEM correctly accesses remote CTA's smem.
+
+**Cluster size**: cluster sizes 2, 4, 8 all measured ~200-224 cy/load. No significant dependence on cluster size observed. B300 supports cluster sizes up to 16 (limited by GPC topology).
 
 ## 30.G Memory fence costs (audited 2026-04-15, refined with pending-writes test)
 
@@ -4636,25 +4646,53 @@ SASS verified: inner loop has `LDC R5, c[0x3][R5]` per iter — real runtime-ind
 
 Use `__brev` or `__clz` over `__popc` when either works. For multi-bit extract, prefer `(x >> n) & mask` (LOP3-foldable) over explicit `__ubfe`.
 
-### Kernel launch overhead (B300, CUDA 13.0, via cuLaunchKernel + events)
+### Kernel launch overhead (B300, CUDA 13.2, clk=2032 MHz, triple-chevron + events)
 
-Near-empty kernel, 1000 launches averaged:
+**Deep-dive investigation:** `investigations/17_launch_latency.md` / `investigations/launch_latency_sweep.cu`
 
-| config | us/launch |
+**CORRECTION:** The earlier "2.05 µs invariant" claim was the GPU **event timer floor**, not a kernel dispatch time. The noop kernel itself executes in **3–4 ns** (confirmed via `%%globaltimer`). The 2–6 µs measured via events is stream command infrastructure, not CTA scheduling.
+
+#### GPU event-bracketed time (event overhead = 2.208 µs floor, included in all numbers)
+
+| config | GPU event time (µs) |
 |---|---:|
-| 1 thread × 1 block | 2.05 µs |
-| 32 × 1 | 2.05 µs |
-| 1024 × 1 | 2.05 µs |
-| 32 × 32 | 2.05 µs |
-| 1024 × 32 | 2.05 µs |
-| 1024 × 148 | 2.05 µs |
+| 1×1 to 148×128 (≤2 048 blocks, any thread count) | **4.2–6.0** (event floor dominates) |
+| 1000×256 | 6.1 |
+| 10 000×128 | 10.2 |
+| 100 000×32 | 55.9 |
+| 100 000×1024 | 74.0 |
+| 1 000 000×32 | 518 |
+| 1 000 000×1024 | 696 |
 
-**2.05 µs = ~3,936 cy** launch floor, consistent regardless of launch config (for trivial kernels). This is the per-launch API + event-synchronize cost. For performance comparison:
-- ~25× a cross-GPU atomic round trip (~78 ns)
-- ~40× a REMOTE fence.sc.sys with minimal data
-- Comparable to a 1-element cudaMemcpy via driver
+**Scaling:** linear above ~4 096 blocks. Slope: **~512 ns/block** (32 thr) / **~692 ns/block** (1024 thr). Thread count has minimal effect — dispatch cost is dominated by CTA count.
 
-**Design implication**: kernels shorter than ~10 µs are launch-overhead-bound. Use CUDA graphs or persistent kernels for very fine-grained work. For QuickRunCUDA server mode, re-launches on the same compiled cubin still pay this 2 µs floor per iteration.
+**Flat region:** 1–2 048 blocks, ~4–6 µs constant — event overhead dominates, all CTAs start within <0.1 µs of each other (globaltimer confirmed).
+
+**Knee:** ~4 096 blocks (32 thr) — GWS slots fill and serialization begins.
+
+#### CPU-side launch call (async, no sync, grid-size invariant)
+
+| variant | CPU call time (µs) |
+|---|---:|
+| `cudaLaunchKernel` / `<<<>>>` / `cudaLaunchKernelEx` | **~1.85** (invariant, 1 to 1M blocks) |
+| `cudaGraphLaunch` (pre-instantiated) | **~1.2** (35% faster, invariant) |
+
+CPU call is grid-size-independent — it only enqueues a command token. `cudaLaunchKernelEx` with `numAttrs=0` is identical to `<<<>>>` within noise.
+
+#### Hardware GWS dispatch throughput (globaltimer, pure GPU scheduler rate)
+
+After the initial SM-filling burst (~2 048 blocks), the Global Work Scheduler serializes:
+- **~2.0 M CTAs/s** (32 thr/block) = 1 CTA per ~1038 GPU cycles at 2032 MHz
+- **~1.4 M CTAs/s** (1024 thr/block) = 1 CTA per ~1450 GPU cycles
+
+This is the retire-and-reissue throughput of the GWS at saturation — not a hardware defect but the natural rate of the CTA lifecycle (dispatch → execute → retire → notify → reissue).
+
+**Design implications:**
+- Kernels with ≤2 K blocks and real work (>2 µs of compute): launch overhead negligible.
+- Kernels with >100 K blocks: plan for 50–700 µs additional GPU dispatch time on top of compute.
+- CUDA graphs save ~35% CPU-side call time; no benefit for large-grid GPU dispatch cost.
+- Multi-stream noop launches serialize (16 concurrent streams = 6.3× longer than 1 stream). True concurrency only when kernels are long enough (>~10 µs) to overlap dispatch.
+- For QuickRunCUDA server mode: the 2 µs floor per iteration is the CPU-side call + event infra (~3–4 µs), not a hard GPU limit.
 
 ### ldmatrix variant throughput (LDSM via bench_ldmatrix_extended.cu)
 

@@ -469,22 +469,35 @@ NOTE: The 128 KB L1 effective size is single-warp; multi-warp may differ due to 
 
 
 
-## DSMEM Bandwidth — RE-TEST FAILED
+## DSMEM Overhead — SETTLED (2026-04-17)
 
-Tried two more rigorous DSMEM tests:
-1. `tests/dsmem_proper.cu`: register-accumulator pattern — compiler statically computed loop body (smem values determined at compile time after init), produced impossible 13 PB/s
-2. `tests/dsmem_cycles.cu`: clock64-based cycle test — output writes failed (uninitialized values returned)
+All prior DSMEM ratios have been superseded by rigorous dependent-chain measurements.
+See `investigations/04_dsmem_overhead.md` for full analysis.
 
-### Conclusion
-Original `tests/dsmem_v2.cu` ratio (4.7× slower DSMEM than local SMEM) is the BEST data we have. The absolute numbers (1000 GB/s remote, 4500 GB/s local) are likely far below true peak SMEM BW (38.5 TB/s aggregate theoretical) but the ratio appears consistent.
+### True numbers (B300, 1920 MHz, SASS-verified dependent chains):
 
-For accurate DSMEM peak measurement, would need:
-- ncu profiling with `dsmem_count` metrics
-- Or kernel using shfl-style data exchange to force sync
-- Or proper warp-issue-rate analysis
+| Metric | Local SMEM | DSMEM | Ratio |
+|--------|-----------|-------|-------|
+| Latency (1 warp, dependent chain) | 28 cy | 201-224 cy | 7.2-8.0× |
+| Throughput ILP=4 | 7.0 cy/load | 63.5 cy/load | 9.1× |
+
+### §30.H "0.8% overhead" claim — WRONG (LICM error)
+The bench_dsmem.cu loop had the DSMEM load hoisted by ptxas before the loop.
+Loop body contained only XOR+branch overhead (~23 cy for both variants).
+SASS of `bench_dsmem_1891246005.sass` confirms: `LDS R3,[R8+UR5]` at address 0x01d0,
+BEFORE loop label `.L_x_0` at 0x01f0.
+
+### Original dsmem_v2.cu "4.7× slower" claim — WRONG FRAMING
+The dsmem_v2.cu result reflects a real latency difference but was measured as a
+bandwidth ratio with a serialized FADD accumulator. True latency ratio is 7-8×.
+
+### SASS mechanism: LD.E (not LDS)
+`ld.shared::cluster.u32` compiles to `LD.E` (global load via shared-memory window)
+on B300 when the address is in a scalar register. The cross-SM routing goes through
+L2/interconnect, costing ~200 cy vs ~28 cy for the local shared memory crossbar.
 
 ### Reliability
-- **DSMEM ratio (4.7× slower than local SMEM): MEDIUM confidence**
-- **Absolute DSMEM 1000 GB/s: LOW confidence — likely under-saturated**
-- **Local SMEM 4500 GB/s: superseded by `tests/shmem_peak.cu` showing 19.85 TB/s**
+- **DSMEM latency 201-224 cy: HIGH** — dependent chain, SASS-verified, stable results
+- **DSMEM/local latency ratio 7-8×: HIGH** — correctly accounts for LICM and serialization errors
+- **DSMEM throughput ILP=4 63.5 cy/load: HIGH** — consistent across 11 successful runs
 
