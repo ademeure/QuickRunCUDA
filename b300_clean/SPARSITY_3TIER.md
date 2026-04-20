@@ -108,10 +108,21 @@ shows up:
 `zero < alt55 < one` at every tier. Ones cost more than zeros on the
 wire (consistent with HBM PHY active-low termination model).
 
-### 4. Sparsity doesn't help much until >25%
-At sp=10% the L2 power barely drops (403 → 401 W active = 0.5% saving).
-Even at sp=25% the saving is only 11 W = 3%. You need 50%+ sparsity
-before sparsity starts paying off (40 W ≈ 10% saving at sp=50%).
+### 4. Sparsity doesn't help much until >15%
+Low-sparsity tail (L2 reads, val=zero, active W):
+
+| g     | 1% | 2% | 5% | 10% | 15% | 20% | 25% |
+|-------|----|----|----|----|----|----|----|
+| byte  | 402 | 400 | 401 | 401 | 397 | 395 | 392 |
+| dword | 401 | 403 | 403 | 401 | 398 | 395 | 391 |
+| 32B   | 405 | 404 | 403 | 399 | 397 | 395 | 388 |
+| 128B  | 405 | 405 | 403 | 398 | 395 | 392 | 384 |
+
+At sp=1-5% the L2 power is statistically indistinguishable from sp=0
+(403 ± 2 W). The "knee" sits at sp=10-15% where savings start to
+appear (5-9 W). At sp=25% the saving is only 11-19 W = 3-5%. You
+need 50%+ sparsity before sparsity starts paying off (40 W ≈ 10% at
+sp=50%).
 
 This is the **toggle-energy interpretation**: replacing a fraction of
 random bytes with constant bytes only reduces toggle activity by that
