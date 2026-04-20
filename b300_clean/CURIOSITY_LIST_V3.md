@@ -245,3 +245,9 @@ item, run rigor protocol, mark `[x]` with commit hash.
 When a `[ ]` item turns out to be already done elsewhere, mark `[duplicate of X]`
 and remove. When it's not feasible (e.g., needs hardware we don't have),
 mark `[blocked: <reason>]`.
+
+---
+
+**SUPERSEDED 2026-04-20** by `CURIOSITY_LIST_V4.md` (ninja microarchitecture
+focus). V3 had too much LLM/framework-level work (transformer block,
+FlashAttn, MoE). V4 is pure low-level/SASS/microarchitecture.

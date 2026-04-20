@@ -176,7 +176,7 @@ Sub-agent outputs are NOT authoritative without verification. Common failure mod
 
 ### 8. Active research backlog
 
-**For NEW investigations, see `b300_clean/CURIOSITY_LIST_V3.md`** — exhaustive
+**For NEW investigations, see `b300_clean/CURIOSITY_LIST_V4.md`** — exhaustive
 ground-up list of unexplored CUDA/B300 topics organized by category (TMA,
 graphs, multi-GPU, persistent kernels, streams, compiler/SASS, numerical
 formats, memory, power, real workloads, APIs, clusters, pipelining, mysteries,
@@ -189,6 +189,6 @@ When picking a new task:
 3. Apply rigor protocol from section above.
 4. Always `pkill -9 QuickRunCUDA` + `sleep 5-8` between measurements
    (lessons learned: leftover processes silently inflate cy/MMA up to 8.5×).
-5. Mark `[x]` with commit hash in `CURIOSITY_LIST_V3.md`.
+5. Mark `[x]` with commit hash in `CURIOSITY_LIST_V4.md`.
 
 When ALL `[ ]` items in V3 are exhausted, generate V4 from current state.

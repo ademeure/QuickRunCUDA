@@ -1,0 +1,266 @@
+# B300 Curiosity List V4 — Ninja Microarchitecture Edition (2026-04-20)
+
+Built from scratch. **Focus: low-level GPU/CUDA microarchitecture, ninja
+optimization, surprising HW behavior. Avoid LLM/framework-level work.**
+
+Mix of curiosity-driven mysteries and high-value optimization recipes.
+Use sub-agents (Plan / Explore / general-purpose) for parallel research.
+
+---
+
+## A. SM microarchitecture: issue, scheduler, dependency
+
+- [ ] **A1 — Per-SMSP issue width per cycle**: build SASS with mixed FMA + IMAD
+  + LDG + BRA in same warp; measure how many issue per cycle. Find dual-issue
+  conditions vs serial.
+- [ ] **A2 — Warp scheduler policy under contention**: 8 warps/SMSP, all ready
+  — does scheduler round-robin, LRU, oldest-first? Measure starvation.
+- [ ] **A3 — Scoreboard slot count**: how many in-flight long-latency
+  operations per warp before stall? Test by issuing N independent loads
+  with varying N.
+- [ ] **A4 — Register read port count**: design FFMA chains with high port
+  pressure (all unique sources) vs low pressure (reused sources). Measure
+  the throughput delta.
+- [ ] **A5 — Predicate register file**: how many predicates can be live?
+  Push past 7 to see spill behavior.
+- [ ] **A6 — Per-pipe latency table**: real measured cycle latencies for
+  EVERY major pipe (FFMA, FFMA-fast, IMAD, ULDC, LDG-cached, LDG-uncached,
+  MUFU, MIO, branch). Reference table for nvcc-cost-modeling.
+- [ ] **A7 — Active mask transition cost**: warp diverges then reconverges;
+  measure cost of BSSY / BSYNC.
+- [ ] **A8 — SETP throughput**: how many predicate sets per cycle per warp.
+
+## B. Pipe interleaving + ILP at pipe-level
+
+- [ ] **B1 — FFMA + IMAD parallel issue**: throughput of mixed kernel vs
+  sum-of-isolated. Find which pipes are truly parallel.
+- [ ] **B2 — FFMA + LDG parallel issue**: known classic, but measure exact
+  overlap fraction at 1, 2, 4 LDG-per-FFMA.
+- [ ] **B3 — MUFU + FFMA**: catalog says yes; verify and measure overlap.
+- [ ] **B4 — Tensor + FFMA + IMAD all simultaneous**: maximum-ILP kernel.
+  Find peak combined ops/sec.
+- [ ] **B5 — FFMA + ULDC** (uniform datapath): does ULDC steal an issue slot?
+- [ ] **B6 — Same-pipe ILP**: 2 independent FFMAs in one issue slot? (Probably no).
+- [ ] **B7 — Branch + compute parallel**: cost of BRA when fully predictable
+  vs not.
+
+## C. SASS instruction encoding + immediate forms
+
+- [ ] **C1 — Maximum immediate width** for IMAD, FFMA, IMNMX. Test boundary
+  cases (just-fits vs spill-to-ULDC).
+- [ ] **C2 — `IMAD.MOV` (mov via IMAD)**: when nvcc uses it, throughput
+  benefit vs `MOV`.
+- [ ] **C3 — `LOP3.LUT`**: 256 truth tables. Throughput, latency, hot-path tricks.
+- [ ] **C4 — `IADD3` with predicate output**: vs IADD3 + ISETP. Cycle cost.
+- [ ] **C5 — `BREV` (bit reverse)**: throughput, latency. Often-overlooked
+  for radix sort.
+- [ ] **C6 — `POPC` / `FLO`**: throughput, latency.
+- [ ] **C7 — `PRMT` (byte permute)**: 256 modes; when nvcc uses it.
+- [ ] **C8 — `BMSK` (bit field mask gen)**: throughput.
+- [ ] **C9 — `SHF` (funnel shift)**: throughput.
+- [ ] **C10 — `R2P` / `P2R`**: predicate-to-register conversion cost.
+
+## D. Memory subsystem ninja
+
+- [ ] **D1 — L2 replacement policy**: LRU? Pseudo-LRU? Hash of {addr, time}?
+  Test by walk patterns + measuring evictions via ncu.
+- [ ] **D2 — L1 cache associativity**: test by allocating exact-size aliased
+  tiles, watch for conflict misses.
+- [ ] **D3 — L2 sector vs line size mismatch**: write 1 sector of a 4-sector
+  line; observe read amplification.
+- [ ] **D4 — HBM channel bonding granularity**: which address bits select
+  which HBM stack? `dram__bytes.per_dram` per-stack metric sweep.
+- [ ] **D5 — SHMEM bank rotation under broadcast**: 32 lanes read same addr
+  vs 32 distinct. When does bank-broadcast kick in?
+- [ ] **D6 — Register file bandwidth per cycle per SMSP**: max FMA chain
+  with 4 unique sources per inst — RF reads ≤ 12/cycle?
+- [ ] **D7 — TMEM bandwidth**: load/store TMEM throughput, distinct from
+  GMEM/SMEM.
+- [ ] **D8 — Address generation pipeline depth**: measurable stall when
+  address-bound vs compute-bound.
+- [ ] **D9 — `__ldg` vs `ld.global.ca` SASS**: are they same? When nvcc
+  picks one vs other.
+- [ ] **D10 — L2 partitioning across HBM channels**: which L2 partition serves
+  which HBM stack? Per-partition ncu metrics.
+- [ ] **D11 — Cache line size inference test**: does B300 have 128 B lines or
+  larger composite "sector"? Walk increasingly large strides.
+
+## E. Atomics & RMW edge cases
+
+- [ ] **E1 — atomicAdd misaligned (e.g. ½ word offset)**: error or split?
+- [ ] **E2 — atomicAdd b16 packed `__half`** vs scalar throughput.
+- [ ] **E3 — atomicCAS contention scaling**: 2, 4, 8, 32 contending threads.
+- [ ] **E4 — `red` vs `atom` SASS**: same instruction or different? Latency
+  diff if return value unused.
+- [ ] **E5 — Atomic across L2 partitions**: latency penalty when address
+  hashes to "far" partition.
+- [ ] **E6 — atomicMin/Max FP throughput** vs atomicAdd.
+- [ ] **E7 — sysmem atomics**: cudaAtomic on host-mapped memory.
+- [ ] **E8 — atomic w/ fence release/acquire** SASS effect.
+
+## F. Sync primitive deep ninja
+
+- [ ] **F1 — `bar.sync 0..15`**: 16 named barriers per CTA. Independent
+  arrival/wait combos.
+- [ ] **F2 — `bar.warp.sync` arbitrary mask** vs `__syncwarp(0xFFFFFFFF)`.
+- [ ] **F3 — `mbarrier.arrive_drop`** semantic: when does it actually drop?
+- [ ] **F4 — Cluster barrier with subset of CTAs**: can you have 2/4 CTA
+  participate vs 4/4? Latency.
+- [ ] **F5 — Async transaction barriers** (mbarrier + cp.async): pipe depth.
+- [ ] **F6 — `__syncwarp` cycle cost vs no-op**: how cheap is it really?
+
+## G. Compiler / nvcc behavior
+
+- [ ] **G1 — `-O0` vs `-O3` SASS divergence**: exact areas where
+  optimization matters most.
+- [ ] **G2 — `-use_fast_math` impact on POWER** (not just speed).
+- [ ] **G3 — `__builtin_assume` impact on SASS** for varied assumptions.
+- [ ] **G4 — `__restrict__` impact on real schedules**.
+- [ ] **G5 — Loop unrolling thresholds** (compiler default vs explicit).
+- [ ] **G6 — `-dlcm=ca/cg/cs` default cache mode** behavior.
+- [ ] **G7 — `__forceinline__` vs LTO link-time inline**.
+- [ ] **G8 — Whole-program optimization** with separate compilation.
+- [ ] **G9 — PTX `.maxnreg` directive** effect.
+- [ ] **G10 — `__launch_bounds__` exact impact** on register allocation.
+
+## H. Per-pipe power (sub-tcgen05)
+
+- [ ] **H1 — FFMA pipe power per inst**: pure FFMA loop, varying ILP/density.
+- [ ] **H2 — IMAD pipe power per inst**: same.
+- [ ] **H3 — MUFU pipe power**: ex2/log2/sin/cos/rcp/rsqrt per inst.
+- [ ] **H4 — LDG pipe power per inst** (separate from cache subsystem).
+- [ ] **H5 — Branch pipe power**: BRA cost.
+- [ ] **H6 — Idle SM static power** (subtract from min-active).
+- [ ] **H7 — TMEM idle power** when allocated but unused.
+- [ ] **H8 — SHMEM read vs write power per byte**.
+- [ ] **H9 — Register file power** per RF access.
+- [ ] **H10 — Predicate register file power**.
+
+## I. Concurrency / hardware queues
+
+- [ ] **I1 — Active CTA limit per SM** at varying register/SHMEM use.
+- [ ] **I2 — Concurrent kernel slot 128 fairness**: when N>128, FIFO or hash?
+- [ ] **I3 — Stream queue depth** (host-side enqueue limit).
+- [ ] **I4 — Hyperqueue / HW queue count** observation.
+- [ ] **I5 — Preemption granularity**: at what SASS instruction boundary
+  can a kernel be interrupted? Measure latency.
+- [ ] **I6 — TPC-level vs SM-level scheduling**: blocks of same kernel
+  prefer same TPC?
+- [ ] **I7 — Warp slot allocation policy**: round-robin across SMSPs?
+- [ ] **I8 — Cluster handle assignment**: which SMs get clustered for
+  `__cluster_dims__(2,1,1)` — adjacent SMs? Per-GPC?
+
+## J. NVLink / multi-GPU low-level
+
+- [ ] **J1 — NVLink raw packet latency** (via custom round-trip kernel).
+- [ ] **J2 — NVLink read vs write asymmetry** per-link bandwidth.
+- [ ] **J3 — NVLink with multiple in-flight ops** (transactions).
+- [ ] **J4 — Cross-GPU SHMEM access** via cudaIpcMemHandle.
+- [ ] **J5 — Multi-GPU clock independence verification** (we have one data
+  point; build a stronger test).
+
+## K. PTX → SASS translation
+
+- [ ] **K1 — `cvt` chains**: when does PTX cvt sequence become single SASS inst?
+- [ ] **K2 — `mad` vs `mad.wide`** SASS encoding differences.
+- [ ] **K3 — `selp`** translation (predicate select).
+- [ ] **K4 — `setp` followed by `@p ld`** combine into LD with predicate?
+- [ ] **K5 — `st.shared` vs `st.global` SASS encoding family**.
+- [ ] **K6 — `vshl/vshr` (vector shift)** PTX → SASS.
+
+## L. Driver / runtime ninja
+
+- [ ] **L1 — `cuStreamWaitValue32` latency** vs CPU-side spin.
+- [ ] **L2 — `cuStreamWriteValue32` latency** vs kernel-write.
+- [ ] **L3 — Driver-side queue dispatch overhead** per kernel launch.
+- [ ] **L4 — `cuLaunchKernelEx` vs `cuLaunchKernel` perf delta**.
+- [ ] **L5 — `cudaStreamGetCaptureInfo` cost while idle vs capturing**.
+- [ ] **L6 — `cudaEventQuery` polling overhead**.
+- [ ] **L7 — Driver thread CPU cost** under heavy kernel-launch load.
+
+## M. Numerical exotic
+
+- [ ] **M1 — `LOP3.LUT` for fused boolean ops**: how many ops can collapse
+  into one LOP3?
+- [ ] **M2 — `IADD3` + predicate** for branchless code patterns.
+- [ ] **M3 — `IMNMX` (min/max) throughput**.
+- [ ] **M4 — `FMNMX` (FP min/max) throughput**.
+- [ ] **M5 — `__viaddmin / __vimax3` SIMD intrinsics**.
+- [ ] **M6 — Saturated ops (`add.sat`, `sub.sat`)** throughput.
+- [ ] **M7 — `bfind` throughput** (bit find).
+- [ ] **M8 — Carry propagation** in IADD chains: hardware carry vs explicit
+  ADC instruction.
+
+## N. Cache hierarchy + replacement
+
+- [ ] **N1 — L2 prefetcher behavior**: does B300 have stride detection?
+- [ ] **N2 — L1 cache hit metric calibration**: build known-hit kernel,
+  verify ncu.
+- [ ] **N3 — `cctl::ivall` / `cctl::wb`**: does B300 emit these for any
+  pattern? (Earlier finding: NO. Verify under different conditions.)
+- [ ] **N4 — `cudaCacheConfigPreferShared`** effect.
+- [ ] **N5 — `__threadfence_block` vs nothing** in single-warp test.
+
+## O. Surprises / falsifiable claims
+
+- [ ] **O1 — Compiler emits `STG.NA` when?** (Non-temporal store)
+- [ ] **O2 — Tensor core warmup**: first MMA after idle takes how long?
+- [ ] **O3 — Branch density vs back-pressure**: kernel with 50% branches
+  vs 0%.
+- [ ] **O4 — IMAD wide multiply** (32x32→64) latency.
+- [ ] **O5 — `__brevll` vs reverse lookup table** breakeven.
+- [ ] **O6 — Atomic on volatile pointer**: SASS difference vs non-volatile.
+- [ ] **O7 — `clock()` vs `clock64()` cost**.
+
+## P. SM-level resource limits
+
+- [ ] **P1 — Max threads / block** boundary: 1024 → exact failure mode.
+- [ ] **P2 — Max SHMEM / block** at full opt-in: 227 KB or some other limit.
+- [ ] **P3 — Max registers / thread**: 255 limit; what happens at 256?
+- [ ] **P4 — Max register spill** depth before crash.
+- [ ] **P5 — Max LMEM** size per thread.
+
+## Q. Hand-tuned kernel speed-of-light
+
+- [ ] **Q1 — Max-throughput memcpy with TMA + cluster multicast**: beat
+  cudaMemset's 7.57 TB/s NINJA recipe.
+- [ ] **Q2 — Fast SHMEM-only reduction** (single block): 32 KB → 1 value
+  in fewest cycles.
+- [ ] **Q3 — Fast cross-warp reduction** without SHMEM: shfl chain.
+- [ ] **Q4 — Vectorized scan** (prefix sum) at SHMEM SoL.
+- [ ] **Q5 — Sort 1024 keys in single block at SoL**.
+- [ ] **Q6 — Transpose 32×32 SHMEM tile** without bank conflicts.
+
+## R. Power oddities + microarchitectural
+
+- [ ] **R1 — Per-pipe gating threshold**: at what utilization does FMA pipe
+  power-gate?
+- [ ] **R2 — Idle SM "active" cost**: with grid waiting on launch, how much
+  power do "ready" SMs draw?
+- [ ] **R3 — Power difference between SM in `BRA` loop vs `EXIT`**.
+- [ ] **R4 — Effect of large warps idle (mid-divergence)** on power.
+
+## S. Methodology + tooling
+
+- [ ] **S1 — Build `pkill -9 + sleep` wrapper** as a `clean_run.sh` utility,
+  used by all sweeps to prevent contention.
+- [ ] **S2 — ncu metric explorer**: dump every available metric for a
+  sample kernel; categorize.
+- [ ] **S3 — SASS auto-counter** that correctly counts ops in unrolled loops.
+- [ ] **S4 — Power sampling at >10 Hz** (NVML query rate limit?).
+
+---
+
+## Methodology reminder
+
+1. Read CLAUDE.md "B300 Methodology" section.
+2. Mark item `[~]` before starting.
+3. Verify ≥3 methods (wall-clock + ncu + SASS).
+4. **ALWAYS** `pkill -9 QuickRunCUDA && sleep 6` between measurements.
+5. State HIGH/MED/LOW + what would change conclusion.
+6. Commit + mark `[x]` with hash.
+7. **Use sub-agents** (Plan, Explore, general-purpose) for parallel research
+   on independent items.
+
+When picking parallel items, choose ones that don't share GPU state
+(e.g., one compiler-research agent + one architectural-test agent).
