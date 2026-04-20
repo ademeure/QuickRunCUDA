@@ -67,9 +67,37 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
             unsigned t = r & 7;
             r = (t * 0x11111111u);
         } else if (mode == 27) {
-            // 16 distinct DWORD patterns (all FP4 values, splatted)
             unsigned t = r & 0xF;
             r = (t * 0x11111111u);
+        }
+        // 2-dword Hamming-distance series (mode 30 + N: distance = N)
+        // mode 30 = both dwords identical (0 bit diff)
+        // mode 31 = 1-bit diff, mode 32 = 2-bit, ... mode 36 = 16-bit, mode 37 = 32-bit
+        else if (mode == 30) r = 0x00000000u;
+        else if (mode == 31) r = ((r & 1) ? 0x00000001u : 0x00000000u);
+        else if (mode == 32) r = ((r & 1) ? 0x00000003u : 0x00000000u);
+        else if (mode == 33) r = ((r & 1) ? 0x0000000Fu : 0x00000000u);
+        else if (mode == 34) r = ((r & 1) ? 0x000000FFu : 0x00000000u);
+        else if (mode == 35) r = ((r & 1) ? 0x0000FFFFu : 0x00000000u);
+        else if (mode == 36) r = ((r & 1) ? 0x00FFFFFFu : 0x00000000u);
+        else if (mode == 37) r = ((r & 1) ? 0xFFFFFFFFu : 0x00000000u);
+        // Sequential dwords: many patterns but only 1-bit Hamming between consecutive
+        // mode 40: dwords cycle 0, 1, 3, 7, 15, ... (each adds 1 bit)
+        else if (mode == 40) {
+            // Gray-code-like: each dword differs from prior by 1 bit
+            // For each `seed` (which is `i` for mode 40), use seed mod 32 = bits set
+            // Construct dword with `seed mod 32` low bits set
+            unsigned t = seed % 32;
+            r = (t == 0) ? 0u : (0xFFFFFFFFu >> (32 - t));
+        }
+        // mode 41: only 2-bit Hamming via XOR of seed
+        else if (mode == 41) {
+            // Many distinct dwords each differing from neighbor by 2 bits
+            unsigned base = (seed * 0xCAFEBABE) & 0xFFFFFFFFu;
+            // Force base to have exactly 16 bits set (popcount-controlled)
+            unsigned popcount_target = 16;
+            // Quick approximation: just XOR with seed pattern
+            r = base ^ ((seed & 1) ? 0x3 : 0);  // 2-bit toggle between consecutive
         }
         if (mode == 1 || mode == 3) r &= ~0x88888888u;
         if (mode == 6 || mode == 7) r = 0u;

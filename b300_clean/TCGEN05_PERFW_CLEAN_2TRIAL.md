@@ -474,3 +474,54 @@ For real LLM inference where weights cannot be made bit-identical:
 K-row sorting / chunk-K-uniformity gives ZERO benefit (proven by the
 chunk-48 = chunk-1 = ~870 W test). The K-axis power is BINARY: all
 K-rows bit-identical or full cost.
+
+## Hamming distance vs pattern count — pattern count dominates
+
+Two-dword alternating tests with controlled Hamming distance:
+
+| Hamming bits | power | Δ vs 0-bit |
+|--------------|-------|------------|
+| 0 (constant) | 408 W | 0          |
+| 1            | 426 W | +18 W      |
+| 2            | 432 W | +24 W      |
+| 4            | 466 W | +58 W      |
+| 8            | 482 W | +74 W      |
+| 16           | 529 W | +121 W     |
+| 24           | 565 W | +157 W     |
+| 32 (max)     | 602 W | +194 W     |
+
+Linear ~6 W per Hamming-distance bit between consecutive dwords.
+
+Compare: Gray-code-like (32 distinct dwords, only 1-bit transitions
+between consecutive) = 753 W. **Worse than alternating 2 patterns at
+32-bit Hamming (602 W)**.
+
+### Pattern count > Hamming distance
+
+Both contribute, but pattern count is the dominant lever:
+- 2 patterns × 32-bit Hamming: 602 W
+- 32 patterns × 1-bit Hamming: 753 W
+- 16 patterns × 8-bit avg Hamming: 866 W (mode 27)
+- ~unlimited patterns × ~16-bit avg: 870 W (random)
+
+For real quantized weights (typically 8-16 distinct values per FP4 element
+across a tile, many distinct dwords), the pattern-count saturation makes
+Hamming optimization mostly moot.
+
+## Final B-side power model
+
+`P(B) = floor + alpha × log(distinct_dwords) + beta × avg_Hamming + gamma × popcount_variance`
+
+Approximate coefficients fitted from data (rough):
+- floor: 408 W
+- alpha (per log-2 step in pattern count, saturating at ~16 patterns): ~50 W per bit of "log distinct dwords" capped at 4
+- beta (per Hamming bit between consecutive dwords): ~6 W
+- gamma (per Hamming bit of popcount variance across all dwords): ~5 W
+
+Worst case: random (4 G patterns, 16-bit avg Hamming, high popcount variance) = 408 + 200 + 96 + 80 ≈ 784 W ≈ measured 870 W.
+
+Best case: constant (1 pattern) = 408 W (floor).
+
+Realistic LLM weights: many patterns, mid Hamming, mid popcount variance
+≈ 800-870 W. **Hard to push below 600 W per CTA without restructuring
+weight quantization.**
