@@ -34,8 +34,14 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
         int k = i / (MMA_N/8);
         int npack = i % (MMA_N/8);
         unsigned seed;
-        if (mode == 11) seed = npack;       // K-uniform: B varies along N only
-        else if (mode == 12) seed = k;      // N-uniform: B varies along K only
+        if (mode == 11) seed = npack;
+        else if (mode == 12) seed = k;
+        else if (mode == 15) seed = (k / 16) * (MMA_N/8) + npack;  // B uniform per K-chunk-of-16
+        else if (mode == 16) seed = (k / 32) * (MMA_N/8) + npack;  // B uniform per K-chunk-of-32
+        else if (mode == 17) seed = (k / 8) * (MMA_N/8) + npack;   // B uniform per K-chunk-of-8
+        else if (mode == 18) seed = (k / 4) * (MMA_N/8) + npack;   // K-chunk-of-4
+        else if (mode == 19) seed = (k / 2) * (MMA_N/8) + npack;
+        else if (mode == 20) seed = (k / 48) * (MMA_N/8) + npack;  // K-chunk-of-48 (only 1 transition!)
         else seed = i;
         unsigned r = (seed + blockIdx.x * 1024u + 0xC0FFEE00u) * 0x9E3779B1u; r ^= r >> 16; r *= 0x85EBCA6Bu;
         if (mode == 1 || mode == 3) r &= ~0x88888888u;

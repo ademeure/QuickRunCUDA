@@ -351,3 +351,56 @@ For inference power optimization, **asymmetry dictates strategy**:
 
 4. **Theoretical max**: A=0 activations + B-clustered weights could
    reach ~400 W = 53 % below random.
+
+## CORRECTION: K-axis power is BINARY, not gradual
+
+After my "K-axis sorting saves 349W" claim, I tested K-chunk granularity
+(NVFP4 K=96 N=256). Each chunk has K-rows bit-identical within, varies
+across chunks:
+
+| K-chunk size  | # K-transitions | power |
+|---------------|-----------------|-------|
+| 96 (constant) | 0               | 411 W |
+| 48            | 1               | 870 W |
+| 32            | 2               | 873 W |
+| 16            | 5               | 877 W |
+| 8             | 11              | 876 W |
+| 4             | 23              | 874 W |
+| 2             | 47              | 874 W |
+| 1 (random)    | 95              | 873 W |
+
+**Even chunk-48 (only 1 K-transition in entire K=96) uses same power as
+fully random K.** K-axis power is BINARY: either all 96 K-rows
+bit-identical (411 W floor) OR full ~870 W cost. No middle ground.
+
+### Why the "sort along K" recommendation was WRONG
+
+The hardware processes K in PARALLEL within each cycle (all 96 K values
+per output simultaneously, not serially). The relevant toggle is
+SPATIAL (across the parallel K-array within a cycle), not TEMPORAL
+(across cycles).
+
+For B-bus to be low-toggle, all 96 K-rows must be bit-identical
+across N — meaning B is effectively rank-1 along K. **Real weight
+matrices have varying K → always pay ~870 W K-axis cost.**
+
+### CORRECTED practical levers for B-side power
+
+After this correction, the ONLY realistic B-side power optimizations are:
+
+1. **Magnitude-set narrowing** (e.g., quantize to 5 distinct positive
+   values): saves ~440 W per CTA. **Realistic** — quantization can
+   constrain element set without changing matrix structure.
+
+2. **B = uniform tile detection**: if entire B tile is one constant,
+   skip dispatch. Saves 459 W. Real but rare.
+
+3. **All-zero B tile detection**: same 459 W as any uniform — special
+   case of #2.
+
+4. **Sign-bit zero (B-positive only)**: saves 142-150 W. Realistic for
+   weights designed to be all-positive (e.g. magnitude-only stored
+   separately from sign mask).
+
+K-row sorting / clustering / similarity does NOT help. The K-axis power
+is gated only by full bit-identity of all K-rows, not by similarity.
