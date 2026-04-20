@@ -1159,3 +1159,72 @@ plane level - no shared thermal envelope or power budget.
 **Operational implication**: Multi-GPU deployments can mix workload types
 across GPUs without cross-interference. K-id-friendly and K-id-hostile
 workloads can coexist on different GPUs at full performance.
+
+## Llama-70B production reference (random data, real shapes)
+
+Tested actual Llama-70B matmul shapes with random BF16 (realistic data):
+
+```
+Llama-70B FFN (K=8192, N=28672, vary M=batch):
+M       TFLOPS   % of peak (1577 TF)   Regime
+1       6.6      0.4%                   memory-bound
+8       50       3.2%                   memory-bound
+16      99       6.3%                   memory-bound
+32      203      12.9%                  transition
+64      385      24.4%                  transition
+128     739      46.9%                  approaching compute
+256     1140     72.3%                  compute-dominant
+512     1251     79.3%                  compute-bound
+1024    1406     89.2%                  compute-saturated
+2048    1455     92.3%                  near-peak
+4096    1478     93.7%                  saturated
+8192    1495     94.8%                  fully saturated
+
+Llama-70B QKV (K=8192, N=10240):
+M=1     5.6      memory-bound
+M=32    176      transition
+M=256   1082     compute-dominant
+M=2048  1396     near-peak
+M=8192  1485     fully saturated
+```
+
+### Key production insights
+
+1. **Single-token decode (M=1)** gets only 0.4% of compute peak - HBM
+   bandwidth dominates. The 6.6 TF for FFN matmul is the actual ceiling
+   for autoregressive single-batch inference.
+
+2. **Speculative decoding / draft+verify** typically uses M=8-16, giving
+   3-6% of compute peak. Still memory-bound.
+
+3. **Continuous batching** (M=128+) approaches compute-bound regime,
+   reaching 47-95% of peak.
+
+4. **Training prefill / large batch** (M>=2048) saturates at ~94% of
+   the 1577 TF random ceiling.
+
+### Throughput estimates for 70B inference
+
+At batch_size=1: 6.6 TF for FFN matmul. With 80 transformer layers and
+~3 large matmuls per layer (FFN gate+up+down + QKV+O), single-token
+compute time per layer ~25-50us depending on shape, plus HBM traffic
+that dominates at this batch size.
+
+At batch_size=2048 (continuous batching): 1455 TF for FFN matmul.
+Compute time per matmul ~330ms for the FFN, HBM ~42 GB read = 6ms,
+clearly compute-bound. Maximum throughput regime for B300.
+
+### Reaching the K-id ceiling on real workloads?
+
+Real Llama weights have:
+- N/K ratio = 28672/8192 = 3.5 (OUTSIDE K-id N window of {0.5, 1, 2})
+- Random distributions (no K-row correlation)
+- 16-bit precision (not heavily quantized)
+
+Therefore real Llama gets ZERO benefit from the K-id mechanism.
+Maximum 1495 TF achieved (95% of 1577 ceiling). To exceed:
+- Use 2:4 structured pruning (~+11% to 1660 TF)
+- Use smaller precision (FP8 hits 2607 TF random, FP4 even higher)
+- Quantize weights to INT4 with proper layout (~4-6% per realistic scoping)
+
+The 2253 TF "synthetic ceiling" is unreachable in production.
