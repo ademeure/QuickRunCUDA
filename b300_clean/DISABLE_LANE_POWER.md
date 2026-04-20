@@ -77,3 +77,42 @@ Best case: disable + sub-tile-friendly + low entropy:
 - **Total reduction: 363W (60%)**
 
 This combination is realistic for sparse attention + quantized weights.
+
+---
+
+## Bit-level granularity (per-bit cost)
+
+Setting N bits in disable_lane[0]:
+
+| Bits set | Power (W) | Δ |
+|---------:|----------:|---:|
+| 1 | 609 | -1 |
+| 2 | 607 | -3 |
+| 4 | 603 | -7 |
+| 8 | 593 | -17 |
+| 16 | 572 | -37 |
+| 32 (full word) | 534 | -77 |
+
+**Per-bit cost: ~2.4 W/bit** (matches column-level prediction).
+
+Non-linearity at low bit counts (1 bit = -1W) likely measurement noise
+(below σ).
+
+## Single word disable (which word matters?)
+
+| disable_lane[i] = 0xFFFFFFFF (only one word set) | Power (W) |
+|--------------------------------------------------|----------:|
+| i=0 | 532 |
+| i=1 | 533 |
+| i=2 | 535 |
+| i=3 | 529 |
+
+All within noise. **Which 32-column block disabled doesn't matter** — uniform
+2.4W/bit across all 128 columns.
+
+## Updated practical recipe
+
+For BF16 m128n128 with N columns to disable:
+- N_disabled × 2.4 W = power saved
+- Cycle count UNCHANGED (still 64 cy/MMA)
+- Combined with sub-tile dedup: see composition table above

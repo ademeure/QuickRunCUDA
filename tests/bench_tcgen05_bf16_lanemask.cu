@@ -707,13 +707,26 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
     unsigned long long LBO = 16, SBO = 256;
     unsigned long long a_desc = desc_encode(a_smem_addr) | (desc_encode(LBO) << 16) | (desc_encode(SBO) << 32);
     unsigned long long b_desc = desc_encode(b_smem_addr) | (desc_encode(LBO) << 16) | (desc_encode(SBO) << 32);
-    // Lane mask: use 'verify' arg. verify=N sets disable_lane[i]=0xFFFFFFFFu for i<N
-    unsigned disable_lane[4] = {
-        verify >= 1 ? 0xFFFFFFFFu : 0u,
-        verify >= 2 ? 0xFFFFFFFFu : 0u,
-        verify >= 3 ? 0xFFFFFFFFu : 0u,
-        verify >= 4 ? 0xFFFFFFFFu : 0u
-    };
+    // Lane mask: use 'verify' arg.
+    // verify=0..4: number of words disabled (full word at a time)
+    // verify=10..15: 1<<(verify-10) bits set in word 0 (low bits) - so 1, 2, 4, 8, 16, 32 bits
+    // verify=20..25: 1<<(verify-20) bits set in word 0 (HIGH bits)
+    // verify=30..33: bits set in word verify-30 only (full word)
+    unsigned dl[4] = {0, 0, 0, 0};
+    if (verify >= 1 && verify <= 4) {
+        for (int i = 0; i < verify; i++) dl[i] = 0xFFFFFFFFu;
+    } else if (verify >= 10 && verify <= 15) {
+        unsigned nbits = 1u << (verify - 10);
+        if (nbits == 32) dl[0] = 0xFFFFFFFFu;
+        else dl[0] = (1u << nbits) - 1;
+    } else if (verify >= 20 && verify <= 25) {
+        unsigned nbits = 1u << (verify - 20);
+        if (nbits == 32) dl[0] = 0xFFFFFFFFu;
+        else dl[0] = ~((1u << (32 - nbits)) - 1);
+    } else if (verify >= 30 && verify <= 33) {
+        dl[verify - 30] = 0xFFFFFFFFu;
+    }
+    unsigned disable_lane[4] = {dl[0], dl[1], dl[2], dl[3]};
 
     unsigned long long t0=0, t1=0;
     if (threadIdx.x == 0) asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0));
