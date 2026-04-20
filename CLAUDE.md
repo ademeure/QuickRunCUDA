@@ -173,3 +173,22 @@ Sub-agent outputs are NOT authoritative without verification. Common failure mod
 - **Mixing up "cores" vs "SMSPs":** B300 has 148 SMs × 4 SMSPs × 32 FP32 lanes = 18,944 FP32 cores total. Per SM: 128 cores.
 - **"Dual-issue" vs separate pipes:** Hopper/Blackwell CAN issue 1 FFMA + 1 INT32 + 1 FP64 per cycle per SMSP (different pipes), but this is NOT "2 FFMAs per cycle".
 - **Spec TFLOPS ambiguity:** NVIDIA quotes peak "with sparsity" for tensor ops. Dense is 2× less. Check context.
+
+### 8. Active research backlog
+
+**For NEW investigations, see `b300_clean/CURIOSITY_LIST_V3.md`** — exhaustive
+ground-up list of unexplored CUDA/B300 topics organized by category (TMA,
+graphs, multi-GPU, persistent kernels, streams, compiler/SASS, numerical
+formats, memory, power, real workloads, APIs, clusters, pipelining, mysteries,
+storage, non-tcgen05 power, missing SoL recipes).
+
+When picking a new task:
+1. Browse V3 list for any `[ ]` item that interests you.
+2. Cross-check it isn't already covered in `B300_TRUE_REFERENCE.md` or
+   any existing `b300_clean/*.md` (use `grep -ri "<topic>" b300_clean/`).
+3. Apply rigor protocol from section above.
+4. Always `pkill -9 QuickRunCUDA` + `sleep 5-8` between measurements
+   (lessons learned: leftover processes silently inflate cy/MMA up to 8.5×).
+5. Mark `[x]` with commit hash in `CURIOSITY_LIST_V3.md`.
+
+When ALL `[ ]` items in V3 are exhausted, generate V4 from current state.
