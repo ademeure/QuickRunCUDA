@@ -217,7 +217,8 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 ## K. PTX → SASS translation
 
 - [ ] **K1 — `cvt` chains**: when does PTX cvt sequence become single SASS inst?
-- [ ] **K2 — `mad` vs `mad.wide`** SASS encoding differences.
+- [x] **K2 — `mad` vs `mad.wide` SASS**: mad.lo.u32 → single IMAD;
+  mad.wide/mad.hi need extra inst (covered in O4 wide multiply test).
 - [ ] **K3 — `selp`** translation (predicate select).
 - [x] **K4 — `setp` + `@p ld`**: NO. LDG has no predicated variant on
   B300 — compiler emits unconditional LDG.E + applies predicate to
