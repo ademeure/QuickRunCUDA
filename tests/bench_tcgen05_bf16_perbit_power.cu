@@ -577,6 +577,36 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 } else {
                     w = r;
                 }
+            } else if (mode >= 6400 && mode <= 6432) {
+                // PARTIAL SUB-TILE BREAK: K_zero N positions in each sub-tile differ from baseline
+                // K_zero = mode - 6400 (0..32 N positions per sub-tile differ)
+                // Tests granularity of sub-tile dedup: at what point does cache fail?
+                int K_zero = mode - 6400;
+                int npair = idx % 64;
+                int sub_tile = npair / 8;     // 8 sub-tiles
+                int pos_in_tile = npair % 8;  // 0..7 (each = 2 N values)
+                // Within each sub-tile, FIRST K_zero/2 positions are RANDOM, rest are baseline pattern (h(0)..)
+                int n_pos = pos_in_tile * 2;  // 0..14
+                int n_pos_o = n_pos + 1;
+                auto h = [](int nn) -> unsigned short {
+                    unsigned hh = 0xC0FFEE13u ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    return (unsigned short)(hh & 0xFFFF);
+                };
+                unsigned short ve, vo;
+                if (n_pos < K_zero) {
+                    // Random different per sub-tile
+                    ve = h(n_pos + sub_tile * 100);
+                } else {
+                    ve = h(n_pos);  // Baseline pattern - same across sub-tiles
+                }
+                if (n_pos_o < K_zero) {
+                    vo = h(n_pos_o + sub_tile * 100);
+                } else {
+                    vo = h(n_pos_o);
+                }
+                w = ((unsigned)vo << 16) | ve;
             } else if (mode >= 6300 && mode <= 6316) {
                 // K-direction sparse zeros INVERTED: K rows K_zero..15 = zero, rest = random
                 int K_zero = mode - 6300;
