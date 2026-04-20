@@ -229,7 +229,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   __viaddmax_s32, __vimax3_s32, __vsadu4, __vmaxs2. **EMULATED & slow**:
   __vmaxu4 (5×), __vavgu2 (3.4×). Always SASS-check.
   Commit history.
-- [ ] **M6 — Saturated ops (`add.sat`, `sub.sat`)** throughput.
+- [x] **M6 — Saturated ops**: `add.sat.s32`/`sub.sat.s32` are **4.6×
+  SLOWER** than plain add/sub (likely emulated). cvt.sat.u8 only 1.6×
+  slower. Avoid `.sat` integer modifier in hot loops. Commit history.
 - [ ] **M7 — `bfind` throughput** (bit find).
 - [ ] **M8 — Carry propagation** in IADD chains: hardware carry vs explicit
   ADC instruction.
