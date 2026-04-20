@@ -146,3 +146,58 @@ of GPUs translates to meaningful efficiency gains. But it's NOT the dramatic
 - MEDIUM on whether real frameworks (vLLM, TensorRT-LLM) achieve even this
   modest gain (custom kernels may differ)
 - LOW on cross-architecture transfer (untested)
+
+---
+
+## Side-by-side cross-verification (5 measurements)
+
+| Configuration | TFLOPS | vs Gaussian baseline |
+|---------------|-------:|---------------------:|
+| Full 16-bit random (sign+exp+mant) | 1418 | +0.9% |
+| Realistic Gaussian (sigma=0.02) | **1405** | (baseline) |
+| Realistic INT4 quantized | 1457 | +3.7% |
+| Mantissa-only random | 1676 | +19% |
+| Full constant | 2252 | +60% |
+
+Note: full random ≈ realistic Gaussian (1418 vs 1405). The "synthetic random"
+in earlier tests was actually CLOSE to realistic Gaussian.
+
+The difference between my 12-24% optimistic estimates and the realistic 4%
+isn't from baseline drift - it's from the SPECIFIC pattern of "INT4-quantized"
+data. My XOR-based synthetic INT4 produced different bit patterns than
+real INT4 levels (-8..7 × scale).
+
+## Why INT4 levels don't reduce bit entropy as much
+
+Real INT4 quantization produces BF16 values like:
+- level -8 × scale = -0.16 → BF16 = 0xBE23 (specific bits)
+- level -7 × scale = -0.14 → BF16 = 0xBE0F
+- level -6 × scale = -0.12 → BF16 = 0xBDF6
+- ... 16 unique bit patterns total
+
+These 16 bit patterns are SPREAD across mantissa+exp space, not packed
+into specific bit positions. So bit-toggle activity isn't as low as
+"4-bit only varies in positions 3-6".
+
+This is why:
+- Synthetic 4-bit-mantissa-only: 1808 TFLOPS (1.20× over 1502 baseline)
+- Real INT4 levels: 1457 TFLOPS (1.04× over 1405 Gaussian baseline)
+
+The "bit entropy" mechanism is REAL but the specific bit patterns of
+INT4 quantization don't perfectly align with the multiplier dedup.
+
+## ABSOLUTE FINAL practical guidance
+
+For real INT4-quantized LLM inference deployment on B300:
+- **Throughput gain**: ~4% automatic (1.04×)
+- Power savings: small (~50W per GPU)
+- Thermal benefit: small (~3°C reduction)
+- Predictability: slightly improved
+
+For 100-GPU production cluster:
+- Effective throughput: ~104 GPUs equivalent
+- Modest but real benefit at scale
+- Not the dramatic 1.2-1.3× synthetic tests suggested
+
+This concludes the rigorous investigation with ABSOLUTE FINAL conservative
+numbers backed by realistic data distributions.
