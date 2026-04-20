@@ -179,6 +179,12 @@ Provenance documents:
 | Two halves | SUBTILE_HALVES.md | BF16 m128n128 has 2 halves; pos 4-7 unique nearly free; FP8/NVFP4 don't show this |
 | SMEM desc | MMA_SHAPE_DEDUP.md (appendix) | LBO doesn't affect dedup (intrinsic to HW) |
 | Accumulator | POWER_FINAL_MODEL.md (appendix) | C accumulator costs ~5% of total power |
+| disable_lane | DISABLE_LANE_POWER.md | Linear power scaling ~2.4W/bit, position-independent |
+| disable_lane composition | DISABLE_LANE_POWER.md (appendix) | Combined with sub-tile dedup → 60% reduction |
+| Combined extremes | DISABLE_LANE_POWER.md (appendix) | 254W (vs 610W random) = 58% reduction achievable |
+| mma.sync legacy | MMA_SYNC_POWER.md | A vs B asymmetry exists in legacy mma.sync (17W gap) |
+| NVFP4 SF | NVFP4_SF_POWER.md | Scale factor adds independent ~27W when random |
+| Sparse validation | SUBTILE_SPARSE_VALIDATION.md | Per-byte sparsity ineffective; sub-tile-level confirms two-half |
 
 ---
 
