@@ -837,3 +837,38 @@ between layouts are small enough to be within optimization noise.
 For ML deployment: data layout choice matters at most ~1.5%, vs the ~30%
 benefit from data structure (bit entropy / quantization). Focus optimization
 effort on data structure first, layout second.
+
+---
+
+## FP16 with FP16 accumulator (reduced precision)
+
+| Configuration | Random TF | Const TF | Speedup |
+|---------------|----------:|---------:|--------:|
+| FP16 + FP32 acc | 1386 | 2252 | 1.63× |
+| FP16 + FP16 acc | 1652 | 2250 | 1.36× |
+
+FP16+FP16 acc gives SAME ~2250 TF ceiling as FP16+FP32. Accumulator precision
+doesn't change the hardware ceiling - the multiplier is the bottleneck.
+
+Random data with FP16+FP16 acc is faster (1652 vs 1386 TF). Less precision
+in accumulator = less data-dep cost in C accumulator path → less throttling.
+
+For applications where FP16 accumulator precision is acceptable, can get
+~20% better RANDOM-data throughput (1652 vs 1386). At constant data, both
+hit same ~2250 TF ceiling.
+
+## All paths converge at hardware ceiling
+
+| Precision config | Ceiling TFLOPS |
+|------------------|---------------:|
+| FP16 + FP32 acc | 2252 |
+| FP16 + FP16 acc | 2250 |
+| BF16 + FP32 acc | 2252 |
+| FP8 + FP32 acc | 4420 |
+| (BF16 + FP16 acc) | unsupported |
+
+ALL kind::f16 paths hit the same ~2250 TF hardware ceiling at constant data.
+FP8 has its own ceiling at ~4420 TF.
+
+The convergence proves: the hardware ceiling is multiplier-bound, not accumulator-bound.
+Any optimization that reduces multiplier work approaches this ceiling.
