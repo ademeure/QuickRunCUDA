@@ -64,3 +64,51 @@ pattern within rows matters.
 - **HIGH**: K-flip {original, flipped} fits in 2-entry cache (LOW power preserved)
 - **HIGH**: N-direction sub-tile alignment is the dominant factor
 - **HIGH**: pk doesn't matter when p_n is in non-aligned state (HIGH)
+
+## NVFP4 K=64 p_n × pk results (M=N=256, 2-CTA)
+
+```
+p_n=1 (alternating +-+-) with various K-flip pk:
+  pk=inf : 394 W
+  pk=1   : 405 W
+  pk=2   : 407 W
+  pk=3   : 405 W
+  pk=4   : 402 W
+  pk=8   : 398 W
+  pk=16  : 397 W
+  pk=32  : 398 W
+
+p_n=16 (sub-tile aligned) with various pk:
+  pk=inf : 396 W
+  pk=1   : 407 W
+  pk=4   : 405 W
+  pk=16  : 398 W
+  pk=32  : 396 W
+
+pk=3 with various p_n:
+  p_n=1  : 408 W LOW
+  p_n=2  : 406 W LOW
+  p_n=4  : 406 W LOW
+  p_n=8  : 409 W LOW
+  p_n=16 : 406 W LOW (16 IS sub-tile boundary for NVFP4)
+  p_n=64 : 480 W HIGH (chunk-4 sub-tile thrash)
+```
+
+## NVFP4 vs BF16 contrast
+
+NVFP4 has MUCH narrower dynamic range than BF16 here because sub-tile=16 elements aligns p_n=16 (whereas BF16 sub-tile=8 means p_n=16 misaligns).
+
+BF16 pk=3 sweep showed p_n=16 HIGH (555W), p_n=8 LOW (469W).
+NVFP4 pk=3 sweep shows p_n=16 LOW (406W), p_n=64 HIGH (480W).
+
+The "HIGH transition" happens at p_n = sub-tile size for each precision.
+
+## Universal mechanism summary (all data combined)
+
+Power state determined by sub-tile pattern set size:
+1. **≤2 distinct sub-tile patterns** → LOW power (cache fits)
+2. **3+ distinct sub-tile patterns** → HIGH power (cache thrashes)
+
+What creates "1 pattern": same p_n that divides sub-tile boundary.
+What creates "2 patterns": K-direction sign flip ({original, flipped}).
+What creates "3+ patterns": random per-column phase, p_n that doesn't align to sub-tile.
