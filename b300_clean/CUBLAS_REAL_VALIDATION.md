@@ -693,3 +693,62 @@ The 1.41× speedup requires:
 - **trans_B = N** (no internal transpose)
 
 All four conditions must be met.
+
+---
+
+## trans_B=T speedup IS accessible with right data layout
+
+Test: with trans_B=T, fill B such that each ROW n in DRAM has K identical values.
+This compensates for cuBLAS's internal transpose.
+
+| trans_B | Data fill | TFLOPS | Speedup |
+|---------|-----------|-------:|--------:|
+| T | random | 1519 | 1.00× (baseline for trans_B=T) |
+| T | row-of-N constant (each n row = constant K values) | **2183** | **1.44×** |
+
+## Conclusion: optimization is layout-agnostic
+
+The K-row dedup mechanism applies regardless of trans setting, but data
+must be structured to match the contracted-dim layout in SMEM:
+
+- **trans_B=N**: B[k][n] should be K-row identical (each k row constant across n)
+- **trans_B=T**: B[n][k] should be "N-row" constant (each n row constant across k)
+
+In both cases, the cuBLAS internal "K-row" view sees identical content.
+
+## Practical for PyTorch nn.Linear
+
+PyTorch stores weight as (out_features, in_features) = (N, K).
+When computing y = x @ W^T:
+- A = x (M×K), trans_A = N
+- B = W (N×K), trans_B = T
+
+For optimization: each ROW of W (each output neuron) needs to be constant.
+Equivalent to: all input weights for a single output are the same.
+This is a DEGENERATE WEIGHT PATTERN - not realistic for trained models.
+
+For CUSTOM weight layouts (e.g., low-rank decompositions), arranging data
+in the right form for the cuBLAS layout chosen IS possible.
+
+## Software optimization recipe (final, with trans-aware)
+
+For maximum benefit with cuBLAS:
+
+```
+If trans_B = N:
+  Sort/quantize B such that consecutive K-rows have identical content
+  (e.g., shared scale-factor groups along K dimension)
+  
+If trans_B = T:
+  Sort/quantize B such that consecutive N-rows (in DRAM) have identical
+  content (e.g., shared scale-factor groups along output channels with
+  dimension swap)
+```
+
+Both layouts can access the optimization with appropriate data structure.
+
+## Confidence
+
+- HIGH on trans_B=T also benefiting with right layout (clean 1.44× measurement)
+- HIGH on the layout requirement being symmetric (just different axis)
+- MEDIUM on practical applicability to standard ML (degenerate weights for nn.Linear)
