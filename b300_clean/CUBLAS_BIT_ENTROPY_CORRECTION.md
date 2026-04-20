@@ -344,3 +344,58 @@ For deployment of Llama 70B with INT4 weights:
 For 100-GPU INT4 inference cluster:
 - W4A16: equivalent to ~118 GPUs effective
 - W4A4: equivalent to ~125 GPUs effective
+
+---
+
+## Symmetric A+B bit-count sweep (8192³ BF16)
+
+| Bits each | TFLOPS | Speedup |
+|----------:|-------:|--------:|
+| 0 (W0A0) | 2252 | 1.35× |
+| 1 (W1A1) | 2115 | 1.26× |
+| 2 (W2A2) | 2048 | 1.22× |
+| 4 (W4A4) | 1872 | 1.12× |
+| 7 (W7A7) | 1674 | 1.00× |
+
+## Cross-shape comparison: 8192³ vs Llama 70B FFN at W4A4
+
+| Shape | W4A4 speedup |
+|-------|-------------:|
+| 8192³ (square) | 1.12× |
+| Llama gate/up (M×28672×8192) | 1.24× |
+| Llama down (M×8192×28672) | 1.25× |
+
+**Llama shapes get BIGGER speedup at W4A4 than square 8192³!**
+
+This is an interesting reversal: square shapes had bigger K-row identity
+speedup (1.41×), but Llama shapes have bigger BIT ENTROPY speedup (1.24×).
+
+## Mechanism reconciliation
+
+Both effects are real:
+- K-row identity → exposes K-row dedup → 1.41× at square shapes (limited cuBLAS algorithm exposure)
+- Bit entropy → exposes per-cycle multiplier savings → 1.24× at Llama shapes
+
+For DEFAULT data layouts (no K-row identity), the bit entropy mechanism
+applies more broadly. For SPECIAL data with K-row identity, additional
+benefit on top.
+
+## FINAL deployment recommendation
+
+For maximum throughput on B300 cuBLAS GEMMs:
+
+1. **Use lowest possible bit precision** (W4A4 if accuracy allows)
+2. **Apply per-channel quantization** to maximize entropy reduction per cycle
+3. **Both A AND B benefit** (B more, A about half as much)
+4. **Power-cap aware deployment**: tighter caps amplify speedup proportionally
+
+For Llama 70B INT4 inference (W4A16):
+- ~1.18× automatic from B 4-bit entropy
+- Add A entropy reduction (e.g., bf16-to-int8 activation quantization): +5-10%
+
+## Confidence
+
+- HIGH on bit-entropy being the primary mechanism (multiple control tests)
+- HIGH on Llama-shape specific behavior (1.24× W4A4 reproducible)
+- HIGH on practical INT4 inference benefit (~1.18-1.25× automatic)
+- This is the most accurate, defensible finding from the entire investigation
