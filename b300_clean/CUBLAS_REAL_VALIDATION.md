@@ -914,3 +914,50 @@ For applications using:
 - HIGH on the GPTQ measurement (10 group sizes consistent)
 - HIGH on the practical applicability (real INT4 inference uses this pattern)
 - HIGH on the headline 1.12× automatic speedup for INT4 inference
+
+---
+
+## FP8 GPTQ-style (3-bit "INT4" pattern in FP8 mantissa)
+
+| group_size | FP8 TFLOPS | Speedup |
+|-----------:|-----------:|--------:|
+| 0 (random) | 2629 | 1.00× |
+| 32 | 3040 | **1.16×** |
+| 128 | 3039 | **1.16×** |
+| 512 | 3179 | **1.21×** |
+| 2048 | 3177 | **1.21×** |
+| 8192 | 3176 | **1.21×** |
+
+FP8 quantized weights get **1.21× automatic speedup** at group sizes ≥ 512.
+Better than BF16's 1.13× because FP8 has more multiplier work per cycle
+(K=32 vs K=16) → more headroom for dedup to recover throttle.
+
+## Final cross-precision GPTQ-style automatic speedup
+
+| Precision | GPTQ speedup (automatic) | Best group size |
+|-----------|-------------------------:|----------------:|
+| BF16 | 1.12-1.13× | All (32-8192) |
+| FP8 e4m3 | 1.16-1.21× | 512+ optimal |
+
+For modern quantized LLM inference deployment:
+- **BF16 inference with INT4 quant**: ~12% automatic speedup
+- **FP8 inference with structured weights**: ~21% automatic speedup
+- Both REAL, REPRODUCIBLE, no code changes needed
+
+This is the most practical headline of the entire investigation.
+
+## Summary table: ALL practical cuBLAS speedups
+
+| Precision | Workload | Speedup |
+|-----------|----------|--------:|
+| BF16 | Random data (typical FFN training) | 1.00× |
+| BF16 | INT4-quantized inference (GPTQ) | **1.12×** |
+| BF16 | Square 8192³ K-row identical | 1.41× |
+| BF16 | 600W cap + structured | 1.55× |
+| FP8 | Random data | 1.00× |
+| FP8 | INT4-quantized FP8 | **1.21×** |
+| FP8 | Square 8192³ K-row identical | 1.55× |
+| FP8 | 600W cap + structured | 1.80× |
+| FP8 | 400W cap + structured | 1.89× |
+| FP16 | Square 8192³ K-row identical | 1.51× |
+| Custom microbench | Various optimizations | 1.18-2.09× |
