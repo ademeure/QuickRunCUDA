@@ -647,3 +647,49 @@ For all 3 tested precisions (BF16, FP16, FP8):
 - N > K (gate/up projections): only 1.01× (no benefit)
 
 Mechanism is universal across precisions; only magnitude varies.
+
+---
+
+## cuBLAS transpose effect
+
+| trans_A | trans_B | Random TFLOPS | K-id TFLOPS | Ratio |
+|--------:|--------:|--------------:|------------:|------:|
+| N | N | 1505 | 2126 | **1.41×** |
+| N | **T** | 1516 | 1582 | 1.04× |
+| T | N | 1494 | 2117 | **1.41×** |
+| T | **T** | 1506 | 1570 | 1.04× |
+
+**trans_B=T loses the speedup!** trans_A doesn't matter.
+
+## Mechanism
+
+When `trans_B=N`: B is loaded in K×N order from DRAM. Our K-row-identical
+fill means each K row in DRAM is the same → cuBLAS preserves this in SMEM
+→ K-row dedup activates.
+
+When `trans_B=T`: cuBLAS internally transposes B during SMEM load. The
+"K direction" in MMA now corresponds to columns of original DRAM. Our
+data structure (K-row identical at DRAM) becomes "column identical"
+in the transposed SMEM view, which doesn't trigger the K-row dedup.
+
+## Practical implication
+
+For applications using cuBLAS:
+- Use `trans_B=N` (default for weight × activation: weights in column-major)
+- Storing B in transposed layout LOSES the optimization
+- Most ML frameworks store weights column-major → optimization accessible
+
+For PyTorch / Hugging Face:
+- Linear layer weights stored as (out, in) → `trans_A=N, trans_B=T` if using nn.Linear directly
+- BUT cuBLAS API typically calls with `B = weight^T` already in the right shape
+- Net result: depends on framework internals
+
+## Final scope refinement
+
+The 1.41× speedup requires:
+- B has K-row identity (consecutive K rows match)
+- N ∈ {4096, 8192, 16384} (or M ≥ N for "K ≥ N" rule)
+- M ≥ 256 (compute-bound)
+- **trans_B = N** (no internal transpose)
+
+All four conditions must be met.
