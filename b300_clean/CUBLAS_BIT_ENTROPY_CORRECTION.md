@@ -552,3 +552,36 @@ The hardware ceiling (2252 TFLOPS) is reachable only with:
 2. Low entropy data (avoids power throttling)
 3. Square or compute-bound shape
 4. Sufficient M (≥256)
+
+---
+
+## Shape-size sensitivity: speedup only at large shapes
+
+The bit-entropy speedup is power-throttling-driven, so requires shapes
+LARGE enough to sustain compute pressure:
+
+| Shape | Random | Const | Ratio | Why |
+|-------|-------:|------:|------:|-----|
+| 256³ | 22 | 22 | 1.00× | Too small, launch-overhead bound |
+| 512³ | 135 | 135 | 1.00× | Below throttle threshold |
+| 1024³ | 577 | 582 | 1.00× | DRAM-bound, doesn't hit cap |
+| 2048³ | 1329 | 1357 | 1.02× | Just starting compute pressure |
+| 4096³ | 1596 | 1847 | **1.15×** | Compute-bound, throttling visible |
+| **8192³** | 1678 | 2252 | **1.34×** | Maximum effect |
+| 16384³ | 1776 | 2205 | 1.24× | Some L2 pressure, slightly less |
+
+**Sweet spot for bit-entropy effect: 4096-8192 cube.**
+
+## Practical implication for ML deployment
+
+| Model class | Hidden dim | Expected bit-entropy speedup |
+|-------------|-----------:|-----------------------------:|
+| Tiny (<512) | <512 | None (DRAM-bound) |
+| Small (1B params) | ~2048 | ~1.02× |
+| Medium (Llama 8B) | 4096 | ~1.15× |
+| Large (Llama 70B) | 8192 | ~1.34× |
+| XL (Mixtral 8×22B) | 6144 | ~1.20× |
+| XXL | 16384+ | ~1.20-1.25× |
+
+For the largest deployed models (Llama 70B), the speedup is maximal. Smaller
+models or smaller batches see proportionally less benefit.
