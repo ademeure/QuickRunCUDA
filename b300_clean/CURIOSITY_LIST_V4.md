@@ -58,8 +58,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 
 ## C. SASS instruction encoding + immediate forms
 
-- [ ] **C1 — Maximum immediate width** for IMAD, FFMA, IMNMX. Test boundary
-  cases (just-fits vs spill-to-ULDC).
+- [x] **C1 — Maximum immediate width**: B300 SASS embeds **up to 32-bit
+  immediates directly** in IMAD, LOP3, IMNMX, FFMA. No ULDC fallback
+  observed. FFMA emits FP32 literal inline (e.g. 4.295e+09).
+  Compiler folds dead IMNMX into LOP3 XOR. Commit history.
 - [ ] **C2 — `IMAD.MOV` (mov via IMAD)**: when nvcc uses it, throughput
   benefit vs `MOV`.
 - [x] **C3 — `LOP3.LUT`**: 256 truth tables. Throughput, latency, hot-path tricks.
