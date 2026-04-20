@@ -258,7 +258,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 - [ ] **N3 — `cctl::ivall` / `cctl::wb`**: does B300 emit these for any
   pattern? (Earlier finding: NO. Verify under different conditions.)
 - [ ] **N4 — `cudaCacheConfigPreferShared`** effect.
-- [ ] **N5 — `__threadfence_block` vs nothing** in single-warp test.
+- [x] **N5 — `__threadfence_*` cost**: CTA scope = +4 cy, GPU scope = +264
+  cy (9.4× slower!), SYS scope = +2477 cy (89× slower!). Explains the
+  atom.release.gpu 9× slowdown. Use CTA scope whenever possible.
+  Commit history.
 
 ## O. Surprises / falsifiable claims
 
