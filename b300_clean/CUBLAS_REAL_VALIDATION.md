@@ -567,3 +567,48 @@ Shapes where N >> M and N >> K (Llama FFN with hidden×expand): no benefit.
 This is consistent with cuBLAS choosing different algorithms based on
 where the bottleneck might be (compute vs memory bandwidth).
 
+
+---
+
+## Llama FFN DOWN projection (large K, small N): WORKS
+
+| Model | Layer | Shape | Random TFLOPS | K-id TFLOPS | Ratio |
+|-------|-------|-------|--------------:|------------:|------:|
+| Llama 70B | FFN gate/up | M×28672×8192 | 1490 | 1516 | 1.01× |
+| Llama 70B | **FFN down** | M×8192×28672 | 1579 | **2222** | **1.40×** |
+| Llama 8B | FFN gate/up | M×14336×4096 | 1449 | 1472 | 1.01× |
+| Llama 8B | **FFN down** | M×4096×14336 | 1502 | **1905** | **1.26×** |
+
+## Asymmetric FFN benefit
+
+For SwiGLU FFN: x → gate(W_gate * x) * (W_up * x) → W_down * intermediate
+
+The DOWN projection (large K, small N) benefits from K-row dedup because:
+- N = hidden_size (small, e.g. 8192)
+- K = intermediate_size (large, e.g. 28672)
+- cuBLAS uses K-row-dedup-friendly algorithm when K > N
+
+The UP/GATE projections (small K, large N) don't:
+- N = intermediate_size (large)
+- K = hidden_size (small)
+- cuBLAS uses different algorithm when N > K
+
+## Llama training real impact
+
+For Llama training matmuls:
+- 1/3 of FFN matmuls (down projection): 1.26-1.40× speedup
+- 2/3 of FFN matmuls (gate/up projections): 1.01× (no benefit)
+- Average across all FFN: ~1.10-1.13× (still meaningful for cluster cost)
+
+For 100-GPU training cluster: ~10% more effective throughput from this
+optimization for FFN-dominated computation.
+
+## Key takeaway
+
+**The K-row dedup optimization benefits cuBLAS GEMMs where K ≥ N** in
+addition to the original square-shape requirement. This includes:
+- FFN down projections (large K)
+- Attention output projection (large K from heads*head_dim)
+- Many "contracting" operations
+
+It does NOT benefit GEMMs where N >> K (FFN expand projections).
