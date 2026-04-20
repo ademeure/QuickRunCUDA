@@ -220,7 +220,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 ## O. Surprises / falsifiable claims
 
 - [ ] **O1 — Compiler emits `STG.NA` when?** (Non-temporal store)
-- [ ] **O2 — Tensor core warmup**: first MMA after idle takes how long?
+- [x] **O2 — Tensor core warmup**: **NO warmup penalty** for mma.sync.
+  First MMA = steady-state MMA (~20 cy inc. clock64 overhead, 16 cy
+  pipeline). No need for dummy-MMA warmup. See `b300_clean/O2_TENSOR_WARMUP.md`.
 - [ ] **O3 — Branch density vs back-pressure**: kernel with 50% branches
   vs 0%.
 - [ ] **O4 — IMAD wide multiply** (32x32→64) latency.
