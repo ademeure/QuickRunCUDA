@@ -50,7 +50,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   cases (just-fits vs spill-to-ULDC).
 - [ ] **C2 — `IMAD.MOV` (mov via IMAD)**: when nvcc uses it, throughput
   benefit vs `MOV`.
-- [ ] **C3 — `LOP3.LUT`**: 256 truth tables. Throughput, latency, hot-path tricks.
+- [x] **C3 — `LOP3.LUT`**: 256 truth tables. Throughput, latency, hot-path tricks.
+  → 22b06b3: imm-INDEPENDENT (12 imms 14.08±0.04% TIOPS); lat 4.5 cy;
+    0.5/SMSP/cy = 14.16 TIOPS @ 1500 MHz; 3 unique reads = no port penalty.
+    See `b300_clean/C3_LOP3_LUT_DEEP.md`.
 - [ ] **C4 — `IADD3` with predicate output**: vs IADD3 + ISETP. Cycle cost.
 - [ ] **C5 — `BREV` (bit reverse)**: throughput, latency. Often-overlooked
   for radix sort.
