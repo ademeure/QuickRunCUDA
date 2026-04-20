@@ -1439,3 +1439,48 @@ For inference serving with kernel launch overheads of ~10-50us per matmul:
 
 This means even single-batch inference (one matmul at a time) benefits from
 the mechanism if data triggers it - no batch effects needed.
+
+## Maximum practical for production Llama-70B (FP8 + 2:4 structured sparse)
+
+```
+FP8 Llama-70B FFN (K=8192, N=28672):
+M (batch)  Random TF   + 2:4 sparse   Boost
+1024       2320        2630           +13.3%
+2048       2508        2870           +14.4%
+4096       2580        2945           +14.1%
+8192       2644        3026           +14.4%
+```
+
+**Maximum practical Llama-70B FFN throughput on B300:**
+- **FP8 + 2:4 structured sparse: 3026 TFLOPS at M=8192**
+- This is achievable TODAY with quantization (FP8) + structured pruning (2:4)
+
+### Practical deployment hierarchy (sorted by realism)
+
+| Stack | Llama-70B FFN @ M=8192 | % of HW peak |
+|-------|------------------------|--------------|
+| BF16 dense (typical baseline) | 1495 TF | 33% |
+| BF16 + structured 2:4 sparse | 1660 TF | 37% |
+| FP8 dense | 2644 TF | 59% |
+| **FP8 + structured 2:4 sparse** | **3026 TF** | **67%** |
+| (Synthetic K-id ceiling, unreachable) | (4060 TF FP8) | (90%) |
+
+### Required engineering investments
+
+To extract maximum (3026 TF):
+1. Quantize weights to FP8 e4m3 (modest accuracy loss, mature tooling)
+2. Apply structured 2:4 sparsity to weights (GPTQ-style pruning + structure)
+3. Use batch sizes ≥1024 (continuous batching, common in serving)
+
+Without these: stuck at ~1495 TF (BF16 dense). The 2× gap between baseline
+and max practical is bridgeable via 2-3 weeks of engineering investment.
+
+### Why not synthetic K-id ceiling?
+
+The 4060 TF synthetic ceiling (FP8 K-id at N=K=8192) requires N=K which
+Llama FFN never satisfies (N/K=3.5). Even with weight pre-arrangement to
+trigger K-row identity in synthetic kernels, real models won't see this.
+
+The realistic ceiling is ~3000 TF for FP8 + structured sparse Llama-70B
+inference at large batch sizes. This is the operational target for
+deploying B300 for LLM serving.
