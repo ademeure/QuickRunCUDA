@@ -168,7 +168,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   bounds-check predicate (P0 disappears). Use for known-bounded array
   indices to remove SETP+IMAD bounds machinery. Commit history.
 - [ ] **G4 — `__restrict__` impact on real schedules**.
-- [ ] **G5 — Loop unrolling thresholds** (compiler default vs explicit).
+- [x] **G5 — Loop unrolling thresholds**: default = FULL unroll;
+  `#pragma unroll 1` is **6.5× SLOWER** (26.3 vs 4.06 cy/FFMA);
+  unroll 4 = 1.9× slower; unroll 16 = 1.45× slower. Trust default.
+  Commit history.
 - [ ] **G6 — `-dlcm=ca/cg/cs` default cache mode** behavior.
 - [ ] **G7 — `__forceinline__` vs LTO link-time inline**.
 - [ ] **G8 — Whole-program optimization** with separate compilation.
