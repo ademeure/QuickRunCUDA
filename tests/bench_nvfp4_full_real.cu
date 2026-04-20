@@ -46,15 +46,21 @@ void kernel(float* A, float* B, float* C, int ITERS, int seed, int u2) {
     if (threadIdx.x == 0) {
         for (int i = 0; i < 64; i++) {  // 32 threads * 2 dwords
             unsigned int v = 0;
-            for (int n = 0; n < 8; n++) v |= ((i*8+n) & 7) << (n*4);
+            for (int n = 0; n < 8; n++) {
+                // Use full 0..15 range so sign bit (bit 3) varies — random walk
+                unsigned int r = (i * 8 + n) * 0x9E3779B1u;
+                r ^= r >> 16;
+                v |= (r & 0xF) << (n * 4);
+            }
             Au[i] = v;
         }
-        for (int i = 0; i < 32; i++) Bs[i] = 0x38 + (i & 0x7);  // ~1.0 area
+        for (int i = 0; i < 32; i++) Bs[i] = 0x38 + (i & 0x7);
     }
     __syncwarp();
 
     float facc = 0.0f;
     long long iacc64 = 0;  // for mode 7 (int64 to avoid overflow)
+    int       iacc32 = 0;  // for mode 8 (int32 — overflows with one-sided data, fine with random signs)
 
     unsigned long long t0, t1;
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0));
@@ -169,6 +175,47 @@ void kernel(float* A, float* B, float* C, int ITERS, int seed, int u2) {
         // For this test the iterations don't drift, so int32 is fine.
         // Convert at very end.
         facc += (float)warp_int_sum * (1.0f / 1024.0f);
+
+#elif MODE == 8
+        // ★ EXPECTED OPTIMAL with random-sign data (random walk fits int32):
+        //   HW HADD2 decode + 1 IMAD/block + per-THREAD int32 accumulator
+        //   + ONE final redux.sync.add at end. No int64 overhead.
+        {
+            unsigned int sum_pair_8 = 0;
+            #pragma unroll
+            for (int n = 0; n < 4; n++) {
+                unsigned short b = (unsigned short)((dword0 >> (n*8)) & 0xFF);
+                unsigned int hpair;
+                asm volatile("{ .reg .b8 _b,_p; mov.b16 {_b,_p}, %1; "
+                             "cvt.rn.f16x2.e2m1x2 %0, _b; }"
+                             : "=r"(hpair) : "h"(b));
+                asm volatile("add.rn.f16x2 %0, %0, %1;"
+                             : "+r"(sum_pair_8) : "r"(hpair));
+            }
+            #pragma unroll
+            for (int n = 0; n < 4; n++) {
+                unsigned short b = (unsigned short)((dword1 >> (n*8)) & 0xFF);
+                unsigned int hpair;
+                asm volatile("{ .reg .b8 _b,_p; mov.b16 {_b,_p}, %1; "
+                             "cvt.rn.f16x2.e2m1x2 %0, _b; }"
+                             : "=r"(hpair) : "h"(b));
+                asm volatile("add.rn.f16x2 %0, %0, %1;"
+                             : "+r"(sum_pair_8) : "r"(hpair));
+            }
+            unsigned int two_pair = 0x40004000u;
+            asm volatile("mul.rn.f16x2 %0, %0, %1;" : "+r"(sum_pair_8) : "r"(two_pair));
+            short v0, v1;
+            asm volatile("cvt.rni.s16.f16 %0, %1;" : "=h"(v0) : "h"((unsigned short)(sum_pair_8 & 0xFFFF)));
+            asm volatile("cvt.rni.s16.f16 %0, %1;" : "=h"(v1) : "h"((unsigned short)(sum_pair_8 >> 16)));
+            int block_sum_x2 = (int)v0 + (int)v1;
+            int scale_int_8;
+            {
+                unsigned int e = ((unsigned)scale_byte >> 3) & 0xF;
+                unsigned int m = (unsigned)scale_byte & 0x7;
+                scale_int_8 = (e == 0) ? (int)m : (int)((8u + m) << (e - 1));
+            }
+            iacc32 += block_sum_x2 * scale_int_8;
+        }
 
 #elif MODE == 7
         // BEST OF BOTH: HW E2M1 cvt + HADD2 packed sum (fast per-element work)
@@ -401,8 +448,13 @@ void kernel(float* A, float* B, float* C, int ITERS, int seed, int u2) {
     facc += __shfl_xor_sync(0xFFFFFFFF, facc,  2);
     facc += __shfl_xor_sync(0xFFFFFFFF, facc,  1);
 #elif MODE == 7
-    // Already reduced per tile + accumulated in int64; convert to fp32
     facc = (float)iacc64 * (1.0f / 1024.0f);
+#elif MODE == 8
+    // Mode 8: per-thread int32 acc → ONE final redux.sync.add → fp32
+    int rsum;
+    asm volatile("redux.sync.add.s32 %0, %1, 0xFFFFFFFF;"
+                 : "=r"(rsum) : "r"(iacc32));
+    facc = (float)rsum * (1.0f / 1024.0f);
 #endif
     // Modes 3/4/5/6 already reduced (per-tile or per-kernel) — facc is uniform across lanes.
 
