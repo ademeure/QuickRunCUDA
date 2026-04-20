@@ -561,6 +561,25 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 unsigned short ve = h(k_idx, n_idx_e);
                 unsigned short vo = h(k_idx, n_idx_o);
                 w = ((unsigned)vo << 16) | ve;
+            } else if (mode >= 6200 && mode <= 6216) {
+                // K-direction sparse zeros: K rows 0..K_zero-1 = zero, rest = random
+                // K_zero = mode - 6200 (range 0..16)
+                int K_zero = mode - 6200;
+                int k = idx / 64;
+                if (k < K_zero) {
+                    w = 0;
+                } else {
+                    w = r;
+                }
+            } else if (mode >= 6300 && mode <= 6316) {
+                // K-direction sparse zeros INVERTED: K rows K_zero..15 = zero, rest = random
+                int K_zero = mode - 6300;
+                int k = idx / 64;
+                if (k >= (16 - K_zero)) {
+                    w = 0;
+                } else {
+                    w = r;
+                }
             } else if (mode >= 6100 && mode <= 6107) {
                 // SUB-TILE-level sparse zeros: each sub-tile is either ALL ZERO or ALL RANDOM
                 // K_zero = mode - 6100 sub-tiles forced to zero, others random.
