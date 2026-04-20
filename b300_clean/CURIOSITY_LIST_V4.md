@@ -236,7 +236,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   cudaMemset's 7.57 TB/s NINJA recipe.
 - [ ] **Q2 — Fast SHMEM-only reduction** (single block): 32 KB → 1 value
   in fewest cycles.
-- [ ] **Q3 — Fast cross-warp reduction** without SHMEM: shfl chain.
+- [x] **Q3 — Fast cross-warp reduction** without SHMEM: `redux.sync.add`
+  is **2.34× FASTER** than 5-step SHFL chain (11.6 vs 27.2 cy/reduce).
+  Integer only (no .f32). REDUX.SUM writes to uniform register.
+  See `b300_clean/Q3_WARP_REDUCE_RECIPES.md`.
 - [ ] **Q4 — Vectorized scan** (prefix sum) at SHMEM SoL.
 - [ ] **Q5 — Sort 1024 keys in single block at SoL**.
 - [ ] **Q6 — Transpose 32×32 SHMEM tile** without bank conflicts.
