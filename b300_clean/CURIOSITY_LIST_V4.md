@@ -68,7 +68,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   → 22b06b3: imm-INDEPENDENT (12 imms 14.08±0.04% TIOPS); lat 4.5 cy;
     0.5/SMSP/cy = 14.16 TIOPS @ 1500 MHz; 3 unique reads = no port penalty.
     See `b300_clean/C3_LOP3_LUT_DEEP.md`.
-- [ ] **C4 — `IADD3` with predicate output**: vs IADD3 + ISETP. Cycle cost.
+- [x] **C4 — `IADD3` with predicate output**: carry chain (add.cc+addc)
+  is 42% slower than plain IADD3; IADD3+setp+@p is 2.3× slower; IMAD.IADD
+  21% faster (fewer SASS inst). Commit history.
 - [x] **C5 — `BREV`**: 3.54 TIPS_inst at 1500 MHz = 0.125/SMSP/cy (XU pipe, 8 cy/inst). See A6.
 - [x] **C6 — `POPC` / `FLO`**: 3.54 / 3.53 TIPS_inst = same as BREV (XU pipe). See A6.
 - [x] **C7 — `PRMT`**: 14.08 TIPS_inst = 0.5/SMSP/cy (ALU pipe peak). See A6.
