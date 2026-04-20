@@ -699,3 +699,48 @@ hardware) in this investigation chain:
 4. **Random sparsity dip → corrected: structured sparsity DOES speedup**
 
 Each correction emerged from re-running with a more careful baseline.
+
+## Mechanism stacking: NOT strongly multiplicative
+
+Tested K-id (B is K-row identical) combined with 2:4 structured sparsity
+in the N-direction:
+
+```
+N      K-id alone  2:4 alone  Combined  Stacking?
+8192   2092        1647       2116      Best alone wins (~K-id)
+9216   1498        1627       1657      Best alone (2:4) + small K-id bonus
+16384  2086        1640       2109      K-id wins (combined ~K-id alone)
+24576  1503        1643       1693      2:4 wins + small K-id bonus
+```
+
+**Mechanisms saturate at shared ceiling.** When K-id activates (N in window):
+combined ≈ K-id alone. When K-id doesn't activate: combined ≈ 2:4 alone +
+small (~30 TF) K-id residual.
+
+This suggests both mechanisms gate the same multiplier circuits. Once
+one mechanism reduces multiplier power, the other can only add marginal
+gains.
+
+### Maximum achievable speedup
+
+The combined K-id + 2:4 ceiling is 2116 TF (1.43×). Compare:
+- K-id alone: 2092 TF (1.41×)
+- 2:4 alone: 1647 TF (1.11×)
+- Full constant: 2253 TF (1.52×)
+- Theoretical: 2240 TF (100%) at 2032 MHz boost
+
+So full constant exceeds even theoretical because the multiplier's effective
+peak BUMPS UP when fully gated (multiplier-by-zero shortcut + clock stays
+at boost). Real ML can never approach this.
+
+### Final mechanism summary (after 4 rule-#9 corrections)
+
+| Mechanism | Trigger | Shape Sensitivity | Max Speedup |
+|-----------|---------|-------------------|-------------|
+| Pattern dedup (K-id, ABAB chunk=1) | data structure | YES (N ∈ {K/2,K,2K}) | 1.42× |
+| Structured sparsity (2:4) | predictable zero positions | NO | 1.11× |
+| Zero-mult shortcut (>75% zeros) | bulk zero values | NO | up to 1.52× |
+| Universal entropy detector (full const) | bit-entropy = 0 | NO | 1.52× |
+
+Combined ceiling: 1.52× (matches full-constant case). All real workloads
+fall well below all triggers → ~2-6% practical inference benefit confirmed.
