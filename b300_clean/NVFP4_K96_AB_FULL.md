@@ -265,3 +265,42 @@ patterns cluster within ±10 W of baseline.
 - Real model weights (BF16 or FP8 quantized): predict + measure.
 - Validate the "mixing maximizes variance" observation (50/50 outlier
   > 100% pure outlier) with popcount-controlled mix tests.
+## Addendum (unlocked clocks / TDP-cap regime)
+
+Measurement: unlocked (`-rgc`), 10s sustained per mode, 10s cooldown
+between modes, sampled clk+pwr every 0.5s for 8s after 3s ramp, 16
+samples.
+
+| mode         | clk MHz  | pwr W    | PFLOPs | TF/W  | notes |
+|--------------|----------|----------|--------|-------|-------|
+| **all-0**    | **2032** | **633**  | **14.78** | **23.36** | zero-skip, 463W under TDP |
+| 5-pos        | 2002     | 1095     | 14.56  | 13.29 | TDP cap |
+| 8 pos        | 1939     | 1087     | 14.10  | 12.98 | TDP cap |
+| 5 cent       | 1920     | 1095     | 13.97  | 12.76 | TDP cap |
+| 9 asym       | 1856     | 1094     | 13.50  | 12.35 | TDP cap |
+| 16 rand      | 1788     | 1095     | 13.01  | 11.88 | TDP cap |
+| 16 -0→+0     | 1790     | 1097     | 13.02  | 11.87 | TDP cap |
+
+PFLOPs derived from 7.31 PF × clk/1005 (98.5% MFU fixed at all clocks;
+cy/MMA constant at 128 from earlier clock64 measurement).
+
+### Two production-relevant findings
+
+1. **All-zero B triggers zero-skip path**: B=const+0 runs at full
+   2032 MHz AND 463 W below TDP cap (633 W vs ~1095 W for all other
+   modes). **23.4 TF/W** — nearly 2× better than any
+   non-zero-skip config. Applies to post-ReLU activations.
+
+2. **Under TDP cap, data quality directly determines throughput**.
+   Same 1095 W power; achievable clock varies 1788-2002 MHz (12%)
+   based on B distribution:
+   - 5-pos:  2002 MHz → 14.56 PFLOPs (best non-zero-skip)
+   - 8-pos:  1939 MHz → 14.10
+   - 5-cent: 1920 MHz → 13.97
+   - 9-asym: 1856 MHz → 13.50
+   - 16-rand: 1788 MHz → 13.01 (12% slower than 5-pos)
+
+This inverts the 1005 MHz fixed-clock analysis: without clock
+headroom, data quality = energy efficiency; with clock headroom
+(unlocked + TDP cap), data quality = throughput.
+
