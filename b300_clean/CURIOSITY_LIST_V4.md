@@ -264,7 +264,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 - [x] **O5 — `__brevll` vs reverse lookup table**: BREV intrinsic always
   wins. `__brev`=3.53 TIPS, shift-based=3.53 TIPS (compiler folds to
   BREV), 8-bit LUT=0.93 TIPS (4× slower due to constant mem). Commit history.
-- [ ] **O6 — Atomic on volatile pointer**: SASS difference vs non-volatile.
+- [x] **O6 — Atomic SASS variants**: compiler picks REDG (faster) when
+  return value unused, ATOMG (slower) when used. acquire/release
+  forces ATOMG. _system suffix = STRONG.SYS scope (cross-device).
+  Volatile* not supported by atomicAdd intrinsic. Commit history.
 - [x] **O7 — `clock()` vs `clock64()` cost**: clock64 is **2× CHEAPER**
   than clock() (2.1 vs 4.0 cy/read after baseline subtract). Both
   compile to `CS2R SR_CLOCKLO`; clock() pays mask/shift overhead.
