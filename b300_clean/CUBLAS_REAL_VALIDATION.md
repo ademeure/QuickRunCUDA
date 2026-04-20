@@ -612,3 +612,38 @@ addition to the original square-shape requirement. This includes:
 - Many "contracting" operations
 
 It does NOT benefit GEMMs where N >> K (FFN expand projections).
+
+---
+
+## FP16 cuBLAS shape scan
+
+| Shape | Random TFLOPS | K-id TFLOPS | Ratio |
+|-------|--------------:|------------:|------:|
+| 8192³ | 1385 | 2092 | **1.51×** |
+| 16384³ | 1449 | 2174 | **1.50×** |
+| 8192×8192×28672 (K>N) | 1461 | 2188 | **1.49×** |
+| 8192×28672×8192 (N>K) | 1376 | 1401 | 1.01× |
+
+## FP16 vs BF16 vs FP8
+
+| Precision | Square 8192³ random | Square 8192³ K-id | Speedup |
+|-----------|--------------------:|------------------:|--------:|
+| FP16 | 1385 | 2092 | **1.51×** |
+| BF16 | 1486 | 2104 | 1.41× |
+| FP8 e4m3 | 2625 | 4082 | 1.55× |
+
+FP16 has **slightly higher** speedup than BF16 (1.51× vs 1.41×) at same shape.
+Both use kind::f16 multiplier on B300 but FP16 has more data-dependent power
+(more mantissa bits to toggle).
+
+FP8 has highest speedup (1.55×) because of even more multiplier work per
+MMA (K=32 vs K=16).
+
+## All precisions follow same K≥N rule
+
+For all 3 tested precisions (BF16, FP16, FP8):
+- Square shapes (K=N): full 1.41-1.55× speedup
+- K > N (down projections): full 1.40-1.49× speedup
+- N > K (gate/up projections): only 1.01× (no benefit)
+
+Mechanism is universal across precisions; only magnitude varies.
