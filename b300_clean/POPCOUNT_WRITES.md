@@ -45,25 +45,35 @@ model applies symmetrically.
 | L2   | 405       | 235        | 0.58       |
 | DRAM | 637       | 405        | 0.64       |
 
-L2 writes are ~58% the power of L2 reads at peak. This is partly because
-write throughput (~3 TB/s) is ~5× lower than read throughput (~16 TB/s),
-so per-second wire activity is much lower.
+### 3. The bandwidth picture (ncu-verified)
+ncu metrics for matched read vs write kernels (.cg, 64 MB ws):
 
-### 3. Per-byte energy (estimate)
-| op           | active W | BW (TB/s) | nJ/byte |
-|--------------|----------|-----------|---------|
-| L2 read d=16 | 405      | 16        | 25.3    |
-| L2 write d=16| 235      | 3         | 78.4    |
-| DRAM read    | 637      | 7.5       | 84.9    |
-| DRAM write   | 405      | 3.5       | 115.7   |
+| metric                        | READ      | WRITE     | ratio |
+|-------------------------------|-----------|-----------|-------|
+| wall-clock effective BW       | 15.9 TB/s | 3.78 TB/s | 4.2×  |
+| `lts__t_bytes.sum.per_second` | 20.81 TB/s| 11.62 TB/s| 1.79× |
+| `dram__bytes.sum.per_second`  | 319 GB/s  | 1.11 TB/s | 0.29× |
+| L2 sector amplification (lts/l1tex) | ~1.0× | 1.50× (write-allocate) | — |
 
-**Writes burn ~3× more energy per byte than reads at L2.** Likely because
-writes traverse more SerDes stages (write-back path through L2 → mesh
-back-channel) and require committing data to a multi-port SRAM array.
+**The L2 port has only 1.8× read-vs-write asymmetry** (21 / 12 TB/s).
+The remaining 4.2× wall-clock gap comes from:
+- **Write-allocate amplification** (1.5× extra sectors per demand-write)
+- **DRAM write-back leak** (1.1 TB/s leaving L2 even at "L2-fitting" 64 MB ws)
 
-DRAM write energy is similar to DRAM read (~36% higher). HBM PHY
-write energy includes activation + write driver power; reads include
-sense-amp + DBI decode.
+So the L2 itself isn't 4× slower — the demand path through write-allocate
++ writeback eviction makes it look 4× slower from the kernel's POV.
+
+### 4. Per-byte energy (estimate)
+| op           | active W | wall-effective BW | nJ/byte (demand) |
+|--------------|----------|-------------------|------------------|
+| L2 read d=16 | 405      | 15.9 TB/s         | 25.5             |
+| L2 write d=16| 235      | 3.78 TB/s         | 62.2             |
+| DRAM read    | 637      | 7.4 TB/s          | 86.1             |
+| DRAM write   | 405      | 3.5 TB/s          | 115.7            |
+
+Writes look ~2.4× more expensive per "demanded" byte at L2 — but at the
+LTS port level (real internal traffic) the gap is closer to 1.4× because
+writes carry more sector activity per kernel byte.
 
 ### 4. Write asymmetry preserved
 At d=32 (all ones) - d=0 (all zeros):
