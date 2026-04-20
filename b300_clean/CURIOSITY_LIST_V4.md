@@ -221,7 +221,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   for both S32 and U32 → FMA pipe peak (since they take 2 source operands).
 - [x] **M4 — `FMNMX` (FP min/max) throughput**: 0.99/SMSP/cy (28 TIPS_inst)
   for f32, f32.NaN, f16x2 — all peak. NaN-aware variant has zero overhead.
-- [ ] **M5 — `__viaddmin / __vimax3` SIMD intrinsics**.
+- [x] **M5 — SIMD intrinsics**: most native (ALU peak ~0.4/SMSP/cy):
+  __viaddmax_s32, __vimax3_s32, __vsadu4, __vmaxs2. **EMULATED & slow**:
+  __vmaxu4 (5×), __vavgu2 (3.4×). Always SASS-check.
+  Commit history.
 - [ ] **M6 — Saturated ops (`add.sat`, `sub.sat`)** throughput.
 - [ ] **M7 — `bfind` throughput** (bit find).
 - [ ] **M8 — Carry propagation** in IADD chains: hardware carry vs explicit
