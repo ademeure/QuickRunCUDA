@@ -204,6 +204,9 @@ Provenance documents:
 | **FP8 GPTQ** | CUBLAS_REAL_VALIDATION.md | FP8 quantized inference: **1.21× AUTOMATIC** speedup at group_size 512+ |
 | **CRITICAL CORRECTION** | CUBLAS_BIT_ENTROPY_CORRECTION.md | **Speedup is PRIMARILY BIT ENTROPY of B, not K-row similarity**. Each random mantissa bit costs ~70 TFLOPS. INT4 benefits from low entropy, not from structure. |
 | **TRUE HARDWARE PEAKS** | CUBLAS_BIT_ENTROPY_CORRECTION.md | BF16 2252 TF (100.5% spec), FP8 4420 TF (98.5% spec) with constant data. cuBLAS published specs are POWER-CAPPED measurements. |
+| **Sustained verified** | CUBLAS_BIT_ENTROPY_CORRECTION.md | 5-run sustained test: const ROCK STABLE 2252 TF, random oscillating 1668-1679 TF. 1.34× speedup robust. Const ALSO more PREDICTABLE for SLA-bound deployments. |
+| **Shape-size sweep** | CUBLAS_BIT_ENTROPY_CORRECTION.md | Bit-entropy effect emerges at ≥4096 shape, peaks at 8192³ (1.34×), holds through 32768³ |
+| **Microbench vs cuBLAS** | CUBLAS_BIT_ENTROPY_CORRECTION.md | cuBLAS 2252 TF (92% theoretical), microbench 1922 TF (78%); cuBLAS wins via cluster_group::2 |
 | **trans-aware optimization** | CUBLAS_REAL_VALIDATION.md | Both trans_B=N (K-row identical) and trans_B=T (N-row identical) give ~1.4×; layout-agnostic |
 | Sub-tile partial break | SUBTILE_PARTIAL_BREAK.md | Linear ~19W per broken byte; first byte +32W activation |
 
