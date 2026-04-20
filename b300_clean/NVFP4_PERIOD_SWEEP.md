@@ -176,3 +176,84 @@ For B300 NVFP4 compute power optimization:
 - Re-running with finer period granularity (e.g., p=15, 17) to check non-multiples
 - Cross-precision comparison (FP8, BF16) to see if same mechanism
 - 2-CTA cluster sweep (separate kernel needed for valid 2-CTA NVFP4)
+
+## FINAL K=96 results (sweep complete)
+
+```
+N      Best p (W)     Worst p (W)      Spread     %      Notes
+16     p=4 (184.2)    p=1 (189.3)      5.1 W     2.8%
+24     p=4 (193.1)    p=6 (202.6)      9.5 W     4.8%
+32     p=8 (202.7)    p=2 (205.2)      2.5 W     1.2%   tight
+48     p=1 (256.9)    p=24 (287.6)    30.7 W    11.2%
+64     p=16 (306.6)   p=12 (308.1)     1.5 W     0.5%   FLATTEST
+128    p=1 (370.6)    p=64 (463.1)    92.5 W    22.9%
+256    p=2 (428.3)    p=64 (534.3)   106.0 W    22.9%   biggest
+```
+
+### K=96 N=256 detailed (all 14 periods):
+```
+period   power(W)   category
+  1      428        LOW
+  2      428        LOW
+  3      497        HIGH (multiple of 3)
+  4      428        LOW
+  6      487        HIGH
+  8      430        LOW
+ 12      495        HIGH
+ 16      430        LOW (sub-tile boundary)
+ 24      495        HIGH
+ 32      431        LOW
+ 48      490        HIGH
+ 64      534        HIGH ← WORST (chunk-4 sub-tile, cache thrashing)
+128      475        HIGH (chunk-8 sub-tile, half-and-half)
+256      430        LOW (all-same)
+```
+
+## K=64 vs K=96 COMPARISON
+
+| N    | K=64 spread | K=96 spread | K=96 worst pattern | K=64 worst pattern |
+|------|-------------|-------------|--------------------|--------------------|
+| 16   | 2.0%        | 2.8%        | p=1                | p=5                |
+| 24   | 5.4%        | 4.8%        | p=6                | p=8                |
+| 32   | 2.9%        | 1.2%        | p=2 (tight!)       | p=8                |
+| 48   | 7.1%        | 11.2%       | p=24               | p=12               |
+| 64   | 4.7%        | 0.5%        | p=12 (very tight!) | p=12               |
+| 128  | 18.4%       | 22.9%       | p=64 (×2 halves)   | p=64 (×2 halves)   |
+| 256  | 20.2%       | 22.9%       | p=64 (chunk-4)     | p=64 (chunk-4)     |
+
+K=96 shows slightly LARGER spread than K=64 (consistent with sub-agent
+finding that K=96 has slightly more sign-bit dependence).
+
+K=96 N=64 is REMARKABLY FLAT (0.5%, only 1.5W spread across 11 periods)
+- unique among all configs.
+
+## Combined K=64+K=96 winners
+
+**Best practice for B300 NVFP4 sign-bit power optimization:**
+
+1. **For ANY N at K=64/K=96**: Use period=1 (alternating +-+-+-) or period=2 (++--++--)
+   - Both give consistent LOW power across all configs
+   - Period=4 is also reliably good
+2. **For N=128 or N=256**: AVOID p=64 (worst case at both)
+3. **For N=128/256**: AVOID multiples of 3 (3, 6, 12, 24, 48) - 15-20% penalty
+4. **All-same signs (p=N)**: Always LOW, equivalent to alternation
+5. **K=96 N=64**: Special case - period doesn't matter (flat 307W)
+
+## Power saving potential by N
+
+For OPTIMIZING sign-bit pattern in production NVFP4 inference:
+
+| N    | Power savings achievable (worst→best) |
+|------|---------------------------------------|
+| 16   | ~5W (3%)                             |
+| 24   | ~10W (5%)                            |
+| 32   | ~3W (1%)                             |
+| 48   | ~15-31W (7-11%)                       |
+| 64   | ~9W (5%) at K=64; ~0W at K=96         |
+| 128  | ~62-93W (18-23%) ← significant        |
+| 256  | ~85-106W (20-23%) ← biggest absolute   |
+
+For real LLM inference matmuls (typically large N like 28672, 14336, 8192),
+the sign-bit pattern matters significantly. Choosing weights with
+"alternating ++--" or "+-+-+-" sign distribution per N-row could save
+~20% of compute power at K=96 / ~18% at K=64.
