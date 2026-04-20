@@ -112,3 +112,50 @@ Power state determined by sub-tile pattern set size:
 What creates "1 pattern": same p_n that divides sub-tile boundary.
 What creates "2 patterns": K-direction sign flip ({original, flipped}).
 What creates "3+ patterns": random per-column phase, p_n that doesn't align to sub-tile.
+
+## NVFP4 K=96 ULTRA p_n × pk results
+
+```
+K=96 p_n=1 with K-flip pk:
+  pk=inf : 467 W (baseline)
+  pk=1   : 500 W (+33W ← K-flip costs more at K=96!)
+  pk=2   : 486 W
+  pk=3   : 486 W
+  pk=4   : 478 W
+  pk=8   : 474 W
+  pk=16  : 473 W
+  pk=32  : 471 W
+  pk=48  : 471 W
+
+K=96 pk=3 with various p_n:
+  p_n=1  : 486 W LOW
+  p_n=2  : 487 W LOW
+  p_n=4  : 487 W LOW
+  p_n=8  : 488 W LOW
+  p_n=16 : 488 W LOW
+  p_n=64 : 575 W HIGH ← chunk-4 sub-tile
+```
+
+### K=64 vs K=96 K-flip impact
+
+```
+Format        pk=inf  pk=1   delta
+NVFP4 K=64    394     405    +11 W
+NVFP4 K=96    467     500    +33 W   ← K=96 ULTRA: K-flip ~3x more costly
+BF16 K=16     461     469    +8 W
+```
+
+**K=96 ULTRA path has higher K-flip cost** - possibly because the larger
+K-pipeline (96 vs 64) accumulates more state transitions per K-flip event.
+
+### Universal pattern across all precisions and K values
+
+For SUSTAINED LOW power across all tested precisions:
+- p_n must divide sub-tile boundary (8 for BF16, 16 for NVFP4)
+- pk doesn't matter much (K-flip is "near-free" at all K values)
+
+For HIGH power:
+- p_n = 2 × sub-tile (i.e., chunk-4 at sub-tile level): WORST case
+- p_n that doesn't align: HIGH
+
+The 2-pattern cache holds {original, flipped} reliably across precisions.
