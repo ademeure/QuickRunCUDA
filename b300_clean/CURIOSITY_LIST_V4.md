@@ -117,7 +117,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 - [x] **E1 — atomicAdd misaligned**: HARD TRAP (CUDA error 716
   "misaligned address"). NOT silently split — atoms must be naturally
   aligned. 16-bit needs PTX inline asm or CAS emulation. Commit history.
-- [ ] **E2 — atomicAdd b16 packed `__half`** vs scalar throughput.
+- [x] **E2 — atomicAdd `__half2` packed**: 7.98 Gatomic/s vs scalar 8.24,
+  same atom rate but **2× effective FP16 payload** per atomic. Use
+  `__half2` always for FP16 reductions. Commit history.
 - [x] **E3 — atomicCAS contention scaling**: aggregate **FLAT at 1.1
   successful CAS/μs** for any N threads (1-128). Each CAS = ~900 ns
   ≈ 1380 cy unavoidable. Linear slowdown per thread under contention.
