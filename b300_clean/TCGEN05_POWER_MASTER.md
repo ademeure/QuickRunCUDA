@@ -195,7 +195,7 @@ Provenance documents:
 | M dimension halves | M_DIMENSION_HALVES.md | BF16 halves preserved at M=64 (N-direction structural) |
 | Cross-MMA dedup | CROSS_MMA_DEDUP.md | Per-MMA only; alt MMAs avg the powers; partial opt gives 12% gain |
 | Power floor | POWER_FLOOR.md | 287W absolute minimum for 148 SMs of active tcgen05 |
-| **cuBLAS real GEMM** | CUBLAS_REAL_VALIDATION.md | **1.41-1.45× speedup with K-row-identical B (2143 vs 1517 TFLOPS); applies to GQA/embeddings/sparse blocks, NOT typical FFN weights** |
+| **cuBLAS real GEMM** | CUBLAS_REAL_VALIDATION.md | **1.41× for SQUARE 8192³ K-row-identical; only 1-2% for typical rectangular Llama-shape GEMMs (different cuBLAS algorithm)** |
 | Sub-tile partial break | SUBTILE_PARTIAL_BREAK.md | Linear ~19W per broken byte; first byte +32W activation |
 
 ---
