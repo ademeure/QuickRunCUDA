@@ -655,3 +655,47 @@ For real workloads:
 - 2:4 sparsity: actually HURTS dense GEMM by 3-5%
 
 The 2-6% practical inference benefit estimate stands.
+
+## CRITICAL CORRECTION: Structured 50% sparsity DOES give speedup on dense GEMM
+
+Tested structured 2:4 vs random 50% sparsity at M=N=K=8192:
+
+```
+Pattern                       TFLOPS   vs dense
+dense (no sparsity)           1482     1.00× (baseline)
+2:4 structured (zeros at 0,1) 1649     1.11×  ← 11% SPEEDUP
+2:4 structured (zeros at 1,3) 1642     1.11×
+2:4 structured (zeros at 0,2) 1647     1.11×
+1:2 alternating (zero,nonzero) 1648    1.11×
+50% RANDOM sparsity            1486    1.00×  ← NO speedup
+```
+
+**Earlier claim "2:4 sparsity hurts dense GEMM" was WRONG.** The error
+was from using random sparsity instead of structured. With STRUCTURED
+zero patterns (positions predictable per-4-elements), even dense GEMM
+sees 11% speedup from HW-level pattern detection of zeros.
+
+### Updated mechanism understanding
+
+Sparsity speedup requires PREDICTABILITY:
+- Random zero positions: no speedup (HW can't predict, full multiplier active)
+- Structured zero positions (any 2:4 pattern): 11% speedup
+- Specific zero positions don't matter - only that pattern repeats every 4 elements
+- 1:2 alternating (zero, nonzero) also works = same 11% speedup
+
+This means:
+- Real ML weights with 2:4 structured sparsity (already common pattern):
+  even WITHOUT cuSPARSE special API, dense kernels get ~11% throughput
+- 30-50% RANDOM sparse weights don't help and can hurt
+- Pruning algorithms should aim for STRUCTURED 2:4 patterns
+
+### Rule #9 self-correction tracking
+
+This is the FOURTH application of rule #9 (suspect the test before the
+hardware) in this investigation chain:
+1. K-row similarity attribution → corrected to bit-entropy
+2. Synthetic INT4 12% → corrected to realistic 4%
+3. cuBLAS algorithm switch → corrected to same-kernel HW behavior
+4. **Random sparsity dip → corrected: structured sparsity DOES speedup**
+
+Each correction emerged from re-running with a more careful baseline.
