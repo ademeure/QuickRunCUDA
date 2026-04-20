@@ -203,3 +203,39 @@ For 800-GPU inference cluster running at 800W per GPU:
 - HIGH on the 2.09× max-opt speedup at 400W
 - MEDIUM on TFLOPS extrapolation (assumed iters × FLOPS-per-iter formula)
 - HIGH on practical implications for datacenter deployment
+
+---
+
+## Cross-precision validation at boost (1100W default cap)
+
+| Precision | Random runtime | Optimized runtime | Speedup | Random power | Opt power |
+|-----------|---------------:|------------------:|--------:|-------------:|----------:|
+| BF16 | 4.78 s | 4.06 s | **1.18×** | 1096 W | 787 W |
+| FP8 e4m3 | 4.80 s | 4.08 s | **1.18×** | 1096 W | 804 W |
+| NVFP4 | 4.24 s | 4.09 s | 1.04× | 1095 W | 680 W |
+
+## Why NVFP4 gets less practical gain
+
+NVFP4 random at boost = 1095W (same cap) but RUNTIME is shorter (4.24s).
+Why? NVFP4 has smaller per-MAC energy (~0.4-0.5 nW) vs BF16 (~0.5 nW)
+and less data-dependent activity. So at the cap, NVFP4 doesn't throttle
+as much, and there's less perf to recover via optimization.
+
+For NVFP4 the SCALE FACTOR (SF) entropy adds another knob (~27W).
+Adjusted recipe for NVFP4 inference: keep SF uniform (per-channel scaling)
+in addition to standard B sub-tile dedup.
+
+## Final practical recipe summary
+
+| Precision | Random penalty (1005MHz) | Practical boost speedup | Best for inference? |
+|-----------|-------------------------:|------------------------:|--------------------:|
+| BF16 | +310 W | 1.18× | YES (large benefit) |
+| FP8 e4m3 | +337 W | 1.18× | YES (large benefit) |
+| NVFP4 | +183 W | 1.04× | Modest (smaller multiplier) |
+
+For BF16 and FP8 ML inference: data layout optimization gives 18% throughput
+gain at default cap, scaling to 2.09× at tight 400W cap. ZERO performance
+penalty (cycle counts identical), just data layout matters.
+
+NVFP4 still benefits but to a lesser degree. SF entropy is a separate
+optimization vector for NVFP4 specifically.
