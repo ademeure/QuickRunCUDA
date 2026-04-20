@@ -90,8 +90,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   GMEM/SMEM.
 - [ ] **D8 — Address generation pipeline depth**: measurable stall when
   address-bound vs compute-bound.
-- [ ] **D9 — `__ldg` vs `ld.global.ca` SASS**: are they same? When nvcc
-  picks one vs other.
+- [x] **D9 — `__ldg` vs `ld.global.ca` SASS**: NOT THE SAME. `__ldg` →
+  `LDG.E.CONSTANT` (constant cache); `ld.global.ca` → `LDG.E.STRONG.SM`.
+  Use `__ldg` for read-only data.
+  See `b300_clean/D9_E4_LDG_ATOM_SASS.md`.
 - [ ] **D10 — L2 partitioning across HBM channels**: which L2 partition serves
   which HBM stack? Per-partition ncu metrics.
 - [ ] **D11 — Cache line size inference test**: does B300 have 128 B lines or
@@ -102,8 +104,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 - [ ] **E1 — atomicAdd misaligned (e.g. ½ word offset)**: error or split?
 - [ ] **E2 — atomicAdd b16 packed `__half`** vs scalar throughput.
 - [ ] **E3 — atomicCAS contention scaling**: 2, 4, 8, 32 contending threads.
-- [ ] **E4 — `red` vs `atom` SASS**: same instruction or different? Latency
-  diff if return value unused.
+- [x] **E4 — `red` vs `atom` SASS**: DIFFERENT opcodes. `atom` →
+  `ATOMG.E.ADD.STRONG.GPU` (returns old); `red` → `REDG.E.ADD.STRONG.GPU`
+  (no return). `red.relaxed` SASS-identical to `red.global`.
+  See `b300_clean/D9_E4_LDG_ATOM_SASS.md`.
 - [ ] **E5 — Atomic across L2 partitions**: latency penalty when address
   hashes to "far" partition.
 - [ ] **E6 — atomicMin/Max FP throughput** vs atomicAdd.
