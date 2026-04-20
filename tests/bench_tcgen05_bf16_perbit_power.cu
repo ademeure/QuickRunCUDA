@@ -540,6 +540,34 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                 unsigned short ve = h(k_idx, n_idx_e);
                 unsigned short vo = h(k_idx, n_idx_o);
                 w = ((unsigned)vo << 16) | ve;
+            } else if (mode >= 5200 && mode <= 5220) {
+                // K-row consecutive grouping test: K_unique = (mode - 5200) distinct content
+                // patterns arranged in CONSECUTIVE GROUPS of size 16/K_unique each
+                // K_unique=1: AAAAAAAAAAAAAAAA - all same (=mode 5000)
+                // K_unique=2: AAAAAAAA BBBBBBBB - 2 groups of 8 K rows
+                // K_unique=4: AAAA BBBB CCCC DDDD - 4 groups of 4 K rows
+                // K_unique=8: AABB CCDD EEFF GGHH - 8 groups of 2 K rows
+                // K_unique=16: ABCDEFGH IJKLMNOP - all different (= mode 5004 == K-vary alone)
+                int K_unique = (mode - 5200);
+                if (K_unique < 1) K_unique = 1;
+                if (K_unique > 16) K_unique = 16;
+                int k = idx / 64;
+                int npair = idx % 64;
+                int n_even = npair * 2;
+                int n_idx_e = n_even % 16;
+                int n_idx_o = (n_even + 1) % 16;
+                int group_size = 16 / K_unique;
+                if (group_size < 1) group_size = 1;
+                int k_group = k / group_size;
+                auto h = [](int kk, int nn) -> unsigned short {
+                    unsigned hh = 0xC0FFEE13u ^ (kk * 0xDEADBEEFu) ^ (nn * 0x9E3779B1u);
+                    hh = hh * 0x85EBCA6Bu;
+                    hh ^= hh >> 16;
+                    return (unsigned short)(hh & 0xFFFF);
+                };
+                unsigned short ve = h(k_group, n_idx_e);
+                unsigned short vo = h(k_group, n_idx_o);
+                w = ((unsigned)vo << 16) | ve;
             } else if (mode >= 5100 && mode <= 5104) {
                 // K-rotating WITH WIDER N pattern: each K row has N_unique=32 (above cliff).
                 // K rows rotate through K_unique distinct 32-N-pattern sets.

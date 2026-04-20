@@ -115,3 +115,55 @@ to multiplier exponent NOT toggling sign side.
 - HIGH on sticky activation (position invariance test)
 - MEDIUM on exact saturation function (multiplicative not additive)
 - LOW on whether 2-CTA (cluster_group::2) shares cache
+
+---
+
+## K-row dedup mechanism: PAIRWISE-CONSECUTIVE (mode 5200-5216)
+
+Test: K rows arranged in CONSECUTIVE GROUPS of identical content vs ALTERNATING.
+
+| K_unique | Layout (16 K rows) | # transitions | Power (W) | vs free baseline (303W) |
+|---------:|--------------------|--------------:|----------:|------------------------:|
+|        1 | AAAAAAAAAAAAAAAA   |       0       |       306 | +3 |
+|        2 | AAAAAAAA BBBBBBBB  |       1       |       314 | +11 |
+|        4 | AAAA BBBB CCCC DDDD |       3       |       324 | +21 |
+|        8 | AABB CCDD EEFF GGHH |       7       |       343 | +40 |
+|       16 | ABCDEFGHIJKLMNOP   |      15       |       387 | +84 |
+
+vs alternating (mode 5000-5004 K-rotating evenly):
+
+| K_unique | Layout              | # transitions | Power (W) | Δ |
+|---------:|---------------------|--------------:|----------:|---:|
+|        2 | ABABABABABABABAB    |      15       |       380 | -7 vs all-different |
+|        4 | ABCDABCDABCDABCD    |      15       |       384 | -3 |
+|       16 | ABCDEFGHIJKLMNOP    |      15       |       387 | (same) |
+
+**Cost is roughly +5W per K-row transition** (consecutive case).
+
+Alternating ABABAB has 15 transitions → 380W ≈ 387W (= 15 × 5.6 + 303 = 387 ✓).
+
+## REVISED model: K-row "active" count drives cost
+
+```
+P_per_MMA = P_baseline_const                              (~303 W BF16)
+          + N_active_K_rows × P_per_active_K_row          (~5 W per row)
+          + (N_unique_per_row > 16 ? N_K × N_subtile_cost : 0)
+                                                          (~+19 W per K row × 16 rows = 305 W)
+```
+
+where `N_active_K_rows` = # of K rows differing from immediate predecessor.
+
+## Software optimization update
+
+For workloads where B varies along K (e.g., transformer attention with
+position-dependent values):
+
+1. **Group consecutive K rows by similarity**: if K rows can be reordered
+   so consecutive rows have matching 32-byte sub-tile patterns, save
+   ~5W × (# saved transitions). For K=16: max savings = 75W per CTA.
+
+2. **Per-K-row sub-tile cache** still applies: keep N_unique per row ≤ 16
+   to avoid the +305W cliff.
+
+3. **Combined**: (consecutive K-row matching) × (sub-tile-friendly N pattern)
+   → minimum power = ~303W (baseline only), even with all unique data.
