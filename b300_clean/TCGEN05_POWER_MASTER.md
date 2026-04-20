@@ -162,10 +162,23 @@ Provenance documents:
 - HIGH on K-row pairwise dedup (cross-precision consecutive grouping data)
 - HIGH on sticky activation (position invariance test)
 - HIGH on per-byte cost ~0.025 W/byte (cross-precision agreement)
+- HIGH on per-CTA dedup (NOT cluster-shared: 2-CTA kernel test confirms)
+- HIGH on SMEM descriptor invariance (LBO=16 vs LBO=32 same power)
+- HIGH on BF16-specific two-half processing (FP8/NVFP4 don't show it)
 - MEDIUM on multiplicative saturation between K and N components
-- LOW on whether 2-CTA cluster shares cache (untested due to 2cta kernel hang)
+- MEDIUM on accumulator entropy cost (~5% of total)
 - LOW on whether this transfers to NVIDIA's high-level libraries verbatim
   (but cuBLAS RANDOM vs CONSTANT gap matches predictions per I4 finding)
+
+## Additional findings since v1
+
+| Finding | File | Headline |
+|---------|------|----------|
+| 2-CTA dedup | 2CTA_DEDUP.md | Per-CTA cache, NO cluster pooling |
+| MMA shape | MMA_SHAPE_DEDUP.md | 32-byte cliff universal; "4-slot free zone" is N=128-specific |
+| Two halves | SUBTILE_HALVES.md | BF16 m128n128 has 2 halves; pos 4-7 unique nearly free; FP8/NVFP4 don't show this |
+| SMEM desc | MMA_SHAPE_DEDUP.md (appendix) | LBO doesn't affect dedup (intrinsic to HW) |
+| Accumulator | POWER_FINAL_MODEL.md (appendix) | C accumulator costs ~5% of total power |
 
 ---
 
