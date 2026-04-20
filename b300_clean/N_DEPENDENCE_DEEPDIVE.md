@@ -1308,3 +1308,41 @@ along the K direction (within columns of B) or N direction (within rows of B)?
 The fill_24_modes function fills B linearly (mem-order), which depends on
 B's storage layout. Need a follow-up test with explicit row vs column
 position pinning to fully characterize.
+
+## Cold-start vs sustained: K-id advantage grows with workload duration
+
+Discovered that prior measurements were specifically the SUSTAINED state.
+Cold-start measurements show different gap:
+
+```
+State        Random TF   K-id TF   K-id Advantage
+Cold (~50ms) 1843        2245      1.22×
+Sustained    1486        2105      1.42×
+```
+
+GPU state during measurements:
+- Cold: 47°C, 2032 MHz boost (full clock)
+- Sustained: 61°C, 1440 MHz throttled (random) / 1924 MHz (K-id)
+
+**At cold-start, both modes get peak clock. K-id advantage shrinks to 1.22×.**
+**At sustained, random throttles harder. K-id advantage grows to 1.42×.**
+
+### Implications
+
+For BURSTY workloads (single matmul, then idle):
+- Random: 1843 TF (close to cold-start peak)
+- K-id advantage: 22% (still significant but smaller)
+
+For SUSTAINED workloads (continuous compute):
+- Random: 1486 TF (heavily throttled)
+- K-id advantage: 42% (full mechanism active)
+
+Production deployment guidance:
+- Inference serving with batching (~10ms windows): closer to cold-start → ~22% advantage if K-id triggered
+- Training with continuous flow: sustained → ~42% advantage if K-id triggered
+- But neither realistically hits K-id triggers anyway
+
+### Methodology note
+
+Use cudaGraph-captured workloads for SUSTAINED measurements (4000+ iters).
+Use single-shot timing for COLD measurements. Don't conflate them.
