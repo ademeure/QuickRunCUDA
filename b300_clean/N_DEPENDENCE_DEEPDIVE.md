@@ -546,3 +546,50 @@ two-stage gate model.
 
 For real ML inference (Llama N/K=3.5, DeepSeek 2.57): outer gate FAILS.
 Speedup not accessible regardless of weight quantization scheme.
+
+## Alternation predictor is CONTENT-AGNOSTIC
+
+Tested ABAB at N=K=8192 with various A↔B relationships:
+
+```
+B = random independent of A:       2104 TF
+B = A (period→1, identical):       2104 TF
+B = A ^ 0x0001 (1-bit XOR):        2101 TF
+B = A ^ 0xFFFF (max XOR):          2086 TF
+B = A ^ 0x8000 (sign flip):        2099 TF
+B = A ^ 0x00FF (mantissa flip):    2088 TF
+B = A ^ 0x000F (4 LSBs):           2094 TF
+B = A ^ 0xFF00 (upper byte):       2076 TF
+```
+
+**All variants give 2076-2104 TF (~1.3% spread).** The HW alternation
+predictor doesn't care about A↔B content relationship - only the
+ACCESS PATTERN of immediate alternation matters.
+
+### Implications for HW model
+
+The dedup mechanism for the chunk=1 path is a **content-agnostic pattern
+detector**, not a value comparator:
+
+- HW detects "value alternates every K-step between 2 distinct sources"
+- Once pattern recognized, multiplier circuits stay gated regardless of values
+- This is analogous to a branch predictor or stride prefetcher - operates
+  on access patterns, not data semantics
+- Explains why ABAB always works regardless of (A,B) bit relationship
+
+This is fundamentally different from a "compare current to previous"
+deduplication scheme. The HW has invested transistors in detecting this
+specific access pattern.
+
+### Why immediate alternation? Speculation
+
+Real ML weight matrices have effectively random K-row content - no
+alternation pattern. So why would NVIDIA spend HW on alternation detection?
+
+Hypothesis: this might be a side-effect of GENERAL value-prediction circuits
+that catch many patterns, with chunk=1 being one case that happens to
+trigger. Future work: test other simple patterns (e.g., monotonic ramp,
+periodic with offset) to see if they also trigger.
+
+Confidence: HIGH on content-agnostic finding (9 modes all converge to
+~1.3% spread). MED on speculation about HW intent.
