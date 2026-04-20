@@ -214,7 +214,10 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 - [ ] **K1 — `cvt` chains**: when does PTX cvt sequence become single SASS inst?
 - [ ] **K2 — `mad` vs `mad.wide`** SASS encoding differences.
 - [ ] **K3 — `selp`** translation (predicate select).
-- [ ] **K4 — `setp` followed by `@p ld`** combine into LD with predicate?
+- [x] **K4 — `setp` + `@p ld`**: NO. LDG has no predicated variant on
+  B300 — compiler emits unconditional LDG.E + applies predicate to
+  result. Predication doesn't save memory bandwidth. Use BRA or
+  cp.async.if to actually skip loads. Commit history.
 - [ ] **K5 — `st.shared` vs `st.global` SASS encoding family**.
 - [ ] **K6 — `vshl/vshr` (vector shift)** PTX → SASS.
 
