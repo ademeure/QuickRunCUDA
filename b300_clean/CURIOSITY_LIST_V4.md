@@ -164,7 +164,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
 - [ ] **G1 — `-O0` vs `-O3` SASS divergence**: exact areas where
   optimization matters most.
 - [ ] **G2 — `-use_fast_math` impact on POWER** (not just speed).
-- [ ] **G3 — `__builtin_assume` impact on SASS** for varied assumptions.
+- [x] **G3 — `__builtin_assume` impact on SASS**: real effect — eliminates
+  bounds-check predicate (P0 disappears). Use for known-bounded array
+  indices to remove SETP+IMAD bounds machinery. Commit history.
 - [ ] **G4 — `__restrict__` impact on real schedules**.
 - [ ] **G5 — Loop unrolling thresholds** (compiler default vs explicit).
 - [ ] **G6 — `-dlcm=ca/cg/cs` default cache mode** behavior.
