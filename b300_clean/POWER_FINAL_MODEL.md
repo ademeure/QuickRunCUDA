@@ -232,3 +232,35 @@ Saturation factor ≈ 0.7-0.8 (multiplicative gating between K and N costs).
 This applies to GEMMs, attention, and any tcgen05.mma usage. Real ML
 workloads with structured B (e.g. quantized weights, top-K sparsity)
 naturally satisfy these constraints.
+
+---
+
+## C Accumulator (TMEM) effect (BF16)
+
+scaleC=1 (accumulate D = A*B + C) vs scaleC=0 (overwrite D = A*B):
+
+| Configuration | scaleC=0 (W) | scaleC=1 (W) | Δ |
+|---------------|-------------:|-------------:|---:|
+| A random, B random   | 580 | 612 | +32 |
+| A random, B const +1.0 | 288 | 302 | +14 |
+
+Accumulator cost component:
+- Random data: +32W (~5% of total)
+- Constant B: +14W (~5% of total)
+
+The TMEM accumulator read/modify/write contributes a SMALL but consistent
+power cost. This explains some of the Tier B vs Tier A difference (5W gap
+when B all-zero vs B all-1.0):
+- All-zero B → A*0 = 0 → accumulator stays 0 (no toggle)
+- Const +1.0 B → A*1 = A (random) → accumulator gets random updates
+
+## Updated final model
+
+```
+P_per_MMA = P_static_baseline                         (~280-305 W)
+          + N_active_K_rows * P_per_K_transition      (~5W per BF16 transition)
+          + N_subtile_cliff_misses * P_per_cliff      (~+250-310W when triggered)
+          + P_accumulator_entropy                     (~5% of total)
+```
+
+Accumulator cost is small enough to ignore for first-order optimization.

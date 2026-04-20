@@ -723,7 +723,11 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int verify) {
                   "r"(disable_lane[0]), "r"(disable_lane[1]), "r"(disable_lane[2]), "r"(disable_lane[3]),
                   "r"(enable_d)
                 : "memory");
-            enable_d = 1;
+            // verify==2: always scaleC=0 (no accumulation, TMEM overwritten each iter)
+            // verify==3: always scaleC=1 (always accumulate, including first iter)
+            if (verify == 2) enable_d = 0;
+            else if (verify == 3) enable_d = 1;
+            else enable_d = 1;  // default: accumulate after first
         }
         asm volatile("tcgen05.commit.cta_group::1.mbarrier::arrive::one.b64 [%0];"
             :: "r"((unsigned)__cvta_generic_to_shared(&mbar)) : "memory");
