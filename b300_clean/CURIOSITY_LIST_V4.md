@@ -30,7 +30,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   See `b300_clean/A6_PER_PIPE_REFERENCE.md`. Commit: this batch.
 - [ ] **A7 — Active mask transition cost**: warp diverges then reconverges;
   measure cost of BSSY / BSYNC.
-- [ ] **A8 — SETP throughput**: how many predicate sets per cycle per warp.
+- [x] **A8 — SETP throughput** (with caveat): FSETP+SELP at ALU peak
+  (0.49/SMSP/cy). ISETP+SELP slightly lower (~0.33/inst). nvcc PTX→SASS
+  fusion makes per-inst rate hard to isolate cleanly.
 
 ## B. Pipe interleaving + ILP at pipe-level
 
