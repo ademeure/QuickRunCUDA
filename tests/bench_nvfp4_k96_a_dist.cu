@@ -1,13 +1,13 @@
-// NVFP4 K=96 power vs which FP4 codes B is allowed to use.
-// A is fully random (16 codes). SF=1.0 always.
+// NVFP4 K=96 power vs A-side distribution.
+// B is FIXED (mode-controlled), A is varied across modes.
 //
-// mode (u1):
-//   0 = full random 16 (baseline)
-//   1 = random 16, but 0x8 (-0) converted to 0x0 (+0) post-init
-//   2 = uniform 15, exclude 0x8 (-0)
-//   3 = uniform 15, exclude 0x0 (+0)
-//   4 = uniform 13, exclude {0x8 -0, 0x7 +6, 0xF -6}
-//   5 = uniform 13, exclude {0x8 -0, 0x1 +0.5, 0x9 -0.5}
+// Args: u0=iters, u1=A_mode, u2=B_mode
+// A_mode (u1) and B_mode (u2):
+//   0 = constant 0x0 (all +0)
+//   1 = constant 0x4 (all +2.0)
+//   2 = 5 positive {+0..+2} (5-pos low-mag set)
+//   3 = 8 positive (sign always 0, full mantissa)
+//   4 = full random 16
 #define MMA_M 256
 #define MMA_N 256
 #define MMA_K 96
@@ -19,53 +19,17 @@ __device__ __forceinline__ unsigned mix32(unsigned x) {
     return x;
 }
 
-__device__ __forceinline__ unsigned pick_fp4(unsigned byte, int mode) {
-    // Lookup tables for each mode's allowed code set
-    if (mode == 0) {
-        return byte & 0xFu;       // full 16
-    } else if (mode == 1) {
-        unsigned v = byte & 0xFu;
-        return (v == 0x8u) ? 0x0u : v;   // -0 → +0
-    } else if (mode == 2) {
-        // 15 codes excluding 0x8: choose modulo 15, then map
-        // map[0..14] = {0,1,2,3,4,5,6,7, 9,10,11,12,13,14,15}
-        unsigned m = byte % 15u;
-        return (m < 8u) ? m : (m + 1u);    // skip 0x8
-    } else if (mode == 3) {
-        // 15 codes excluding 0x0
-        unsigned m = byte % 15u;
-        return m + 1u;                      // map 0..14 → 1..15
-    } else if (mode == 4) {
-        // 13 codes excluding {0x8, 0x7, 0xF}
-        // allowed = {0,1,2,3,4,5,6, 9,10,11,12,13,14}
-        static const unsigned char allowed[13] = {0,1,2,3,4,5,6, 9,10,11,12,13,14};
-        return allowed[byte % 13u];
-    } else if (mode == 5) {
-        // 13 codes excluding {0x8, 0x1, 0x9}
-        // allowed = {0,2,3,4,5,6,7, 10,11,12,13,14,15}
-        static const unsigned char allowed[13] = {0,2,3,4,5,6,7, 10,11,12,13,14,15};
-        return allowed[byte % 13u];
-    } else if (mode == 6) {
-        // 8 positive codes only (sign bit always 0)
-        return byte & 0x7u;
-    } else if (mode == 7) {
-        // 7 positive nonzero codes (1..7)
-        return (byte % 7u) + 1u;
-    } else if (mode == 8) {
-        // 5 "centered" {-1.0, -0.5, +0, +0.5, +1.0} = {0xA, 0x9, 0x0, 0x1, 0x2}
-        static const unsigned char centered[5] = {0xA, 0x9, 0x0, 0x1, 0x2};
-        return centered[byte % 5u];
-    } else if (mode == 9) {
-        // 9 uniform: {-2, -1, +0, +0.5, +1, +1.5, +2, +3, +4}
-        // = {0xC, 0xA, 0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6}
-        static const unsigned char nine[9] = {0xC, 0xA, 0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6};
-        return nine[byte % 9u];
-    }
+__device__ __forceinline__ unsigned pick(unsigned byte, int mode) {
+    if (mode == 0) return 0x0u;
+    if (mode == 1) return 0x4u;
+    if (mode == 2) return byte % 5u;
+    if (mode == 3) return byte & 0x7u;
+    if (mode == 4) return byte & 0xFu;
     return 0u;
 }
 
 extern "C" __global__ __launch_bounds__(32, 1) __cluster_dims__(2, 1, 1)
-void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
+void kernel(float* A, float* B, float* C, int iters, int a_mode, int b_mode) {
     __shared__ __align__(1024) unsigned smem_A[3072];
     __shared__ __align__(1024) unsigned smem_B[3072];
     __shared__ __align__(8)    unsigned long long mbar;
@@ -74,11 +38,14 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
 
     if (threadIdx.x < 32) {
         for (int idx = threadIdx.x; idx < smem_size; idx += 32) {
-            unsigned r = (idx + blockIdx.x * 1024u) * 0x9E3779B1u;
-            r ^= r >> 16; r *= 0x85EBCA6Bu;
-            r ^= r >> 13; r *= 0xC2B2AE35u;
-            r ^= r >> 16;
-            smem_A[idx] = r;
+            unsigned r = mix32((unsigned)idx + blockIdx.x * 1024u + 0xAAAA0000u);
+            unsigned val = 0;
+            for (int p = 0; p < 8; p++) {
+                unsigned byte = (r >> (p * 4)) & 0xFFu;
+                unsigned fp4 = pick(byte, a_mode) & 0xFu;
+                val |= (fp4 << (p * 4));
+            }
+            smem_A[idx] = val;
         }
     }
     if (threadIdx.x < 32) {
@@ -87,7 +54,7 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
             unsigned val = 0;
             for (int p = 0; p < 8; p++) {
                 unsigned byte = (r >> (p * 4)) & 0xFFu;
-                unsigned fp4 = pick_fp4(byte, mode) & 0xFu;
+                unsigned fp4 = pick(byte, b_mode) & 0xFu;
                 val |= (fp4 << (p * 4));
             }
             smem_B[idx] = val;
