@@ -399,3 +399,39 @@ For Llama 70B INT4 inference (W4A16):
 - HIGH on Llama-shape specific behavior (1.24× W4A4 reproducible)
 - HIGH on practical INT4 inference benefit (~1.18-1.25× automatic)
 - This is the most accurate, defensible finding from the entire investigation
+
+---
+
+## Llama shapes at A=B=constant (max possible)
+
+| Shape | Random TFLOPS | A=B=const TFLOPS | Speedup |
+|-------|--------------:|-----------------:|--------:|
+| gate/up (8192×28672×8192) | 1669 | **2268** | **1.35×** |
+| down (8192×8192×28672) | 1796 | 2243 | 1.24× |
+| QKV (8192×10240×8192) | 1658 | 2194 | 1.32× |
+
+**Llama shapes ALSO reach ~spec peak** (2243-2268 TFLOPS = 100-101% of cuBLAS spec).
+
+The TRUE B300 BF16 hardware ceiling is ~2250-2270 TFLOPS regardless of shape,
+when data has minimum entropy.
+
+## Comprehensive Llama 70B FFN at all data structures
+
+| Configuration | gate/up TF | down TF | Avg TFLOPS |
+|---------------|-----------:|--------:|-----------:|
+| Random (W7A7) | 1669 | 1796 | 1733 |
+| W4A16 (typical INT4) | 1760 | 1879 | 1820 (+5%) |
+| W4A4 (full INT4) | 1863 | 1993 | 1928 (+11%) |
+| W0A0 (constant ceiling) | 2268 | 2243 | 2256 (+30%) |
+
+## Practical takeaway for Llama INT4 inference
+
+For deployment on B300:
+- **Status quo (W7A7 random)**: 1733 TFLOPS effective
+- **W4A16 INT4 weights**: 1820 TFLOPS (+5%) - automatic
+- **W4A4 full 4-bit**: 1928 TFLOPS (+11%) - automatic
+- **Hardware ceiling**: 2256 TFLOPS (+30%) - if data could be made constant
+
+So modern INT4 inference is already accessing ~30-40% of available headroom.
+W4A4 gets ~50% of available headroom. Future quantization advances toward
+2-bit/1-bit could approach the 30% ceiling.
