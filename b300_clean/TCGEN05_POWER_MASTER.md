@@ -197,6 +197,8 @@ Provenance documents:
 | Power floor | POWER_FLOOR.md | 287W absolute minimum for 148 SMs of active tcgen05 |
 | **cuBLAS real GEMM (BF16)** | CUBLAS_REAL_VALIDATION.md | **1.41× for SQUARE 8192³ K-row-identical; only 1-2% for typical rectangular Llama-shape GEMMs (different cuBLAS algorithm)** |
 | **cuBLAS real GEMM (FP8)** | CUBLAS_REAL_VALIDATION.md | **1.55× for SQUARE 8192³ (4082 TFLOPS = 91% of FP8 spec peak); 1.02× for rectangular** |
+| **Practical scope** | PRACTICAL_SCOPE_HONEST.md | When works (K≥N+M≥256+power-of-2 N): 1.28-1.55×; when doesn't (FFN expand, autoregressive): 1.00× |
+| **K≥N heuristic (Llama FFN)** | CUBLAS_REAL_VALIDATION.md | FFN DOWN projection (K>N): 1.40× speedup; gate/up (N>K): 1.01×; avg ~10% across SwiGLU FFN |
 | Sub-tile partial break | SUBTILE_PARTIAL_BREAK.md | Linear ~19W per broken byte; first byte +32W activation |
 
 ---
