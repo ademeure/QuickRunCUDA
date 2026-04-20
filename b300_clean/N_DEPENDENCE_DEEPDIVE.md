@@ -377,3 +377,42 @@ This is consistent with the prior 32-byte sub-tile dedup model, refined:
 - Cache depth per sub-tile: 2 entries
 - Replacement: likely LRU
 - Activation: persistent within K-row pass; resets between batches
+
+## Universal across K: rule is purely about N/K ratio
+
+Tested K=8704, 10240, 12288 with periods 1/2/3 at N=K, 2K, K/2:
+
+```
+Across all 3 K values:
+N=K:    period=1 ✓  period=2 ✓  period=3 ✗
+N=2K:   period=1 ✓  period=2 ✗  period=3 ✗
+N=K/2:  period=1 ✓  period=2 ✓  period=3 ✗
+```
+
+**Rule is universal in K** — the cache mechanism is shape-independent at
+the K level. Only the N/K ratio matters.
+
+## Final unified mechanism model
+
+```
+HW dedup cache architecture (per tcgen05.mma multiplier):
+- Per sub-tile position (32 bytes)
+- 2 LRU slots (cache depth)
+- Likely shared across 2-CTA cluster
+- Activates: persistent within K-row sweep
+- Resets: between batch groups
+
+Effective slots = 2 / (number of concurrent N-tiles per cluster)
+- N ≤ K: 1 N-tile concurrent → 2 slots → period ≤ 2 works
+- N = 2K: 2 N-tiles concurrent → 1 slot per N-tile → only period=1 works
+- N > 2K: 3+ N-tiles → cache thrash → no speedup
+```
+
+This explains ALL observed behavior:
+- N=K, K/2: period 1 and 2 work (2 slots available)
+- N=2K: only period 1 works (1 slot per concurrent N-tile)
+- N=3K, 4K+: nothing works (slots split too thin)
+- A K-id no benefit (A side has no dedup mechanism)
+- transB=1 no benefit (memory access pattern doesn't match cache architecture)
+
+This is now a HIGH-confidence model with multiple independent verification paths.
