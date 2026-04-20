@@ -19,11 +19,12 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
     unsigned* tmem_p = (unsigned*)(mbar_p + 1);
     for (int i = 0; i < a_size; i++) {
         unsigned r = (i + blockIdx.x * 1024u) * 0x9E3779B1u; r ^= r >> 16; r *= 0x85EBCA6Bu;
+        if (mode == 2 || mode == 3) r &= ~0x88888888u;
         smem_A[i] = r;
     }
     for (int i = 0; i < b_size; i++) {
         unsigned r = (i + blockIdx.x * 1024u + 0xC0FFEE00u) * 0x9E3779B1u; r ^= r >> 16; r *= 0x85EBCA6Bu;
-        if (mode == 1) r &= ~0x88888888u;  // NVFP4 sign mask (bit 3 of each FP4)
+        if (mode == 1 || mode == 3) r &= ~0x88888888u;  // NVFP4 sign mask (bit 3 of each FP4)
         smem_B[i] = r;
     }
     *tmem_p = 0xFFFFFFFFu;
@@ -35,7 +36,8 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
     asm volatile("barrier.cluster.arrive.aligned;"); asm volatile("barrier.cluster.wait.aligned;");
     unsigned tmem_addr = *tmem_p;
     unsigned tsfa_addr = tmem_addr + 128, tsfb_addr = tmem_addr + 256;
-    { unsigned one = 0x38383838u;
+    { unsigned sf_seed = (mode == 4) ? (blockIdx.x * 13u + threadIdx.x) * 0x9E3779B1u : 0;
+      unsigned one = (mode == 4) ? sf_seed : 0x38383838u;
       for (int ch=0; ch<4; ch++) {
         unsigned addr = tmem_addr + ch*128;
         asm volatile("tcgen05.st.sync.aligned.32x32b.x4.b32 [%0], {%1,%2,%3,%4};"

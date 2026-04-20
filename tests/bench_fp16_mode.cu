@@ -13,12 +13,13 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
     for (int i = 0; i < 2048; i++) {
         unsigned r = (i + blockIdx.x * 1024u) * 0x9E3779B1u; r ^= r >> 16; r *= 0x85EBCA6Bu;
         r &= ~0x7C007C00u; r |= 0x38003800u;
+        if (mode == 2 || mode == 3) r &= ~0x80008000u;
         smem_A[i] = r;  // A always full random (signs random)
     }
     for (int i = 0; i < 2048; i++) {
         unsigned r = (i + blockIdx.x * 1024u + 0xC0FFEE00u) * 0x9E3779B1u; r ^= r >> 16; r *= 0x85EBCA6Bu;
         r &= ~0x7C007C00u; r |= 0x38003800u;
-        if (mode == 1) r &= ~0x80008000u;  // B positive only
+        if (mode == 1 || mode == 3) r &= ~0x80008000u;  // B positive only
         smem_B[i] = r;
     }
     *tmem_p = 0xFFFFFFFFu;

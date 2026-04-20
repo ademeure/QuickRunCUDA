@@ -89,3 +89,41 @@ For inference workloads with FP4/FP8 quantized weights:
 - **HIGH** that B-positive is the lever (multiple formats consistent).
 - **HIGH** that contention silently corrupts measurements; pkill-9 +
   cooldown is the only reliable methodology.
+
+## Addendum: A vs B sign-bit decomposition
+
+Adding mode 2 (A-positive only) and mode 3 (A+B-positive) to the kernels.
+
+| format    | random | B-pos | A-pos | A+B-pos |
+|-----------|--------|-------|-------|---------|
+| NVFP4 K=96 N=256 | 875W | 725W (-150) | 867W (-8) | 693W (-182) |
+| FP8 K=32         | 1081W | 831W (-250) | 1082W (+1) | 809W (-272) |
+| BF16 K=16        | 882W | 759W (-123) | 877W (-5)  | 725W (-157) |
+
+**A-side sign bit is essentially FREE** (0-8 W swing across all formats).
+**B-side dominates** sign-related power 95%+.
+
+A+B-positive saves only an extra 22-34 W beyond B-positive alone. The
+~3-4% incremental gain confirms the asymmetric architecture: B is
+broadcast across many multiplier lanes, A has fewer consumers, so
+A-side toggle activity contributes minimally to bus power.
+
+## Updated practical recipe
+
+For inference, the **only** sign-bit optimization that meaningfully
+helps is on B-side weights. A-side activations can be random/arbitrary
+without power penalty.
+
+For NVFP4 K=96 the absolute lowest power is A+B-pos = 693 W = **15.74
+TF/W** (10.91 PF / 0.693 kW). 4 W less than my earlier B-positive-only
+N=192 result of 14.99 TF/W (rounding).
+
+## SF tensor sensitivity (re-verified)
+
+| format       | SF=1.0 | SF=random | Δ |
+|--------------|--------|-----------|---|
+| NVFP4 K=96 N=256 random | 873 W | 876 W | +3 W |
+| MXFP8 K=32 random       | 1035 W | 1040 W | +5 W |
+
+SF random adds ~3-5 W (negligible, as previously measured at 1005 MHz).
+The 100-240 W from data dominates by 2-3 orders of magnitude.

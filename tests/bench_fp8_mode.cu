@@ -13,11 +13,12 @@ void kernel(float* A, float* B, float* C, int iters, int mode, int u2) {
     unsigned* tmem_p = (unsigned*)(mbar_p + 1);
     for (int i = 0; i < a_size; i++) {
         unsigned r = (i + blockIdx.x * 1024u) * 0x9E3779B1u; r ^= r >> 16; r *= 0x85EBCA6Bu;
+        if (mode == 2 || mode == 3) r &= ~0x80808080u;
         smem_A[i] = r;
     }
     for (int i = 0; i < b_size; i++) {
         unsigned r = (i + blockIdx.x * 1024u + 0xC0FFEE00u) * 0x9E3779B1u; r ^= r >> 16; r *= 0x85EBCA6Bu;
-        if (mode == 1) r &= ~0x80808080u;  // FP8 sign mask
+        if (mode == 1 || mode == 3) r &= ~0x80808080u;  // FP8 sign mask
         smem_B[i] = r;
     }
     *tmem_p = 0xFFFFFFFFu;
