@@ -87,3 +87,26 @@ Higher per-sub-tile cost in N=128 (after threshold) than N=64.
 - HIGH on per-MAC random penalty constancy
 - MEDIUM on the explanation for N=64's lack of free zone (may be more nuanced)
 - LOW on why N=128 has a 4-slot tolerance and N=64 doesn't (mechanism unclear)
+
+---
+
+## SMEM descriptor LBO test (LBO=16 vs LBO=32)
+
+Built `tests/bench_tcgen05_bf16_lbo32.cu` (LBO=32 variant). Same kernel,
+only the SMEM descriptor LBO field is different.
+
+| Mode | LBO=16 (W) | LBO=32 (W) |
+|------|----------:|-----------:|
+| 200 random | 609 | 608 |
+| 2704 N_unique=16 | 302 | 302 |
+| 2705 N_unique=32 | 605 | 606 |
+| 2900 sub-tile all-same | 301 | 301 |
+| 2908 sub-tile all-unique | 601 | 611 |
+
+**Identical behavior across LBO values.** The 32-byte sub-tile dedup is
+INTRINSIC to the multiplier hardware, not driven by SMEM descriptor
+swizzle/stride parameters.
+
+Implication: the dedup operates on LOGICAL N values, not on physical
+SMEM access patterns. Software cannot work around or trigger different
+dedup behavior via descriptor manipulation.
