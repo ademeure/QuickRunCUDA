@@ -15,9 +15,9 @@ Use sub-agents (Plan / Explore / general-purpose) for parallel research.
   conditions vs serial.
 - [ ] **A2 — Warp scheduler policy under contention**: 8 warps/SMSP, all ready
   — does scheduler round-robin, LRU, oldest-first? Measure starvation.
-- [ ] **A3 — Scoreboard slot count**: how many in-flight long-latency
-  operations per warp before stall? Test by issuing N independent loads
-  with varying N.
+- [x] **A3 — Scoreboard slot count**: ≥32 slots per warp (no stall
+  observed at N=32; cy/load decreases monotonically). L1 latency=26 cy.
+  See `b300_clean/A3_SCOREBOARD_DEPTH.md`.
 - [x] **A4 — Register read port count**: **FFMA RF has 2 read ports**;
   3 distinct sources = 0.61/SMSP/cy vs 1-2 sources = 0.97/SMSP/cy (37% slower).
   LOP3/ALU pipe at 0.5/SMSP/cy peak doesn't show this (pipe-bound first).
