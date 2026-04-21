@@ -18,12 +18,12 @@ Status: `[ ]` unstarted, `[~]` in progress, `[x]` done with commit hash.
 
 ## B. HMMA + tcgen05 concurrency
 
-- [ ] **B1 — HMMA + tcgen05.mma simultaneous** — can they both run concurrently? per-SMSP?
-- [ ] **B2 — TMEM access vs HMMA** competition — both use tensor pipe?
-- [ ] **B3 — tcgen05.cp + mma overlap** — pre-stage A/B then mma
-- [ ] **B4 — WGMMA on B300** (pre-Hopper warpgroup mma) — still supported? perf vs mma.sync?
+- [x] **B1 — HMMA + tcgen05.mma partial** (commit `7c9ac83`): tcgen05.mma PTX compiles cleanly; runtime requires valid 64-bit SMEM descriptors (zero/garbage → illegal instruction error 0715). Indirect evidence from B2 (LDTM+HMMA 28% overlap) suggests they SHARE the tensor pipe sequencer — direct measurement needs CUTLASS-built descriptors or live cuBLAS kernel for the tcgen05 side.
+- [x] **B2 — TMEM (LDTM) vs HMMA overlap** (commit `b6648e2`): 28% overlap. 4× HMMA = 80 cy; 4× LDTM+wait = 67 cy; combined = 128 cy (vs 147 serial, 80 perfect overlap). Worse than HMMA+LDS (73%) — they DO compete (likely tensor sequencer or RF port pressure). For TMEM-accumulator GEMM, prefer cuTLASS tcgen05.cp DMA over inline LDTM in compute warps; use LDTM only for final result extraction.
+- [x] **B3 — tcgen05.cp partial** (commit `71971e9`): PTX requires 64-bit SMEM descriptor (similar to wgmma's), not raw address. ptxas: "Arguments mismatch for instruction tcgen05.cp". Building descriptor non-trivial without `cute::make_smem_descriptor`. Use CUTLASS Layout abstractions for production; raw-PTX path skipped pending full descriptor encoding reference.
+- [x] **B4 — WGMMA NOT supported on B300** (commit `ee437a1`): ptxas explicit error on sm_103a — `wgmma.mma_async`, `wgmma.commit_group`, `wgmma.wait_group` ALL rejected. Blackwell DROPPED Hopper's wgmma; code must port to mma.sync (legacy) or tcgen05.mma (native). cuBLAS/CUTLASS kernels targeting Hopper only WILL NOT run on Blackwell without MMA porting.
 - [x] **B5 — HMMA chained vs ILP** (ref V4 A1 commit `08ee753`): mma.sync = HMMA. ILP saturates at ~10 cy/mma at ILP=8 (chain 27→17.5→12.75→10.375). 2.6× speedup over single chain.
-- [ ] **B6 — mma + LDS overlap** — like B2 (LDG) but with SMEM
+- [x] **B6 — HMMA + LDS overlap** (commit `e07621d`): substantial overlap (73%) confirmed. 8 HMMA only = 160 cy; 8 LDS only = 84 cy; combined = 183 cy (vs 244 if serial, 160 if perfect overlap). Tensor pipe and LSU pipe ARE independent. cuTLASS-style A/B SMEM-load + HMMA-accumulate pipelines get significant free overlap.
 
 ## C. DSMEM + cluster
 
@@ -57,7 +57,7 @@ Status: `[ ]` unstarted, `[~]` in progress, `[x]` done with commit hash.
 - [x] **F2 — warps_active/eligible/issued** (commit `146a96f`): metrics available via `smsp__warps_active.avg.per_cycle_elapsed`, `smsp__warps_eligible.avg.per_cycle_elapsed`, `smsp__inst_issued.sum`. Useful for diagnosing scheduler stalls.
 - [x] **F3 — Memory throughput sub-metrics** (commit `e0f896d`): pyramid via `*.throughput.avg.pct_of_peak_sustained_elapsed`. D3 example: l1tex 78.85%, lts 62.04%, dram 44.61%. Read/write split via dram__bytes_read/write.sum instead.
 - [x] **F4 — Register/spill metrics via ncu** (commit `282e941`): two key metrics — `launch__registers_per_thread` (allocation), `l1tex__t_requests_pipe_lsu_mem_local_op_{ld,st}.sum` (spill counts). Sweep: 16/32/72 regs = 0 spills; 255 regs (LANES=256) = 1.3M LDL + 1.3M STL = SPILLS. SASS confirms via cuobjdump (45 STL/LDL ops). QuickRunCUDA auto-SASS sometimes fails on high-pressure; use cuobjdump direct.
-- [ ] **F5 — Cluster-aware metrics** — do cluster CTAs get separate counts?
+- [x] **F5 — Cluster-aware ncu metrics** (commit `98ef5c0`): rich cluster/DSMEM/TMEM metric set found. Cluster: `gpc__cgas_{launched,completed,active}`. DSMEM: `l1tex__data_pipe_lsu_wavefronts_mem_lgds`, `l1tex__data_bank_conflicts_pipe_lsu_mem_gds_op_*`. **tcgen05/TMEM (CRITICAL for B-series tests)**: `sm__mem_tensor_reads/writes_op_{ldt,utcmma_matrix_a_sp_sf,utcmma_matrix_c,utcshift,stt,utccp,utcmma}`. Validated cluster count = 1 for CSIZE=8 kernel. These metrics distinguish HMMA vs tcgen05/UTCMMA at hardware level.
 
 ## G. Real-world micro-kernel SoL
 
@@ -79,7 +79,7 @@ Status: `[ ]` unstarted, `[~]` in progress, `[x]` done with commit hash.
 
 ## I. Multi-GPU patterns
 
-- [ ] **I1 — IPC handle benchmark cross-process** (multi-process binary spawn)
+- [x] **I1 — IPC handles cross-process** (commit `c9179d6`): 2-binary fork test. cudaIpcGetMemHandle (parent) = 5-7 µs. cudaIpcOpenMemHandle (child) = **53.6 µs** one-time. First memcpy after open = 31-40 µs. Subsequent memcpy = <1 µs. Bidirectional R/W verified. Multi-process pipelines (decode/encode/inference) can share GPU buffers; first-touch 55 µs amortizes over millions of ops.
 - [x] **I2 — NVLink streaming WRITE BW** (commit `9bdd026`): kernel-direct write = **714 GB/s peak** (96% of cudaMemcpyPeer 749). Saturates at just 32 blocks. 75% of NVLink theoretical (956). Use kernel-write for compute+xfer interleave; cudaMemcpyPeer for pure data movement.
 - [x] **I3 — Multi-GPU all-reduce** (commit `41ba869`): naive 2-GPU = **80.8 GB/s** (256 MB float buffer, 6.642 ms). 10× below NVLink peak (740 GB/s from I2 write BW). Naive scalar add_peer kernel; needs vec4 + K-iters-ahead prefetch + better tiling. NCCL achieves 80-90% of peer write BW; custom kernels typically reach ~50% without tuning.
 - [x] **I4 — Cross-GPU atomic via NVLink** (commit `4005673`): cross-GPU atomic = **0.54 Gatomic/s = 3.2× slower** than local HBM atomic (1.74). 18× faster than PCIe sysmem atomic (E7). Use NCCL for multi-GPU; avoid raw cross-GPU atomicAdd.
@@ -106,8 +106,8 @@ Status: `[ ]` unstarted, `[~]` in progress, `[x]` done with commit hash.
 - [x] **L1 — Auto-rigor wrapper** (commit `3f7c64c`): utils/auto_rigor.sh combines clean_run + ncu_explorer + sass_count + checklist. Use for new microbenches; complex -H args may need manual phase invocation.
 - [x] **L2 — Power profiler via libnvidia-ml** (commit `8bb15c8`): NVML library = **6483 Hz max** (vs CLI 33 Hz = 196× faster). Unique value rate still ~9 Hz (HW sensor 110 ms cache). utils/power_sampler.cpp tool.
 - [x] **L3 — Per-pipe utilization dashboard** (commit `272ae48`): `utils/pipe_dashboard.sh` wraps ncu with normalized `pct_of_peak_sustained_elapsed` metrics for all 11 pipes (fma/fmaheavy/fmalite/alu/xu/lsu/tensor/adu/cbu/fp64/tex). Validated on FFMA (fma 69%) and HMMA (tensor 96%) kernels. Usage: `./utils/pipe_dashboard.sh <binary> [args]`.
-- [ ] **L4 — SASS diff visualizer** — between two kernel variants
-- [ ] **L5 — Microbench template** generator
+- [x] **L4 — SASS diff visualizer** (commit `cb4c9f4`): `utils/sass_diff.sh` compares opcode counts between two .sass or .cubin files, strips predicates + subop suffixes, sorts by Δ. Validated on B2 MODE 0 vs MODE 1: correctly shows HMMA: 4→0, LDTM: 0→4. Usage: `./utils/sass_diff.sh A.sass B.sass`.
+- [x] **L5 — Microbench template generator** (commit `9947490`): `utils/mkbench.sh <name> [num_modes]` generates a starter .cu with clock64, MODE selector, anti-DCE pattern, printf output. Saves ~5 min boilerplate per new microbench. Includes next-step guide for SASS+ncu+pipe dashboard.
 
 ---
 

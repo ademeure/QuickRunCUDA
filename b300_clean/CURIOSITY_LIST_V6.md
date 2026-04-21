@@ -12,9 +12,9 @@ Apply 10-rule rigor protocol. Mark `[x]` with commit hash when done.
 V5 B6/B2/V6 hint at non-trivial scheduler behavior even with "different" pipes.
 
 - [x] **A1 — HMMA + FFMA overlap** (commit `13f5a16`): 31% overlap. Surprisingly low for separate pipes; scheduler issue + RF ports limit. (V6 commit)
-- [ ] **A2 — HMMA + IADD3 overlap** (alu pipe, simpler than FFMA — does it overlap better?)
+- [x] **A2 — HMMA + IADD3 overlap** (commit `aa8b7eb`): 32% — IDENTICAL to HMMA+FFMA (31%). Different pipes (alu vs fma) → SAME overlap → bottleneck is SCHEDULER ISSUE RATE not pipe-specific contention. Suggests LDS+HMMA's 73% (V5 B6) comes from L1TEX QUEUEING (LDS doesn't block issue slot), unlike compute ops.
 - [ ] **A3 — HMMA + MUFU.RCP overlap** (xu pipe; transcendental hardware on yet another path)
-- [ ] **A4 — FFMA + LDS overlap** (fma + lsu — predict 90%+)
+- [x] **A4 — FFMA + LDS overlap = 96%** (commit `f1b2f4d`): nearly perfect overlap. **CONFIRMS theory**: memory ops queue through L1TEX (don't block scheduler issue), compute ops share the SMSP issue port (1/cy). For kernel optimization: hide MEMORY behind COMPUTE freely; don't mix two compute ops expecting parallelism.
 - [ ] **A5 — Build full 11×11 overlap matrix** (tooling; outputs CSV)
 - [ ] **A6 — HMMA + 2nd HMMA in different SUBPIPE** (heavyfma vs lightfma — does HMMA use both?)
 
