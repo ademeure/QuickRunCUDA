@@ -1,43 +1,54 @@
-// V8 SMEM-BW via ldmatrix: theoretical better than plain LDS due to wider fetch.
-// ldmatrix.sync.aligned.m8n8.x4 loads 8×8 × 4 = 256 bytes per warp per issue.
-// 4 SMSPs × 256 B = 1024 B/cy/SM theoretical? Actually bank-limited to 128 B.
-#ifndef SMEM_BYTES
-#define SMEM_BYTES 32768
+// V8 SMEM via ldmatrix — MEASURE SoL with proper DCE defeat
+// ldmatrix.sync.aligned.m8n8.x4.shared.b16 delivers 4 × 8×8 × 2B = 512 B per warp issue.
+// Theoretical: 148 SMs × 512 B / cy × 4 SMSPs × 1.92 GHz = way-too-high
+// Actual cap is bank throughput: 32 × 4 B × 4 bank-sets = 512 B/cy/SM at best
+//   148 × 512 × 1.92e9 / 4 = 37 TB/s (if ldmatrix fully uses 4 SMSPs concurrently)
+//
+// DCE fix: accumulate results into independent sum registers per iter; sum written to global.
+
+#ifndef SMEM_WORDS
+#define SMEM_WORDS 8192   // 32 KB per block
 #endif
 
 extern "C" __global__ __launch_bounds__(128, 8)
 void kernel(float* A, float* B, float* C, int ITERS, int seed, int u2) {
-    __shared__ alignas(128) float smem[SMEM_BYTES/4];
+    __shared__ alignas(128) unsigned int smem[SMEM_WORDS];
     int tid = threadIdx.x;
     int gtid = blockIdx.x * blockDim.x + tid;
 
     // Init SMEM
     #pragma unroll
-    for (int i = tid; i < SMEM_BYTES/4; i += blockDim.x) {
-        smem[i] = A[(gtid + i) & (SMEM_BYTES/4 - 1)];
+    for (int i = tid; i < SMEM_WORDS; i += blockDim.x) {
+        smem[i] = (unsigned int)A[(gtid + i) & (SMEM_WORDS - 1)] ^ (unsigned int)i;
     }
     __syncthreads();
 
-    // ldmatrix.sync.aligned.m8n8.x4 — each thread gets 4 × 32-bit = 16 B per issue
-    // 32 threads × 16 B = 512 B per warp per issue
-    unsigned int acc_x = 0, acc_y = 0, acc_z = 0, acc_w = 0;
     int lane = tid & 31;
     int warp_id = tid >> 5;
-    int warp_off = warp_id * 256;
+
+    // For x1: 1 matrix (8×8 halves = 128 B per warp per issue)
+    // Lanes 0-7 provide row pointers; lanes 8-31 unused for address but all get a result half
+    // Stride: rows of 16 B each → addresses at lane*4 (4 words = 16 B) for lanes 0-7
+    // To avoid conflicts: put each warp's matrix in its own SMEM slice
+    unsigned int sum = 0;
+    int warp_base = (warp_id * 64) & (SMEM_WORDS - 1);
 
     #pragma unroll 1
     for (int i = 0; i < ITERS; i++) {
-        int iter_off = (i * 4 * 32) & (SMEM_BYTES/4 - 1);
-        int local = (warp_off / 4 + (lane & 7) * 8 + iter_off) & (SMEM_BYTES/4 - 1);
+        // Each warp uses a disjoint 128-B region. Lanes 0-7 provide row pointers (stride 4 words).
+        int iter_off = (i * 16) & (SMEM_WORDS - 1);   // move 64 B per iter
+        int local = (warp_base + (lane & 7) * 4 + iter_off) & (SMEM_WORDS - 1);
         unsigned int ptr = __cvta_generic_to_shared(&smem[local]);
+
+        unsigned int r0;
         asm volatile(
-            "ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0, %1, %2, %3}, [%4];\n"
-            : "=r"(acc_x), "=r"(acc_y), "=r"(acc_z), "=r"(acc_w)
+            "ldmatrix.sync.aligned.m8n8.x1.shared.b16 {%0}, [%1];\n"
+            : "=r"(r0)
             : "r"(ptr)
         );
+        sum += r0;
     }
 
-    // Anti-DCE
-    float sum = (float)(acc_x + acc_y + acc_z + acc_w);
-    if (sum == 1.234567e-30f) C[gtid] = sum;
+    unsigned int total = sum;
+    if (total == 0xFFFFFFFF) C[gtid] = __int_as_float((int)total);
 }

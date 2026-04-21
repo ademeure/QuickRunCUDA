@@ -42,18 +42,31 @@
 10. **Confidence**: HIGH for 74%-of-peak claim via plain LDS.
     MEDIUM for "peak achievable via ldmatrix" — not verified.
 
-## Theoretical reconciliation
+## ldmatrix follow-up (ADDED)
 
-B300 SMEM SoL path is probably via:
-- `ldmatrix.x4` delivers 4 × 8 × 8 × 2 B = 512 B per warp per issue
-- Or `cp.async.bulk.shared` for async loads
-- Or `tcgen05.ld` for tensor memory loads (B300-specific)
+Tested `ldmatrix.sync.aligned.m8n8.x1.shared.b16` (128 B per warp issue):
+- 0 bank conflicts ✓ (ncu)
+- wavefronts = 47.67M in 2.03 ms
+- BW = 47.67M × 128 B / 2.03 ms = **3.0 TB/s** (8% of peak)
 
-The 74% achieved with plain LDS demonstrates that **bank conflicts are not
-the limit** — the limit is instruction dispatch overhead in the SIMT loop.
+ldmatrix.x4 attempt gave 50% bank conflicts (189M / 379M) — layout wrong.
 
-For kernels that need peak SMEM BW (e.g., convolution, stencil):
-use `ldmatrix` or async load paths to amortize dispatch overhead.
+**ldmatrix does NOT improve SMEM BW over plain LDS** in our tests. Why:
+- Each ldmatrix issue = 1 wavefront same as LDS
+- ldmatrix has higher instruction latency (synchronizes across warp lanes)
+- Dispatch rate lower than plain LDS loop (which unrolls aggressively)
+
+ldmatrix's value is its **format**: directly feeds `mma.sync` without
+re-layout. For raw BW, plain LDS with good ILP is faster.
+
+## True SMEM SoL path
+
+To exceed 27 TB/s requires:
+- `cp.async.bulk.shared` from DRAM (async) — but this is H2S, not intra-SMEM
+- `tcgen05.ld` (Blackwell tensor memory) — different memory pool
+- Swizzled layouts + careful bank-avoidance
+
+Plain LDS at 74% is the practical ceiling for scalar kernels on B300.
 
 ## Implications
 
