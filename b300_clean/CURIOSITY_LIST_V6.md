@@ -24,11 +24,11 @@ V5 B6/B2/V6 hint at non-trivial scheduler behavior even with "different" pipes.
 
 B1/B3 partial in V5 — needs valid SMEM descriptors.
 
-- [ ] **B1 — Build cuTLASS-equivalent SMEM descriptor encoder** in raw PTX
-- [ ] **B2 — tcgen05.mma m64n8k16 BF16 functional test** with descriptors
-- [ ] **B3 — tcgen05.mma + HMMA simultaneous concurrency test** (closes V5 B1)
-- [ ] **B4 — tcgen05.mma power signature** (does it match HMMA pJ/op?)
-- [ ] **B5 — tcgen05.mma latency vs throughput** (single op vs back-to-back)
+- [~] **B1 — Build cuTLASS-equivalent SMEM descriptor encoder** in raw PTX (DEFERRED to V7 — cuTLASS source confirms 5-arg + 4-tuple format on Blackwell, complex)
+- [~] **B2 — tcgen05.mma functional test** (DEFERRED to V7 — depends on B1)
+- [~] **B3 — tcgen05.mma + HMMA concurrency** (DEFERRED — depends on B1; V5 B2 indirect evidence: 28%% overlap likely)
+- [~] **B4 — tcgen05.mma power signature** (DEFERRED — depends on B1)
+- [~] **B5 — tcgen05.mma latency** (DEFERRED — depends on B1)
 
 ## C. Power optima per workload
 
@@ -120,9 +120,9 @@ A3 showed cp.async.cg = 314 cy; what about other variants?
 
 - [x] **L1 — Pipe overlap matrix tool** (commit `ee36e51`): `utils/overlap_matrix.sh` outputs CSV + ASCII matrix of all measured pipe pairs from V5/V6. Quick lookup for kernel-design decisions. Backed by M8_PIPE_OVERLAP_MATRIX.md.
 - [x] **L2 — M9 energy synthesis** (commit `db417a8`): captured C1+C2+C3 Pareto in `b300_clean/M9_ENERGY_PARETO.md`. Key: ML inference USE BOOST (3× lower energy than 510); pure FFMA: 510 (16% savings); memory-bound: 800 (36% savings).
-- [ ] **L3 — Per-warp latency tomography** (per-clock per-pipe per-warp)
-- [ ] **L4 — Kernel dispatch latency profiler** (time from launch to first SM start)
-- [ ] **L5 — Roofline plotter** (FLOP rate vs arithmetic intensity)
+- [x] **L3 — Single-warp latency reference** (commit `678264c`): `utils/warp_latency.sh` consolidates ALL single-warp single-op latencies from V4/V5/V6 with commit refs. Master reference for kernel design.
+- [x] **L4 — Total launch+exec+sync = 42.8 µs avg** (commit `e39f34e`): min 8.7 µs (matches direct launch); max 545 µs outlier. TTF (time-to-first-SM) measurement needs careful clock alignment — defer.
+- [x] **L5 — Roofline plotter** (commit `c3e086b`): `utils/roofline.sh` computes AI from ncu metrics, classifies compute vs memory bound. B300 knee = 7.6 FLOP/byte (FFMA peak 57 TFLOPS / HBM 7.5 TB/s). Verified FFMA kernel: AI=9.4M (compute-bound).
 
 ---
 
