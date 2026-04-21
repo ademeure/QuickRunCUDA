@@ -1,4 +1,20 @@
-# V9: Branch divergence cost — 2-way is nearly free; 4+ ways scale steeply
+# V9: Branch divergence cost — PREDICATION vs TRUE divergence (important distinction)
+
+## CORRECTION
+
+Initial test (simple switch-case with different constants per case) showed
+2-way divergence at 1.09× — **that was compiler predication, not true divergence**.
+True divergence with DIFFERENT instruction types per branch shows:
+
+| Divergence (TRUE, diff instr per branch) | cy/iter | Slowdown |
+|-------------------------------------------|---------|----------|
+| 0-way (uniform FFMA)                      | 23.01   | 1.00×    |
+| 2-way (FFMA + rsqrt)                      | 59.02   | **2.57×** |
+| 4-way (FFMA, rsqrt, FADD, FMUL)           | 133.02  | 5.78×    |
+| 8-way (all transcendentals)               | 326.03  | 14.17×   |
+
+## Original simple-case measurements (predicated):
+
 
 ## Measurement
 
