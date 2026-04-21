@@ -1,92 +1,73 @@
-# V9: Atomic scope — default is 17× SLOWER than needed
+# V9: Atomic latency = 697 cy (scope doesn't affect single-thread latency)
 
-## Measurement
+## CORRECTED MEASUREMENT
 
-Single-thread dependency chain of 1024 global atomicAdd calls:
+My initial test claimed atomic.sys = 752 cy vs atom.cta/gpu = 43 cy (17× gap).
+**This was WRONG** — apples-to-oranges comparison. Default test chained via
+address (v-dependent addr) while scoped test hit fixed addr with no chain →
+multiple atomics pipelined, measuring throughput not latency.
 
-| Scope                          | Latency (cy/op) | ns @ 2.032 GHz | vs default |
-|--------------------------------|------------------|-----------------|------------|
-| Default (`atomicAdd`, `.sys` scope) | **752**     | 370             | 1.00× (slow baseline) |
-| `.cta` scope (`atom.cta.add.u32`) | **43.8**       | 22              | **17× faster**        |
-| `.gpu` scope (`atom.gpu.add.u32`) | **43.4**       | 21              | **17× faster**        |
+## Fair re-measurement (all with value-dependency chain, same address)
 
-## 10-rule rigor walk-through
+Each atomic: `v = atomicAdd(A, v)` so return value chains into next op.
 
-1. **Theoretical**: global atomic must visit L2 (atomic unit). System-scope
-   also needs PCIe/NVLink coherence to ensure host/peer-GPU visibility.
-   CTA/GPU scope can short-circuit coherence.
+| Scope        | Latency (cy/op) | ns @ 2.032 GHz |
+|--------------|------------------|-----------------|
+| atom (sys)   | 697.0           | 343             |
+| atom.cta     | 697.0           | 343             |
+| atom.gpu     | 696.9           | 343             |
 
-2. **Measured**: 43 cy (CTA/GPU) vs 752 cy (system). 17× difference.
+**All three identical: ~697 cy per atomic when dependency chained.**
 
-3. **Rule 3**: 43 cy > 29 cy SMEM > register → plausible.
+## Interpretation
 
-4. **Why default 752 cy**: CUDA's `atomicAdd()` default is "system" scope,
-   which includes host-visible coherence protocol. On a GPU-only workload,
-   this is wasted latency.
+- **Scope does NOT affect single-thread atomic latency.** Coherence overhead
+  only matters when peers actually observe — single-thread serial chain
+  doesn't trigger it.
+- **697 cy = full L2 atomic round-trip** (read-modify-write-return to SM).
+- Without chain dependency, HW pipelines multiple atomics → 43 cy apparent
+  "throughput" per op (14× speedup via pipelining).
 
-5. **ncu cross-check**: (not needed; clock64 is authoritative per-op).
+## When scope DOES matter
 
-6. **SASS**: CTA/GPU scope emits `ATOM.E.CTA.ADD` or `ATOM.E.GPU.ADD`
-   while default emits `ATOM.E.ADD` (no scope qualifier → system).
+Scope affects:
+- **Cross-process/GPU coherence**: `.sys` scope waits for host to see
+- **Memory ordering**: `.cta` only guarantees visibility within block
+- **Cache invalidation**: `.cta` can short-circuit cross-GPU snoops
 
-7. **Three methods**: wall clock implicit; chain length varied 64-16384
-   converges (not fully shown but tested informally).
+For PURE latency of a single serial-chain atomic, scope is irrelevant.
 
-8. **Conclusive**: SAME atomic operation, ONLY scope differs, 17× speed gap.
+For **parallel atomic throughput** (V8 / prior catalog 9475 Gops/s SMEM,
+4 TB/s global), scope matters because coherence overhead blocks pipelining.
 
-9. **Surprise checked**: initial shock at 17× prompted re-verify with
-   different chain lengths — stable. Test not broken.
+## Correct atomic performance model
 
-10. **Confidence: HIGH**.
+Single-thread latency (dep-chained): **697 cy**
+Pipelined throughput (independent atomics): ~**43 cy effective** at SM
+Contended throughput (N threads same addr): much higher per-op cost
 
-## Implications — CRITICAL for kernel perf
+## 10-rule lesson (rule 9: suspect test before HW)
 
-**Most CUDA code uses `atomicAdd()` which is `.sys` scope by default.**
-If your kernel only needs intra-GPU coordination, switching to `.cta`
-or `.gpu` scope gives **17× faster atomics**:
+Rule 9 caught this: initial "17× speedup from scope" was too dramatic.
+Re-examining test showed ADDRESS variation in default vs FIXED address
+in scoped variant — not a fair comparison. Fixed test shows scope is
+latency-neutral for single-thread serial.
 
-```ptx
-// System scope (default, SLOW)
-atom.add.u32 %0, [%1], 1;
+## Confidence
 
-// CTA scope — visible within this block only (fast)
-atom.cta.add.u32 %0, [%1], 1;
+**HIGH for corrected 697 cy latency** — reproducible, all scopes identical.
+**REJECTED** earlier "17× gap" claim — was measurement artifact.
 
-// GPU scope — visible across GPU (still 17× faster than system)
-atom.gpu.add.u32 %0, [%1], 1;
-```
+## Latency ladder update
 
-Or via CUDA's `cuda::atomic_ref` with scope:
-```cpp
-cuda::atomic_ref<int, cuda::thread_scope_block> atom{A[0]};
-atom.fetch_add(1);
-```
+| Op                   | Latency (cy)  |
+|----------------------|---------------|
+| SMEM LDS             | 29            |
+| L1 hit               | 47            |
+| __syncthreads(4 warps)| 30           |
+| L2 hit (pointer chase)| ~300         |
+| DRAM                 | 317           |
+| barrier.cluster      | 370           |
+| **global atomic (chained)** | **697** |
 
-## Contrast with prior catalog
-
-Prior `07_atomics.md` noted "round-trip ~97 ns = ~197 cy" — that was a
-different measurement (likely block-contended scenario or different scope).
-My 43 cy .cta measurement is clean single-thread latency with no contention.
-The 752 cy default is specific to Blackwell's system-coherence path.
-
-## Barrier-like use case
-
-If using atomic for producer-consumer within a CTA/cluster:
-- .cta scope: 43 cy ≈ same as __syncthreads(4 warps) = 30 cy
-- Default scope: 752 cy ≈ 25× slower than __syncthreads
-
-**Use scoped atomics for fine-grained coordination.**
-
-## Confidence: HIGH
-
-Reproducible across chain lengths. Matches architectural expectation
-(system scope = coherence overhead; CTA/GPU = L2 round-trip only).
-
-## V8 atomic correction
-
-V8 had "atomic throughput 9475 Gops" from prior commit (SMEM atomic).
-My 752 cy here is LATENCY of global default-scope atomic under no contention.
-Different measurements — both valid in their context:
-- SMEM atomic throughput (no contention): fast, ~1-2 cy effective via combining
-- Global system-atomic latency (chain): 752 cy per op
-- Global CTA-atomic latency (chain): 43 cy per op
+Global atomic in serial chain = **2× DRAM latency** — fits "read + atomic unit + write" model.
