@@ -9,11 +9,11 @@ Status: `[ ]` unstarted, `[~]` in progress, `[x]` done with commit hash.
 
 ## A. mbarrier deep ninja
 
-- [ ] **A1 — mbarrier.try_wait timeout** granularity: we passed 0; does negative work? what's max?
-- [ ] **A2 — Why is mbarrier voltage-aware?** (per R2 +25% lower power than spin) — measure with ncu power per-pipe metrics
+- [x] **A1 — mbarrier.try_wait HINT** (commit `acd3f46`): suspendTimeHint u32 IS honored. HINT < 1000 ns = tight spin (~140-170 ns/retry); HINT ≥ 10000 ns = HW suspend CAPPED at ~1 µs per retry (regardless of HINT magnitude — 10 µs vs max u32 same behavior). Total wait time always tracks signal arrival. Sweet spot: HINT 1000-10000 ns to enable HW suspend without waste.
+- [x] **A2 — mbarrier vs spin power** (commit `9b2b151`): mbarrier.try_wait = **176.2 W**, busy spin = 196.6 W, __nanosleep = 176.6 W. mbarrier and nanosleep BOTH save 20 W (-10.4%) vs spin (validates V4 R2). Dynamic active power: spin = 31.6 W, hinted-wait = 11 W. Spin uses **2.9× more dynamic power** than HW-hinted wait. Use mbarrier or __nanosleep for any wait > 1 µs.
 - [x] **A3 — mbarrier.expect_tx for cp.async** (commit `38e5772`, partial): legacy cp.async.cg+commit+wait_all = 314 cy/iter. Hopper+ expect_tx + try_wait.parity needs alternating phase tracking; my naive impl hung. Use cuda::pipeline abstraction.
 - [x] **A4 — Multi-mbarrier per CTA** (commit `cc5f61a`): scales perfectly — 1 bar = 24 cy, 64 bars = 26 cy/arrive. No shared resource contention. cuTLASS pipelines can use 64+ barriers freely.
-- [ ] **A5 — mbarrier in DSMEM** (cluster-wide barrier across CTAs)
+- [x] **A5 — mbarrier in DSMEM** (commit `da371a4`): `mbarrier.arrive.shared::cluster` works (sink dest required) but `mbarrier.try_wait.parity.shared::cluster` is **ILLEGAL on B300**. Peer CTAs cannot directly try_wait on a peer mbarrier. Hybrid (mbarrier+cluster.barrier) = 478 cy/iter; pure cluster.barrier = 399 cy/iter (20% faster). Use cluster.barrier for cluster-wide sync; mbarrier in DSMEM only for one-CTA-waits-on-N-arrivals patterns.
 - [x] **A6 — mbarrier.arrive without wait** (commit `a549d92`): fire-and-forget arrive = **24 cy** (20% cheaper than __syncthreads 30 cy). Useful for producer-consumer split-phase. Sync hierarchy: warp(full)=0 → warp(partial)=7 → arrive=24 → bar.sync=30 → cluster=395.
 
 ## B. HMMA + tcgen05 concurrency
@@ -28,9 +28,9 @@ Status: `[ ]` unstarted, `[~]` in progress, `[x]` done with commit hash.
 ## C. DSMEM + cluster
 
 - [x] **C1 — DSMEM (cluster-shared SMEM) latency** (commit `9c8fec8`): peer access = 214 cy = **3.96× slower than local SMEM** (54 cy). Cluster fabric round-trip via `mapa.shared::cluster` + `ld.shared::cluster`. Still 4× faster than DRAM. Cross-row vs within-TPC distinction needs follow-up.
-- [ ] **C2 — cluster.barrier abuse** — call arrive_drop on N/4 CTAs to simulate subset wait
-- [ ] **C3 — Cross-cluster atomics** — atomic on DSMEM from another CTA
-- [ ] **C4 — Cluster shared mbarrier** — semantic + perf
+- [x] **C2 — cluster.barrier scaling** (commit `1f193aa`): latency is **FLAT** at ~390 cy/iter for CSIZE = 2, 4, 6, 8 (variance 7%, all in noise). Cluster.barrier does NOT scale linearly; HW uses tree-style sync. Build clusters of 8 freely — NO latency penalty vs CSIZE=2. (Note: arrive_drop pattern doesn't apply to cluster.barrier — mbarrier only.)
+- [x] **C3 — Cross-cluster atomics** (commit `1356dcb`): SASS verified — `atom.shared::cluster` → `ATOM.E.ADD.STRONG.GPU` (same as global!), only `atom.shared::cta` → dedicated `ATOMS.ADD`. NO special cross-cluster atomic SASS exists. Cluster atomic = 75 cy/iter (256-thr contend); local SMEM atomic = 55 cy/iter; global atomic = 75 cy/iter (REDG-optimized when return unused).
+- [x] **C4 — Cluster shared mbarrier subset semantics** (commit `bdf02fd`): mbarrier arrive cost grows non-linearly with N arriving CTAs (after subtracting cluster.barrier 390 cy baseline): 1 CTA = 53 cy, 2 = 59 cy, 7 = 182 cy, 8 = 182 cy (saturates). Cluster mbarrier DOES support subset (K-of-N) semantics via custom init count. Best for asymmetric 1-2 producer CTAs arriving on consumer-hosted bar; use cluster.barrier for symmetric sync.
 - [x] **C5 — Cluster size 16** (commit `26a5f6a`): MAX = **8** on B300. CSIZE=2/4/8 OK; CSIZE=16 silently FAILS (returns cudaSuccess but NO blocks execute). Stick to CSIZE ≤ 8 for portable cluster code.
 
 ## D. Power deep ninja
@@ -38,7 +38,7 @@ Status: `[ ]` unstarted, `[~]` in progress, `[x]` done with commit hash.
 - [x] **D1 — Subnormal FFMA without -use_fast_math** (commit `0bd3802`): B300 has NATIVE subnormal FFMA at **FULL speed**. SASS verified: -use_fast_math = FFMA.FTZ, -ftz=false = plain FFMA. Both run at IDENTICAL 4.11 cy/fma for subnormal modes. NO penalty unlike CPU 100× trap.
 - [x] **D2 — Per-pipe DUTY CYCLE** (commit `2b5f451`): YES roughly linear. FFMA pipe power scales 7→24→85→123 W as DUTY 1→4→16→64; SATURATES at +124 W active = FFMA pipe full. Per-FFMA = 4.4 pJ (matches H1).
 - [x] **D3 — TDP throttle behavior** (commit `bd20df5`): heavy FFMA+MUFU @ 220 W (20% of 1100 W TDP) does NOT throttle — sustains 2032 MHz boost. Throttle requires 800+ W workload (NVFP4 CuTeDSL → 1455 MHz @ 1095 W per prior data).
-- [ ] **D4 — Dynamic voltage scaling** — does B300 auto-adjust voltage with clock?
+- [x] **D4 — Dynamic Voltage Scaling** (commit `42bfa01`): YES — V scales quadratic with clock. P/f grew 3.2× from 510 → 1920 MHz (V² ratio = 3.2 → V ratio = 1.79×, e.g., 0.6V→1.07V plausible). pJ/FFMA: 3.1 (510 MHz) → 4.9 (1005) → 6.8 (1500) → 9.96 (1920). Energy-bound workloads benefit from clock-down; throughput-bound still want boost. Time/energy ratio 1:0.84 (boost vs min).
 - [x] **D5 — Power-aware code patterns** (commit `f18345b`): default LDG.E (L1 cached) BOTH faster AND **lower power** than .cg (bypass L1). +30 W vs +56 W (.cg uses 87% more power!). L1 caching offloads L2/DRAM work which dominates energy.
 - [x] **D6 — Per-SM power isolation** (ref H6+D3): per-SM static power independent (0.05 W each); BUT under TDP pressure (1100 W limit), all SMs share clock domain → throttle together (NVFP4 → 1455 MHz @ 1095 W). Light load = isolated; heavy load = shared.
 
@@ -56,7 +56,7 @@ Status: `[ ]` unstarted, `[~]` in progress, `[x]` done with commit hash.
 - [x] **F1 — sm__pipe_* breakdown** (commit `948cf45`): MAJOR — B300 has TWO FFMA sub-pipes (`pipe_fmaheavy` 50% + `pipe_fmalite` 50%). Pipe taxonomy: alu/fma/fmaheavy/fmalite/xu/lsu/tensor/adu/cbu/fp64. Validated bfind→XU, LDS→LSU, FFMA→fma split.
 - [x] **F2 — warps_active/eligible/issued** (commit `146a96f`): metrics available via `smsp__warps_active.avg.per_cycle_elapsed`, `smsp__warps_eligible.avg.per_cycle_elapsed`, `smsp__inst_issued.sum`. Useful for diagnosing scheduler stalls.
 - [x] **F3 — Memory throughput sub-metrics** (commit `e0f896d`): pyramid via `*.throughput.avg.pct_of_peak_sustained_elapsed`. D3 example: l1tex 78.85%, lts 62.04%, dram 44.61%. Read/write split via dram__bytes_read/write.sum instead.
-- [ ] **F4 — Register usage realtime metrics** — verify SASS spill count via ncu
+- [x] **F4 — Register/spill metrics via ncu** (commit `282e941`): two key metrics — `launch__registers_per_thread` (allocation), `l1tex__t_requests_pipe_lsu_mem_local_op_{ld,st}.sum` (spill counts). Sweep: 16/32/72 regs = 0 spills; 255 regs (LANES=256) = 1.3M LDL + 1.3M STL = SPILLS. SASS confirms via cuobjdump (45 STL/LDL ops). QuickRunCUDA auto-SASS sometimes fails on high-pressure; use cuobjdump direct.
 - [ ] **F5 — Cluster-aware metrics** — do cluster CTAs get separate counts?
 
 ## G. Real-world micro-kernel SoL
@@ -105,7 +105,7 @@ Status: `[ ]` unstarted, `[~]` in progress, `[x]` done with commit hash.
 
 - [x] **L1 — Auto-rigor wrapper** (commit `3f7c64c`): utils/auto_rigor.sh combines clean_run + ncu_explorer + sass_count + checklist. Use for new microbenches; complex -H args may need manual phase invocation.
 - [x] **L2 — Power profiler via libnvidia-ml** (commit `8bb15c8`): NVML library = **6483 Hz max** (vs CLI 33 Hz = 196× faster). Unique value rate still ~9 Hz (HW sensor 110 ms cache). utils/power_sampler.cpp tool.
-- [ ] **L3 — Per-pipe utilization dashboard** from ncu metrics
+- [x] **L3 — Per-pipe utilization dashboard** (commit `272ae48`): `utils/pipe_dashboard.sh` wraps ncu with normalized `pct_of_peak_sustained_elapsed` metrics for all 11 pipes (fma/fmaheavy/fmalite/alu/xu/lsu/tensor/adu/cbu/fp64/tex). Validated on FFMA (fma 69%) and HMMA (tensor 96%) kernels. Usage: `./utils/pipe_dashboard.sh <binary> [args]`.
 - [ ] **L4 — SASS diff visualizer** — between two kernel variants
 - [ ] **L5 — Microbench template** generator
 
