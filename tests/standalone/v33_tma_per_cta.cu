@@ -29,13 +29,13 @@ void tma_per_cta(const float* src, unsigned long long* out, unsigned total_ctas)
     unsigned long long t0, t1;
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0));
 
-    unsigned stride_words = total_ctas * (TILE_BYTES / 4);
-    unsigned src_words_mask = (256u * 1024u * 1024u) - (TILE_BYTES / 4);
+    size_t stride_words = total_ctas * (TILE_BYTES / 4);
+    size_t src_words_cap = (1ull * 1024 * 1024 * 1024);  // 4 GB
 
     #pragma unroll 1
     for (int it = 0; it < N_ITERS; it++) {
-        // Stride so each iter reads distinct addresses (defeat L2 caching)
-        unsigned off = (bid * (TILE_BYTES / 4) + it * stride_words) & src_words_mask;
+        size_t off = (bid * (size_t)(TILE_BYTES / 4) + (size_t)it * stride_words);
+        off %= (src_words_cap - TILE_BYTES / 4);
         const float* my_src = src + off;
 
         if (tid == 0) {
@@ -77,7 +77,7 @@ int main() {
     int sm_count = prop.multiProcessorCount;
     printf("SMs: %d\n", sm_count);
 
-    unsigned src_words = 256 * 1024 * 1024;  // 1 GB src
+    size_t src_words = 1ull * 1024 * 1024 * 1024;  // 4 GB src
     float* d_src;
     CK(cudaMalloc(&d_src, src_words * 4));
     cudaMemset(d_src, 0, src_words * 4);
@@ -89,7 +89,7 @@ int main() {
     cudaEventCreate(&e0);
     cudaEventCreate(&e1);
 
-    const int N_ITERS = 256;
+    const int N_ITERS = 1024;
 
     // Try several tile sizes and per-CTA counts
     printf("=== V33 per-CTA TMA (no multicast) ===\n");
@@ -98,17 +98,17 @@ int main() {
     auto run = [&](int tile_bytes, int n_blocks) {
         const int TILE = tile_bytes;
         int shmem = tile_bytes;
-        cudaFuncSetAttribute(tma_per_cta<65536, 256>,
+        cudaFuncSetAttribute(tma_per_cta<65536, 1024>,
             cudaFuncAttributeMaxDynamicSharedMemorySize, 163840);
-        cudaFuncSetAttribute(tma_per_cta<32768, 256>,
+        cudaFuncSetAttribute(tma_per_cta<32768, 1024>,
             cudaFuncAttributeMaxDynamicSharedMemorySize, 163840);
-        cudaFuncSetAttribute(tma_per_cta<16384, 256>,
+        cudaFuncSetAttribute(tma_per_cta<16384, 1024>,
             cudaFuncAttributeMaxDynamicSharedMemorySize, 163840);
 
         // warmup
-        if (tile_bytes == 16384) tma_per_cta<16384, 256><<<n_blocks, 128, shmem>>>((const float*)d_src, d_out, n_blocks);
-        else if (tile_bytes == 32768) tma_per_cta<32768, 256><<<n_blocks, 128, shmem>>>((const float*)d_src, d_out, n_blocks);
-        else tma_per_cta<65536, 256><<<n_blocks, 128, shmem>>>((const float*)d_src, d_out, n_blocks);
+        if (tile_bytes == 16384) tma_per_cta<16384, 1024><<<n_blocks, 128, shmem>>>((const float*)d_src, d_out, n_blocks);
+        else if (tile_bytes == 32768) tma_per_cta<32768, 1024><<<n_blocks, 128, shmem>>>((const float*)d_src, d_out, n_blocks);
+        else tma_per_cta<65536, 1024><<<n_blocks, 128, shmem>>>((const float*)d_src, d_out, n_blocks);
         cudaDeviceSynchronize();
         if (cudaGetLastError() != cudaSuccess) {
             printf("%d      %4d      WARMUP-FAIL\n", tile_bytes/1024, n_blocks);
@@ -119,9 +119,9 @@ int main() {
         float total_ms = 0;
         for (int r = 0; r < RUNS; r++) {
             cudaEventRecord(e0);
-            if (tile_bytes == 16384) tma_per_cta<16384, 256><<<n_blocks, 128, shmem>>>((const float*)d_src, d_out, n_blocks);
-            else if (tile_bytes == 32768) tma_per_cta<32768, 256><<<n_blocks, 128, shmem>>>((const float*)d_src, d_out, n_blocks);
-            else tma_per_cta<65536, 256><<<n_blocks, 128, shmem>>>((const float*)d_src, d_out, n_blocks);
+            if (tile_bytes == 16384) tma_per_cta<16384, 1024><<<n_blocks, 128, shmem>>>((const float*)d_src, d_out, n_blocks);
+            else if (tile_bytes == 32768) tma_per_cta<32768, 1024><<<n_blocks, 128, shmem>>>((const float*)d_src, d_out, n_blocks);
+            else tma_per_cta<65536, 1024><<<n_blocks, 128, shmem>>>((const float*)d_src, d_out, n_blocks);
             cudaEventRecord(e1);
             cudaEventSynchronize(e1);
             float ms;
