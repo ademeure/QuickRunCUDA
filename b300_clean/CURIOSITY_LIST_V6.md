@@ -15,7 +15,9 @@ V5 B6/B2/V6 hint at non-trivial scheduler behavior even with "different" pipes.
 - [x] **A2 — HMMA + IADD3 overlap** (commit `aa8b7eb`): 32% — IDENTICAL to HMMA+FFMA (31%). Different pipes (alu vs fma) → SAME overlap → bottleneck is SCHEDULER ISSUE RATE not pipe-specific contention. Suggests LDS+HMMA's 73% (V5 B6) comes from L1TEX QUEUEING (LDS doesn't block issue slot), unlike compute ops.
 - [x] **A3 — HMMA + MUFU.RCP overlap = 71%** (commit `17cf0d4`): xu pipe IS QUEUED, much higher overlap than alu/fma! Updated taxonomy: lsu (96%) > xu (71%) > alu/fma (30-32%) > tensor-shared (28%). MUFU.RCP/SQRT/EX2 nearly FREE during HMMA — use aggressively in RMSNorm rsqrt interleaved with tensor ops.
 - [x] **A4 — FFMA + LDS overlap = 96%** (commit `f1b2f4d`): nearly perfect overlap. **CONFIRMS theory**: memory ops queue through L1TEX (don't block scheduler issue), compute ops share the SMSP issue port (1/cy). For kernel optimization: hide MEMORY behind COMPUTE freely; don't mix two compute ops expecting parallelism.
-- [ ] **A5 — Build full 11×11 overlap matrix** (tooling; outputs CSV)
+- [x] **A5 — Pipe overlap matrix** (commit `<M8>`): captured in `b300_clean/M8_PIPE_OVERLAP_MATRIX.md` (10 pairs measured). Architectural model: lsu queues (96%) > xu queues (71-100%) > scheduler-bound compute (30-56%) > shared tensor pipe (28%). Tool L1 not built; matrix populated manually from A1-A4, A6, V5 B2/B6.
+- [x] **A_extra1 — MUFU + FFMA overlap = 100%+** (commit `086ed25`): super-linear; FFMA fills MUFU bubbles
+- [x] **A_extra2 — FFMA + IADD3 overlap = 56%** (commit `086ed25`): scalar compute partial parallelism (different pipes)
 - [x] **A6 — 2 independent HMMA chains same warp = 69%** (commit `d7da49c`): tensor pipe HAS internal pipelining. 4 chained HMMA = 80 cy; 2 indep chains × 4 = 105 cy (vs 160 serial). Per-op throughput drops 20 cy → 13.1 cy. cuTLASS-style multi-tile accumulation gets substantial speedup from interleaved independent HMMA chains.
 
 ## B. tcgen05.mma full descriptor implementation
