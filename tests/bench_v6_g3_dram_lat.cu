@@ -19,9 +19,9 @@ extern "C" __global__ void init(int* A, float* B, float* C, int n_elems, int see
 
 extern "C" __global__ __launch_bounds__(32, 1)
 void kernel(int* A, float* B, float* C, int ITERS, int seed, int u2) {
-    if (threadIdx.x >= 32) return;
+    if (threadIdx.x != 0 || blockIdx.x != 0) return;  // SINGLE THREAD
 
-    int idx = threadIdx.x * 7919;  // each thread starts at unique offset
+    int idx = 7919;  // single thread starts at one offset
 
     unsigned long long t0, t1;
     asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0));
@@ -35,8 +35,7 @@ void kernel(int* A, float* B, float* C, int ITERS, int seed, int u2) {
 
     if (idx == -1) C[blockIdx.x] = (float)idx;
 
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("HBM pointer-chase ITERS=%d cy/access=%.2f (true cold-line latency)\n",
-               ITERS, (double)(t1-t0)/(double)ITERS);
-    }
+    printf("HBM pointer-chase (SINGLE THREAD) ITERS=%d cy/access=%.2f = %.1f ns @ 1500 MHz\n",
+           ITERS, (double)(t1-t0)/(double)ITERS,
+           (double)(t1-t0)/(double)ITERS / 1500.0 * 1000.0);
 }
