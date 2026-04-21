@@ -24,6 +24,18 @@ sample `power.draw` during steady state, compute energy = P × T.
 **DRAM optimum: 1005 MHz** — 14% better than boost. At higher clocks, core spinning power
 grows faster than incremental memory throughput gain (DRAM bound already near peak).
 
+## Idle power baseline (GPU with open context, no kernel)
+
+| Clock     | Idle power |
+|-----------|------------|
+| 1005 MHz  | 153 W      |
+| 1500 MHz  | 167 W      |
+| 1920 MHz  | 197 W      |
+
+So "compute-only" power (total − idle) for FFMA is ~68 / 126 / 219 W. Idle
+overhead is substantial (~150-200 W) and is the reason ultra-low clocks are
+terrible for energy — the idle-time fraction of total explodes.
+
 ## Guidance
 
 - **Latency-critical / throughput-critical**: always BOOST (2032 MHz). Energy is secondary.
