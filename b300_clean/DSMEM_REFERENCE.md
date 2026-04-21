@@ -168,8 +168,25 @@ likely was driver state / thermal / background procs at the time.
 9. **fence.sc.gpu == fence.sc.cluster** in cost → prefer .gpu for safety
 10. **DSMEM latency ~180 cy, local SMEM 24 cy, ratio ~7.5×** — not 0.8%, not 4.7×
 
+## 9.5 TMA overlap + hot-spot atomics (V31)
+
+### DSMEM reads concurrent with TMA multicast
+With 16 KB TMA in-flight: 216 cy/load | Without: 216 cy/load (0.04% diff)
+**TMA and DSMEM loads use independent data paths**. Perfect overlap possible.
+
+### Hot-spot atomics (all CTAs → same target)
+| N senders | cy/atom | cluster agg |
+|-----------|---------|-------------|
+| 2 | 214 | 9 Matom/s |
+| 4 | 214 | 27 Matom/s |
+| 8 | 214 | **63 Matom/s** |
+
+**Linear scaling (unlike hot-spot reads)**. Each sender 9 Matom/s, dest's atomic
+unit pipelined at 33 atoms/clock. Contrast: hot-spot reads cap at 3.5 Gload/s
+(serving port), hot-spot atomics scale N× to dest's pipelined atomic rate.
+
 ## 10. Test files
-- `tests/standalone/v11-v30_*.cu` — 20 standalone tests
+- `tests/standalone/v11-v31_*.cu` — 21 standalone tests
 - `b300_clean/DSMEM_FINDINGS_V2.md` — detailed running log
 - `b300_clean/DSMEM_MASTER_PLAN.md` — original roadmap
 - `investigations/04_dsmem_overhead.md` — earlier foundation (2026-04-17)
