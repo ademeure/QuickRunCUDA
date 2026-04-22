@@ -110,6 +110,21 @@ static __device__ __forceinline__ void quant_dequant_fused(
     out_dq = *reinterpret_cast<half2*>(&dq_bits);
 }
 
+// BF16-pipeline variants: quant from bf16x2 and dequant to bf16x2 directly.
+// Exists on SM_100a+ (cvt.rn.satfinite.e2m1x2.bf16x2 added in PTX 8.7).
+static __device__ __forceinline__ void quant_dequant_fused_bf16(
+    unsigned int bf16x2_in,      // 2 bf16 values packed (lo|hi<<16)
+    unsigned short& out_byte,    // e2m1x2 byte in low 8 bits of u16
+    unsigned int& out_dq_bf16x2) // dequantized bf16x2 (or f16x2 if bf16 cvt unavailable)
+{
+    asm("{ .reg .b8 t;\n\t"
+        "  cvt.rn.satfinite.e2m1x2.bf16x2 t, %2;\n\t"
+        "  cvt.rn.bf16x2.e2m1x2 %1, t;\n\t"
+        "  mov.b16 %0, {t, 0}; }"
+        : "=h"(out_byte), "=r"(out_dq_bf16x2)
+        : "r"(bf16x2_in));
+}
+
 // BF16_LO: extract low bf16 as f32. The & 0xFFFF mask is redundant because
 // u32 << 16 discards the upper 16 bits (overflow), giving the same result.
 #define BF16_LO(w) __int_as_float((unsigned int)(w) << 16)
@@ -138,6 +153,87 @@ static __device__ __forceinline__ void process_group(
                     (k)==12 ? BF16_LO(w6) : (k)==13 ? BF16_HI(w6) :  \
                     (k)==14 ? BF16_LO(w7) :           BF16_HI(w7))
 
+#ifdef BF16_PIPELINE
+    // ---------- BF16-throughout NC=2 path ----------
+    // x stays as bf16x2 packed in w0..w7 (no upfront f32 extraction).
+    // Scaling via HMUL2.bf16x2 (ALU pipe); quant/dequant via bf16 cvt
+    // instructions (F2FP pipe, same as f32 cvt); error via fma.rn.f32.bf16.
+    // x is extracted JIT to f32 only for the error fma's c-operand.
+    //
+    // This path is expected to be SLOWER on B300 because HMUL2.bf16x2 runs on
+    // the ALU pipe (67% utilized baseline) whereas FMUL2.FTZ.F32 runs on the
+    // FMA-heavy pipe (42% utilized baseline). Implemented on user request.
+    //
+    // Packed inputs:  w_arr[i] = bf16x2(x_{2i}, x_{2i+1})
+    const unsigned int w_arr[8] = {w0, w1, w2, w3, w4, w5, w6, w7};
+
+    // absmax via GXF (still need one pass of f32 to compute scale)
+    float absmax = 0.f;
+    #pragma unroll
+    for (int k = 0; k < VSIZE; ++k) {
+        absmax = fmaxf(absmax, fabsf(GXF(k)));
+    }
+    float inv_scale = rcp_approx_ftz(scale);
+
+    unsigned char fp8_0, fp8_1;
+    float s_round_0 = roundtrip_e4m3(absmax * ((1.f/6.f) * SCALE_OVERRIDE * inv_scale), fp8_0);
+    float s_round_1 = roundtrip_e4m3(absmax * ((1.f/4.f) * SCALE_OVERRIDE * inv_scale), fp8_1);
+    float factor_0 = rcp_approx_ftz(s_round_0 * scale);
+    float factor_1 = rcp_approx_ftz(s_round_1 * scale);
+    float descale_0 = s_round_0 * scale;
+    float descale_1 = s_round_1 * scale;
+
+    // Convert factors to bf16 replicated pairs: (f0_bf16, f0_bf16)
+    unsigned int factor_0_rep, factor_1_rep;
+    asm("cvt.rn.bf16x2.f32 %0, %1, %1;" : "=r"(factor_0_rep) : "f"(factor_0));
+    asm("cvt.rn.bf16x2.f32 %0, %1, %1;" : "=r"(factor_1_rep) : "f"(factor_1));
+
+    // Convert -descale scalars to bf16 (used in fma.rn.f32.bf16)
+    unsigned short ns0_bf16, ns1_bf16;
+    asm("cvt.rn.bf16.f32 %0, %1;" : "=h"(ns0_bf16) : "f"(-descale_0));
+    asm("cvt.rn.bf16.f32 %0, %1;" : "=h"(ns1_bf16) : "f"(-descale_1));
+
+    unsigned short bits_0[E2M1_PAIRS], bits_1[E2M1_PAIRS];
+    unsigned long long err_pair = 0;
+    #pragma unroll
+    for (int k = 0; k < VSIZE; k += 2) {
+        unsigned int xpair = w_arr[k >> 1];  // bf16x2 = (x_k, x_{k+1})
+
+        // HMUL2.bf16x2: (x_k, x_{k+1}) * (f, f) = (x_k*f, x_{k+1}*f)
+        unsigned int sx_c0, sx_c1;
+        asm("mul.bf16x2 %0, %1, %2;" : "=r"(sx_c0) : "r"(xpair), "r"(factor_0_rep));
+        asm("mul.bf16x2 %0, %1, %2;" : "=r"(sx_c1) : "r"(xpair), "r"(factor_1_rep));
+
+        // Quantize directly from bf16x2, dequant to bf16x2 (same byte kept internally)
+        unsigned int dq0, dq1;  // bf16x2 dequant results
+        quant_dequant_fused_bf16(sx_c0, bits_0[k >> 1], dq0);
+        quant_dequant_fused_bf16(sx_c1, bits_1[k >> 1], dq1);
+
+        // Extract scalar bf16 from each dq pair
+        unsigned short d0x = (unsigned short)(dq0 & 0xFFFFu);
+        unsigned short d0y = (unsigned short)(dq0 >> 16);
+        unsigned short d1x = (unsigned short)(dq1 & 0xFFFFu);
+        unsigned short d1y = (unsigned short)(dq1 >> 16);
+
+        // Extract x_k, x_{k+1} as f32 (needed for fma.rn.f32.bf16 c-operand)
+        float x_lo = BF16_LO(xpair);
+        float x_hi = BF16_HI(xpair);
+
+        float e0_c0, e0_c1, e1_c0, e1_c1;
+        asm volatile("{fma.rn.f32.bf16 %0, %1, %2, %3;}"
+            : "=f"(e0_c0) : "h"(d0x), "h"(ns0_bf16), "f"(x_lo));
+        asm volatile("{fma.rn.f32.bf16 %0, %1, %2, %3;}"
+            : "=f"(e0_c1) : "h"(d1x), "h"(ns1_bf16), "f"(x_lo));
+        ffma_ftz_f32x2_acc(err_pair, e0_c0, e0_c1, e0_c0, e0_c1);
+
+        asm volatile("{fma.rn.f32.bf16 %0, %1, %2, %3;}"
+            : "=f"(e1_c0) : "h"(d0y), "h"(ns0_bf16), "f"(x_hi));
+        asm volatile("{fma.rn.f32.bf16 %0, %1, %2, %3;}"
+            : "=f"(e1_c1) : "h"(d1y), "h"(ns1_bf16), "f"(x_hi));
+        ffma_ftz_f32x2_acc(err_pair, e1_c0, e1_c1, e1_c0, e1_c1);
+    }
+    float2 errs = unpack_f32x2(err_pair);
+#else
     float x_f32[VSIZE];
     float absmax = 0.f;
     #pragma unroll
@@ -202,6 +298,7 @@ static __device__ __forceinline__ void process_group(
         ffma_ftz_f32x2_acc(err_pair, e1_c0, e1_c1, e1_c0, e1_c1);
     }
     float2 errs = unpack_f32x2(err_pair);
+#endif
 
 #ifdef CONTIGUOUS_SCALES
     #define BPAK(x) (x)
