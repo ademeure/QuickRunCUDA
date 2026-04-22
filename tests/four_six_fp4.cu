@@ -125,6 +125,61 @@ static __device__ __forceinline__ void quant_dequant_fused_bf16(
         : "r"(bf16x2_in));
 }
 
+// Pack4-fused: quantize 8 f32 values (4 pairs) AND combine their e2m1x2 bytes
+// into a single u32 via mov.b16 / mov.b32 — no user-visible SHL/OR.
+// The 4 dequant f16x2 results are returned separately for error computation.
+// This keeps all byte-concat work INSIDE one opaque asm block, so the compiler
+// can't insert LOP3 & 0xff masks between the packs.
+static __device__ __forceinline__ void quant_pack4_fused_f32(
+    float s0, float s1, float s2, float s3,
+    float s4, float s5, float s6, float s7,
+    unsigned int& packed_u32,
+    unsigned int& dq01, unsigned int& dq23,
+    unsigned int& dq45, unsigned int& dq67)
+{
+    asm("{ .reg .b8 t0, t1, t2, t3;\n\t"
+        "  .reg .b16 h01, h23;\n\t"
+        "  cvt.rn.satfinite.e2m1x2.f32 t0, %6, %5;\n\t"
+        "  cvt.rn.satfinite.e2m1x2.f32 t1, %8, %7;\n\t"
+        "  cvt.rn.satfinite.e2m1x2.f32 t2, %10, %9;\n\t"
+        "  cvt.rn.satfinite.e2m1x2.f32 t3, %12, %11;\n\t"
+        "  cvt.rn.f16x2.e2m1x2 %1, t0;\n\t"
+        "  cvt.rn.f16x2.e2m1x2 %2, t1;\n\t"
+        "  cvt.rn.f16x2.e2m1x2 %3, t2;\n\t"
+        "  cvt.rn.f16x2.e2m1x2 %4, t3;\n\t"
+        "  mov.b16 h01, {t0, t1};\n\t"
+        "  mov.b16 h23, {t2, t3};\n\t"
+        "  mov.b32 %0, {h01, h23}; }"
+        : "=r"(packed_u32), "=r"(dq01), "=r"(dq23), "=r"(dq45), "=r"(dq67)
+        : "f"(s0), "f"(s1), "f"(s2), "f"(s3),
+          "f"(s4), "f"(s5), "f"(s6), "f"(s7));
+}
+
+// BF16-input version of the above
+static __device__ __forceinline__ void quant_pack4_fused_bf16(
+    unsigned int bx01, unsigned int bx23,  // bf16x2 each = 2 scaled values
+    unsigned int bx45, unsigned int bx67,
+    unsigned int& packed_u32,
+    unsigned int& dq01, unsigned int& dq23,
+    unsigned int& dq45, unsigned int& dq67)
+{
+    asm("{ .reg .b8 t0, t1, t2, t3;\n\t"
+        "  .reg .b16 h01, h23;\n\t"
+        "  cvt.rn.satfinite.e2m1x2.bf16x2 t0, %5;\n\t"
+        "  cvt.rn.satfinite.e2m1x2.bf16x2 t1, %6;\n\t"
+        "  cvt.rn.satfinite.e2m1x2.bf16x2 t2, %7;\n\t"
+        "  cvt.rn.satfinite.e2m1x2.bf16x2 t3, %8;\n\t"
+        "  cvt.rn.bf16x2.e2m1x2 %1, t0;\n\t"
+        "  cvt.rn.bf16x2.e2m1x2 %2, t1;\n\t"
+        "  cvt.rn.bf16x2.e2m1x2 %3, t2;\n\t"
+        "  cvt.rn.bf16x2.e2m1x2 %4, t3;\n\t"
+        "  mov.b16 h01, {t0, t1};\n\t"
+        "  mov.b16 h23, {t2, t3};\n\t"
+        "  mov.b32 %0, {h01, h23}; }"
+        : "=r"(packed_u32), "=r"(dq01), "=r"(dq23), "=r"(dq45), "=r"(dq67)
+        : "r"(bx01), "r"(bx23), "r"(bx45), "r"(bx67));
+}
+
 // BF16_LO: extract low bf16 as f32. The & 0xFFFF mask is redundant because
 // u32 << 16 discards the upper 16 bits (overflow), giving the same result.
 #define BF16_LO(w) __int_as_float((unsigned int)(w) << 16)
@@ -153,7 +208,95 @@ static __device__ __forceinline__ void process_group(
                     (k)==12 ? BF16_LO(w6) : (k)==13 ? BF16_HI(w6) :  \
                     (k)==14 ? BF16_LO(w7) :           BF16_HI(w7))
 
-#ifdef BF16_PIPELINE
+#if defined(BF16_PACK4)
+    // ---------- BF16 + fused 4-pack NC=2 path ----------
+    // Eliminates bits_0/bits_1 u16 arrays by producing packed u32 directly from
+    // quant_pack4_fused_bf16. Halves the number of byte-pack LOP3/SHL ops.
+    const unsigned int w_arr[8] = {w0, w1, w2, w3, w4, w5, w6, w7};
+
+    float absmax = 0.f;
+    #pragma unroll
+    for (int k = 0; k < VSIZE; ++k) absmax = fmaxf(absmax, fabsf(GXF(k)));
+    float inv_scale = rcp_approx_ftz(scale);
+
+    unsigned char fp8_0, fp8_1;
+    float s_round_0 = roundtrip_e4m3(absmax * ((1.f/6.f) * SCALE_OVERRIDE * inv_scale), fp8_0);
+    float s_round_1 = roundtrip_e4m3(absmax * ((1.f/4.f) * SCALE_OVERRIDE * inv_scale), fp8_1);
+    float factor_0 = rcp_approx_ftz(s_round_0 * scale);
+    float factor_1 = rcp_approx_ftz(s_round_1 * scale);
+    float descale_0 = s_round_0 * scale;
+    float descale_1 = s_round_1 * scale;
+
+    unsigned int factor_0_rep, factor_1_rep;
+    asm("cvt.rn.bf16x2.f32 %0, %1, %1;" : "=r"(factor_0_rep) : "f"(factor_0));
+    asm("cvt.rn.bf16x2.f32 %0, %1, %1;" : "=r"(factor_1_rep) : "f"(factor_1));
+    unsigned short ns0_bf16, ns1_bf16;
+    asm("cvt.rn.bf16.f32 %0, %1;" : "=h"(ns0_bf16) : "f"(-descale_0));
+    asm("cvt.rn.bf16.f32 %0, %1;" : "=h"(ns1_bf16) : "f"(-descale_1));
+
+    unsigned long long err_pair = 0;
+    unsigned int pack_out[4];  // lo0, hi0, lo1, hi1
+
+    #pragma unroll
+    for (int half = 0; half < 2; ++half) {
+        // Scale 4 pairs for both candidates
+        unsigned int sx_c0[4], sx_c1[4];
+        #pragma unroll
+        for (int p = 0; p < 4; ++p) {
+            unsigned int xpair = w_arr[(half << 2) + p];
+            asm("mul.bf16x2 %0, %1, %2;" : "=r"(sx_c0[p]) : "r"(xpair), "r"(factor_0_rep));
+            asm("mul.bf16x2 %0, %1, %2;" : "=r"(sx_c1[p]) : "r"(xpair), "r"(factor_1_rep));
+        }
+
+        // Fused quant+pack for cand0 and cand1
+        unsigned int dq0_01, dq0_23, dq0_45, dq0_67;
+        unsigned int dq1_01, dq1_23, dq1_45, dq1_67;
+        quant_pack4_fused_bf16(sx_c0[0], sx_c0[1], sx_c0[2], sx_c0[3],
+                               pack_out[half * 2], dq0_01, dq0_23, dq0_45, dq0_67);
+        quant_pack4_fused_bf16(sx_c1[0], sx_c1[1], sx_c1[2], sx_c1[3],
+                               pack_out[half * 2 + 1], dq1_01, dq1_23, dq1_45, dq1_67);
+
+        // Error compute for 4 pairs of both candidates
+        const unsigned int dq0_arr[4] = {dq0_01, dq0_23, dq0_45, dq0_67};
+        const unsigned int dq1_arr[4] = {dq1_01, dq1_23, dq1_45, dq1_67};
+        #pragma unroll
+        for (int p = 0; p < 4; ++p) {
+            unsigned int xpair = w_arr[(half << 2) + p];
+            float x_lo = BF16_LO(xpair);
+            float x_hi = BF16_HI(xpair);
+            unsigned short d0x = (unsigned short)(dq0_arr[p] & 0xFFFFu);
+            unsigned short d0y = (unsigned short)(dq0_arr[p] >> 16);
+            unsigned short d1x = (unsigned short)(dq1_arr[p] & 0xFFFFu);
+            unsigned short d1y = (unsigned short)(dq1_arr[p] >> 16);
+
+            float e0_c0, e0_c1, e1_c0, e1_c1;
+            asm volatile("{fma.rn.f32.bf16 %0, %1, %2, %3;}"
+                : "=f"(e0_c0) : "h"(d0x), "h"(ns0_bf16), "f"(x_lo));
+            asm volatile("{fma.rn.f32.bf16 %0, %1, %2, %3;}"
+                : "=f"(e0_c1) : "h"(d1x), "h"(ns1_bf16), "f"(x_lo));
+            ffma_ftz_f32x2_acc(err_pair, e0_c0, e0_c1, e0_c0, e0_c1);
+
+            asm volatile("{fma.rn.f32.bf16 %0, %1, %2, %3;}"
+                : "=f"(e1_c0) : "h"(d0y), "h"(ns0_bf16), "f"(x_hi));
+            asm volatile("{fma.rn.f32.bf16 %0, %1, %2, %3;}"
+                : "=f"(e1_c1) : "h"(d1y), "h"(ns1_bf16), "f"(x_hi));
+            ffma_ftz_f32x2_acc(err_pair, e1_c0, e1_c1, e1_c0, e1_c1);
+        }
+    }
+    float2 errs = unpack_f32x2(err_pair);
+
+    // Select winning candidate
+    if (errs.y < errs.x) {
+        out_lo   = pack_out[1];  // cand1 lo
+        out_hi   = pack_out[3];  // cand1 hi
+        out_fp8s = fp8_1;
+    } else {
+        out_lo   = pack_out[0];
+        out_hi   = pack_out[2];
+        out_fp8s = fp8_0;
+    }
+    return;
+#elif defined(BF16_PIPELINE)
     // ---------- BF16-throughout NC=2 path ----------
     // x stays as bf16x2 packed in w0..w7 (no upfront f32 extraction).
     // Scaling via HMUL2.bf16x2 (ALU pipe); quant/dequant via bf16 cvt
@@ -300,6 +443,7 @@ static __device__ __forceinline__ void process_group(
     float2 errs = unpack_f32x2(err_pair);
 #endif
 
+#ifndef BF16_PACK4
 #ifdef CONTIGUOUS_SCALES
     #define BPAK(x) (x)
 #else
@@ -319,7 +463,7 @@ static __device__ __forceinline__ void process_group(
         out_hi   = hi0;
         out_fp8s = fp8_0;
     }
-
+#endif
     #undef GXF
 }
 
@@ -439,6 +583,20 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
     unsigned int wb0,wb1,wb2,wb3,wb4,wb5,wb6,wb7;
     unsigned int wc0,wc1,wc2,wc3,wc4,wc5,wc6,wc7;
     unsigned int wd0,wd1,wd2,wd3,wd4,wd5,wd6,wd7;
+#ifdef SPLIT_LOADS
+    asm volatile("ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
+                 : "=r"(wa0),"=r"(wa1),"=r"(wa2),"=r"(wa3),
+                   "=r"(wa4),"=r"(wa5),"=r"(wa6),"=r"(wa7) : "l"(pIn));
+    asm volatile("ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
+                 : "=r"(wb0),"=r"(wb1),"=r"(wb2),"=r"(wb3),
+                   "=r"(wb4),"=r"(wb5),"=r"(wb6),"=r"(wb7) : "l"(pIn+8));
+    asm volatile("ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
+                 : "=r"(wc0),"=r"(wc1),"=r"(wc2),"=r"(wc3),
+                   "=r"(wc4),"=r"(wc5),"=r"(wc6),"=r"(wc7) : "l"(pIn+16));
+    asm volatile("ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
+                 : "=r"(wd0),"=r"(wd1),"=r"(wd2),"=r"(wd3),
+                   "=r"(wd4),"=r"(wd5),"=r"(wd6),"=r"(wd7) : "l"(pIn+24));
+#else
     asm volatile(
         "ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%32];\n\t"
         "ld.global.v8.u32 {%8,%9,%10,%11,%12,%13,%14,%15}, [%33];\n\t"
@@ -453,6 +611,7 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
           "=r"(wd0),"=r"(wd1),"=r"(wd2),"=r"(wd3),
           "=r"(wd4),"=r"(wd5),"=r"(wd6),"=r"(wd7)
         : "l"(pIn), "l"(pIn+8), "l"(pIn+16), "l"(pIn+24));
+#endif
 
     int lo0,hi0,lo1,hi1,lo2,hi2,lo3,hi3;
     unsigned char fp8s0,fp8s1,fp8s2,fp8s3;
