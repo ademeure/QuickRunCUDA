@@ -328,7 +328,8 @@ static __device__ __forceinline__ void process_group(
     // Packed inputs:  w_arr[i] = bf16x2(x_{2i}, x_{2i+1})
     const unsigned int w_arr[8] = {w0, w1, w2, w3, w4, w5, w6, w7};
 
-    // absmax via GXF (still need one pass of f32 to compute scale)
+    // absmax via GXF (BF16_HI free in APPROX, BF16_LO is SHF.L on ALU pipe).
+    // Tried bf16x2 absmax (BF16_ABSMAX) — equivalent perf, more complex SASS.
     float absmax = 0.f;
     #pragma unroll
     for (int k = 0; k < VSIZE; ++k) {
