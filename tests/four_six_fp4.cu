@@ -520,7 +520,7 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
 
 #if GROUPS_PER_THREAD == 1
     unsigned int wa0,wa1,wa2,wa3,wa4,wa5,wa6,wa7;
-    asm volatile("ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
+    asm volatile("ld.global.cg.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
                  : "=r"(wa0),"=r"(wa1),"=r"(wa2),"=r"(wa3),
                    "=r"(wa4),"=r"(wa5),"=r"(wa6),"=r"(wa7)
                  : "l"(pIn));
@@ -549,19 +549,19 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
     const int group_b = group_a + 32;
     const unsigned int* pA = reinterpret_cast<const unsigned int*>(A) + group_a * 8;
     const unsigned int* pB = reinterpret_cast<const unsigned int*>(A) + group_b * 8;
-    asm volatile("ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
+    asm volatile("ld.global.cg.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
                  : "=r"(wa0),"=r"(wa1),"=r"(wa2),"=r"(wa3),
                    "=r"(wa4),"=r"(wa5),"=r"(wa6),"=r"(wa7)
                  : "l"(pA));
-    asm volatile("ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
+    asm volatile("ld.global.cg.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
                  : "=r"(wb0),"=r"(wb1),"=r"(wb2),"=r"(wb3),
                    "=r"(wb4),"=r"(wb5),"=r"(wb6),"=r"(wb7)
                  : "l"(pB));
 #else
     // Adjacent: thread idx loads groups [2*idx, 2*idx+1] (stride = 64B/thread)
     asm volatile(
-        "ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%16];\n\t"
-        "ld.global.v8.u32 {%8,%9,%10,%11,%12,%13,%14,%15}, [%17];"
+        "ld.global.cg.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%16];\n\t"
+        "ld.global.cg.v8.u32 {%8,%9,%10,%11,%12,%13,%14,%15}, [%17];"
         : "=r"(wa0),"=r"(wa1),"=r"(wa2),"=r"(wa3),
           "=r"(wa4),"=r"(wa5),"=r"(wa6),"=r"(wa7),
           "=r"(wb0),"=r"(wb1),"=r"(wb2),"=r"(wb3),
@@ -611,24 +611,24 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
     unsigned int wc0,wc1,wc2,wc3,wc4,wc5,wc6,wc7;
     unsigned int wd0,wd1,wd2,wd3,wd4,wd5,wd6,wd7;
 #ifdef SPLIT_LOADS
-    asm volatile("ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
+    asm volatile("ld.global.cg.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
                  : "=r"(wa0),"=r"(wa1),"=r"(wa2),"=r"(wa3),
                    "=r"(wa4),"=r"(wa5),"=r"(wa6),"=r"(wa7) : "l"(pIn));
-    asm volatile("ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
+    asm volatile("ld.global.cg.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
                  : "=r"(wb0),"=r"(wb1),"=r"(wb2),"=r"(wb3),
                    "=r"(wb4),"=r"(wb5),"=r"(wb6),"=r"(wb7) : "l"(pIn+8));
-    asm volatile("ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
+    asm volatile("ld.global.cg.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
                  : "=r"(wc0),"=r"(wc1),"=r"(wc2),"=r"(wc3),
                    "=r"(wc4),"=r"(wc5),"=r"(wc6),"=r"(wc7) : "l"(pIn+16));
-    asm volatile("ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
+    asm volatile("ld.global.cg.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
                  : "=r"(wd0),"=r"(wd1),"=r"(wd2),"=r"(wd3),
                    "=r"(wd4),"=r"(wd5),"=r"(wd6),"=r"(wd7) : "l"(pIn+24));
 #else
     asm volatile(
-        "ld.global.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%32];\n\t"
-        "ld.global.v8.u32 {%8,%9,%10,%11,%12,%13,%14,%15}, [%33];\n\t"
-        "ld.global.v8.u32 {%16,%17,%18,%19,%20,%21,%22,%23}, [%34];\n\t"
-        "ld.global.v8.u32 {%24,%25,%26,%27,%28,%29,%30,%31}, [%35];"
+        "ld.global.cg.v8.u32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%32];\n\t"
+        "ld.global.cg.v8.u32 {%8,%9,%10,%11,%12,%13,%14,%15}, [%33];\n\t"
+        "ld.global.cg.v8.u32 {%16,%17,%18,%19,%20,%21,%22,%23}, [%34];\n\t"
+        "ld.global.cg.v8.u32 {%24,%25,%26,%27,%28,%29,%30,%31}, [%35];"
         : "=r"(wa0),"=r"(wa1),"=r"(wa2),"=r"(wa3),
           "=r"(wa4),"=r"(wa5),"=r"(wa6),"=r"(wa7),
           "=r"(wb0),"=r"(wb1),"=r"(wb2),"=r"(wb3),
