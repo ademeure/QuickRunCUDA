@@ -17,9 +17,8 @@
 #include <cuda_fp8.h>
 #include <cuda_fp4.h>
 
-#ifndef NUM_CANDIDATES
+// NUM_CANDIDATES is locked to 2 (four/six). NC=1/3/4 removed for simplicity.
 #define NUM_CANDIDATES 2
-#endif
 #ifndef GROUPS_PER_THREAD
 #define GROUPS_PER_THREAD 2
 #endif
@@ -82,12 +81,6 @@ static __device__ __forceinline__ long long sf_out_offset(int mIdx, int kIdx, in
     return tmp | (kIdx & 3); // LOP3
 }
 
-struct QuantResult {
-    unsigned char bits[FP4_BYTES];
-    float         scale;
-    unsigned char fp8s;
-};
-
 static __device__ __forceinline__ float roundtrip_e4m3(float x, unsigned char& out_byte) {
     unsigned short packed;
     asm("{cvt.rn.satfinite.e4m3x2.f32 %0, %2, %1;}"
@@ -97,21 +90,6 @@ static __device__ __forceinline__ float roundtrip_e4m3(float x, unsigned char& o
     asm("{cvt.rn.f16x2.e4m3x2 %0, %1;}" : "=r"(f16_pair) : "h"(packed));
     __half_raw hr; hr.x = (unsigned short)(f16_pair & 0xFFFF);
     return __half2float(__half(hr));
-}
-
-static __device__ __forceinline__ unsigned char f32x2_to_e2m1x2(float lo, float hi) {
-    uchar2 packed;
-    asm("{ .reg .b8 t; cvt.rn.satfinite.e2m1x2.f32 t, %2, %1; mov.b16 %0, {t,0}; }"
-                 : "=h"(*reinterpret_cast<unsigned short*>(&packed)) : "f"(lo), "f"(hi));
-    return packed.x;
-}
-
-static __device__ __forceinline__ half2 e2m1x2_to_f16x2(unsigned char byte) {
-    unsigned short h = (unsigned short)byte;
-    unsigned int f16_pair;
-    asm("{ .reg .b8 t; mov.b16 {t,_}, %1; cvt.rn.f16x2.e2m1x2 %0, t; }"
-                 : "=r"(f16_pair) : "h"(h));
-    return *reinterpret_cast<half2*>(&f16_pair);
 }
 
 // Fused quantize+dequantize: the .b8 register stays INSIDE the asm block,
@@ -170,7 +148,6 @@ static __device__ __forceinline__ void process_group(
 
     float inv_scale = rcp_approx_ftz(scale);
 
-#if NUM_CANDIDATES == 2
     // ===== NC=2 interleaved: both candidates computed in lockstep =====
     // Candidate-axis f32x2: .x = candidate 0 (val=6), .y = candidate 1 (val=4)
     // This lets us use FFMA2 for error accumulation (d*d) across candidates,
@@ -246,66 +223,6 @@ static __device__ __forceinline__ void process_group(
         out_fp8s = fp8_0;
     }
 
-#else
-    // ===== NC=1 path (NC=3/4 support removed per user request) =====
-    static_assert(NUM_CANDIDATES == 1, "Only NUM_CANDIDATES=1 or 2 supported");
-
-    constexpr float cand_all[1] = { 6.f };
-    QuantResult q_vec[NUM_CANDIDATES];
-    float err_vec[NUM_CANDIDATES];
-
-    #pragma unroll
-    for (int i = 0; i < NUM_CANDIDATES; ++i) {
-        QuantResult& q = q_vec[i];
-        const float inv_val = 1.f / cand_all[i];
-        unsigned char s_as_fp8;
-        float s_round = roundtrip_e4m3(absmax * (inv_val * SCALE_OVERRIDE * inv_scale), s_as_fp8);
-        float factor = rcp_approx_ftz(s_round * scale);
-
-        q.scale = s_round;
-        q.fp8s  = s_as_fp8;
-
-        const float descale = q.scale * scale;
-        half  descale_neg_f16 = static_cast<half>(-descale);
-        short descale_neg_s   = *reinterpret_cast<short*>(&descale_neg_f16);
-        err_vec[i] = 0.f;
-        #pragma unroll
-        for (int k = 0; k < VSIZE; k += 2) {
-            float2 scaled = fmul_ftz_f32x2(x_f32[k], x_f32[k+1], factor, factor);
-            half2 dq;
-            unsigned short byte_tmp;
-            quant_dequant_fused(scaled.x, scaled.y, byte_tmp, dq);
-            q.bits[k >> 1] = (unsigned char)(byte_tmp & 0xFF);
-
-            short dx = *reinterpret_cast<short*>(&dq.x);
-            short dy = *reinterpret_cast<short*>(&dq.y);
-            float d0, d1;
-            asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-                : "=f"(d0) : "h"(dx), "h"(descale_neg_s), "f"(x_f32[k]));
-            asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-                : "=f"(d1) : "h"(dy), "h"(descale_neg_s), "f"(x_f32[k+1]));
-            err_vec[i] += d0 * d0;
-            err_vec[i] += d1 * d1;
-        }
-    }
-
-    float best_err = err_vec[0];
-    #pragma unroll
-    for (int i = 1; i < NUM_CANDIDATES; ++i)
-        best_err = min(best_err, err_vec[i]);
-
-    out_fp8s = q_vec[0].fp8s;
-    out_lo   = *reinterpret_cast<int*>(&q_vec[0].bits[0]);
-    out_hi   = *reinterpret_cast<int*>(&q_vec[0].bits[4]);
-    #pragma unroll
-    for (int i = 1; i < NUM_CANDIDATES; ++i) {
-        if (err_vec[i] == best_err) {
-            out_lo   = *reinterpret_cast<int*>(&q_vec[i].bits[0]);
-            out_hi   = *reinterpret_cast<int*>(&q_vec[i].bits[4]);
-            out_fp8s = q_vec[i].fp8s;
-        }
-    }
-#endif
     #undef GXF
 }
 
