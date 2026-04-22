@@ -70,13 +70,16 @@ static __device__ __forceinline__ float2 unpack_f32x2(unsigned long long v) {
 }
 
 static __device__ __forceinline__ long long sf_out_offset(int mIdx, int kIdx, int numKTiles) {
-    int mTileIdx = mIdx >> 7;
-    int outerM   = mIdx & 31;
-    int innerM   = (mIdx >> 5) & 3;
-    int kTileIdx = kIdx >> 2;
-    int innerK   = kIdx & 3;
-    return ((long long)mTileIdx * numKTiles + kTileIdx) << 9
-         | (outerM << 4) | (innerM << 2) | innerK;
+    // 2xSHF.L + 4xLOP3 + 3xIMAD ===> 6xALU + 3xIMAD
+    int mTileIdx = mIdx >> 7; // SHF.L
+    int outerM = mIdx & 31; // LOP3
+    int innerM_times_4 = (mIdx >> 3) & 12; // SHF.L + LOP3
+    int m_contribution = (mTileIdx * (numKTiles * 512)) + (outerM * 16) + innerM_times_4; // IMAD+IMAD
+
+
+    int k_mult = kIdx * 128; // IMAD
+    int tmp = (k_mult & ~511) | m_contribution; // LOP3
+    return tmp | (kIdx & 3); // LOP3
 }
 
 struct QuantResult {
@@ -243,168 +246,11 @@ static __device__ __forceinline__ void process_group(
         out_fp8s = fp8_0;
     }
 
-#elif NUM_CANDIDATES == 3
-    // ===== NC=3: candidates 0+1 interleaved, candidate 2 separate =====
-    unsigned char fp8_0, fp8_1, fp8_2;
-    float sr0 = roundtrip_e4m3(absmax * ((1.f/6.f) * SCALE_OVERRIDE * inv_scale), fp8_0);
-    float sr1 = roundtrip_e4m3(absmax * ((1.f/4.f) * SCALE_OVERRIDE * inv_scale), fp8_1);
-    float sr2 = roundtrip_e4m3(absmax * ((1.f/3.f) * SCALE_OVERRIDE * inv_scale), fp8_2);
-    float f0 = rcp_approx_ftz(sr0 * scale);
-    float f1 = rcp_approx_ftz(sr1 * scale);
-    float f2 = rcp_approx_ftz(sr2 * scale);
-
-    float ds0 = sr0 * scale, ds1 = sr1 * scale, ds2 = sr2 * scale;
-    half nds0 = static_cast<half>(-ds0);
-    half nds1 = static_cast<half>(-ds1);
-    half nds2 = static_cast<half>(-ds2);
-    short ns0 = *reinterpret_cast<short*>(&nds0);
-    short ns1 = *reinterpret_cast<short*>(&nds1);
-    short ns2 = *reinterpret_cast<short*>(&nds2);
-
-    unsigned short b0[E2M1_PAIRS], b1[E2M1_PAIRS], b2[E2M1_PAIRS];
-    unsigned long long err_pair01 = 0;
-    float err2 = 0.f;
-    #pragma unroll
-    for (int k = 0; k < VSIZE; k += 2) {
-        // Candidates 0+1 interleaved via FMUL2/FFMA2
-        float2 sx0_01 = fmul_ftz_f32x2(x_f32[k],   x_f32[k],   f0, f1);
-        float2 sx1_01 = fmul_ftz_f32x2(x_f32[k+1], x_f32[k+1], f0, f1);
-        half2 dq0, dq1;
-        quant_dequant_fused(sx0_01.x, sx1_01.x, b0[k>>1], dq0);
-        quant_dequant_fused(sx0_01.y, sx1_01.y, b1[k>>1], dq1);
-        float e0c0, e0c1, e1c0, e1c1;
-        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e0c0) : "h"(*reinterpret_cast<short*>(&dq0.x)), "h"(ns0), "f"(x_f32[k]));
-        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e0c1) : "h"(*reinterpret_cast<short*>(&dq1.x)), "h"(ns1), "f"(x_f32[k]));
-        ffma_ftz_f32x2_acc(err_pair01, e0c0, e0c1, e0c0, e0c1);
-        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e1c0) : "h"(*reinterpret_cast<short*>(&dq0.y)), "h"(ns0), "f"(x_f32[k+1]));
-        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e1c1) : "h"(*reinterpret_cast<short*>(&dq1.y)), "h"(ns1), "f"(x_f32[k+1]));
-        ffma_ftz_f32x2_acc(err_pair01, e1c0, e1c1, e1c0, e1c1);
-
-        // Candidate 2 separate
-        float2 sx2 = fmul_ftz_f32x2(x_f32[k], x_f32[k+1], f2, f2);
-        half2 dq2;
-        quant_dequant_fused(sx2.x, sx2.y, b2[k>>1], dq2);
-        float d2a, d2b;
-        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(d2a) : "h"(*reinterpret_cast<short*>(&dq2.x)), "h"(ns2), "f"(x_f32[k]));
-        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(d2b) : "h"(*reinterpret_cast<short*>(&dq2.y)), "h"(ns2), "f"(x_f32[k+1]));
-        err2 += d2a * d2a;
-        err2 += d2b * d2b;
-    }
-    float2 errs01 = unpack_f32x2(err_pair01);
-
-    // Pack all candidates' bytes into u32, then select at u32 level.
-    // This avoids pointer-based conditional byte access (many ALU ops)
-    // in favor of fewer u32-level SEL instructions.
-    float best_err = min(min(errs01.x, errs01.y), err2);
-#ifdef CONTIGUOUS_SCALES
-    #define BP3(x) (x)
 #else
-    #define BP3(x) ((x) & 0xFF)
-#endif
-    unsigned int pk0_lo = BP3(b0[0])|(BP3(b0[1])<<8)|(BP3(b0[2])<<16)|(BP3(b0[3])<<24);
-    unsigned int pk0_hi = BP3(b0[4])|(BP3(b0[5])<<8)|(BP3(b0[6])<<16)|(BP3(b0[7])<<24);
-    unsigned int pk1_lo = BP3(b1[0])|(BP3(b1[1])<<8)|(BP3(b1[2])<<16)|(BP3(b1[3])<<24);
-    unsigned int pk1_hi = BP3(b1[4])|(BP3(b1[5])<<8)|(BP3(b1[6])<<16)|(BP3(b1[7])<<24);
-    unsigned int pk2_lo = BP3(b2[0])|(BP3(b2[1])<<8)|(BP3(b2[2])<<16)|(BP3(b2[3])<<24);
-    unsigned int pk2_hi = BP3(b2[4])|(BP3(b2[5])<<8)|(BP3(b2[6])<<16)|(BP3(b2[7])<<24);
-    #undef BP3
+    // ===== NC=1 path (NC=3/4 support removed per user request) =====
+    static_assert(NUM_CANDIDATES == 1, "Only NUM_CANDIDATES=1 or 2 supported");
 
-    out_lo = pk0_lo; out_hi = pk0_hi; out_fp8s = fp8_0;
-    if (errs01.y == best_err) { out_lo = pk1_lo; out_hi = pk1_hi; out_fp8s = fp8_1; }
-    if (err2 == best_err)     { out_lo = pk2_lo; out_hi = pk2_hi; out_fp8s = fp8_2; }
-
-#elif NUM_CANDIDATES == 4
-    // ===== NC=4: two interleaved pairs (0+1) and (2+3) =====
-    unsigned char fp8_0, fp8_1, fp8_2, fp8_3;
-    float sr0 = roundtrip_e4m3(absmax * ((1.f/6.f) * SCALE_OVERRIDE * inv_scale), fp8_0);
-    float sr1 = roundtrip_e4m3(absmax * ((1.f/4.f) * SCALE_OVERRIDE * inv_scale), fp8_1);
-    float sr2 = roundtrip_e4m3(absmax * ((1.f/3.f) * SCALE_OVERRIDE * inv_scale), fp8_2);
-    float sr3 = roundtrip_e4m3(absmax * ((1.f/2.f) * SCALE_OVERRIDE * inv_scale), fp8_3);
-    float f0 = rcp_approx_ftz(sr0 * scale);
-    float f1 = rcp_approx_ftz(sr1 * scale);
-    float f2 = rcp_approx_ftz(sr2 * scale);
-    float f3 = rcp_approx_ftz(sr3 * scale);
-
-    float ds0 = sr0*scale, ds1 = sr1*scale, ds2 = sr2*scale, ds3 = sr3*scale;
-    half nds0 = static_cast<half>(-ds0), nds1 = static_cast<half>(-ds1);
-    half nds2 = static_cast<half>(-ds2), nds3 = static_cast<half>(-ds3);
-    short ns0 = *reinterpret_cast<short*>(&nds0), ns1 = *reinterpret_cast<short*>(&nds1);
-    short ns2 = *reinterpret_cast<short*>(&nds2), ns3 = *reinterpret_cast<short*>(&nds3);
-
-    unsigned short bv0[E2M1_PAIRS], bv1[E2M1_PAIRS], bv2[E2M1_PAIRS], bv3[E2M1_PAIRS];
-    unsigned long long err01 = 0, err23 = 0;
-    #pragma unroll
-    for (int k = 0; k < VSIZE; k += 2) {
-        // Pair 0+1
-        float2 s01a = fmul_ftz_f32x2(x_f32[k],   x_f32[k],   f0, f1);
-        float2 s01b = fmul_ftz_f32x2(x_f32[k+1], x_f32[k+1], f0, f1);
-        half2 dq0, dq1;
-        quant_dequant_fused(s01a.x, s01b.x, bv0[k>>1], dq0);
-        quant_dequant_fused(s01a.y, s01b.y, bv1[k>>1], dq1);
-        float e0a, e0b, e1a, e1b;
-        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e0a) : "h"(*reinterpret_cast<short*>(&dq0.x)), "h"(ns0), "f"(x_f32[k]));
-        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e0b) : "h"(*reinterpret_cast<short*>(&dq1.x)), "h"(ns1), "f"(x_f32[k]));
-        ffma_ftz_f32x2_acc(err01, e0a, e0b, e0a, e0b);
-        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e1a) : "h"(*reinterpret_cast<short*>(&dq0.y)), "h"(ns0), "f"(x_f32[k+1]));
-        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e1b) : "h"(*reinterpret_cast<short*>(&dq1.y)), "h"(ns1), "f"(x_f32[k+1]));
-        ffma_ftz_f32x2_acc(err01, e1a, e1b, e1a, e1b);
-
-        // Pair 2+3
-        float2 s23a = fmul_ftz_f32x2(x_f32[k],   x_f32[k],   f2, f3);
-        float2 s23b = fmul_ftz_f32x2(x_f32[k+1], x_f32[k+1], f2, f3);
-        half2 dq2, dq3;
-        quant_dequant_fused(s23a.x, s23b.x, bv2[k>>1], dq2);
-        quant_dequant_fused(s23a.y, s23b.y, bv3[k>>1], dq3);
-        float e2a, e2b, e3a, e3b;
-        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e2a) : "h"(*reinterpret_cast<short*>(&dq2.x)), "h"(ns2), "f"(x_f32[k]));
-        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e2b) : "h"(*reinterpret_cast<short*>(&dq3.x)), "h"(ns3), "f"(x_f32[k]));
-        ffma_ftz_f32x2_acc(err23, e2a, e2b, e2a, e2b);
-        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e3a) : "h"(*reinterpret_cast<short*>(&dq2.y)), "h"(ns2), "f"(x_f32[k+1]));
-        asm volatile("{fma.rn.f32.f16 %0, %1, %2, %3;}"
-            : "=f"(e3b) : "h"(*reinterpret_cast<short*>(&dq3.y)), "h"(ns3), "f"(x_f32[k+1]));
-        ffma_ftz_f32x2_acc(err23, e3a, e3b, e3a, e3b);
-    }
-    float2 ep01 = unpack_f32x2(err01);
-    float2 ep23 = unpack_f32x2(err23);
-
-    // Pack all candidates, then select at u32 level
-    float best_err = min(min(ep01.x, ep01.y), min(ep23.x, ep23.y));
-#ifdef CONTIGUOUS_SCALES
-    #define BP4(x) (x)
-#else
-    #define BP4(x) ((x) & 0xFF)
-#endif
-    unsigned int p0l=BP4(bv0[0])|(BP4(bv0[1])<<8)|(BP4(bv0[2])<<16)|(BP4(bv0[3])<<24);
-    unsigned int p0h=BP4(bv0[4])|(BP4(bv0[5])<<8)|(BP4(bv0[6])<<16)|(BP4(bv0[7])<<24);
-    unsigned int p1l=BP4(bv1[0])|(BP4(bv1[1])<<8)|(BP4(bv1[2])<<16)|(BP4(bv1[3])<<24);
-    unsigned int p1h=BP4(bv1[4])|(BP4(bv1[5])<<8)|(BP4(bv1[6])<<16)|(BP4(bv1[7])<<24);
-    unsigned int p2l=BP4(bv2[0])|(BP4(bv2[1])<<8)|(BP4(bv2[2])<<16)|(BP4(bv2[3])<<24);
-    unsigned int p2h=BP4(bv2[4])|(BP4(bv2[5])<<8)|(BP4(bv2[6])<<16)|(BP4(bv2[7])<<24);
-    unsigned int p3l=BP4(bv3[0])|(BP4(bv3[1])<<8)|(BP4(bv3[2])<<16)|(BP4(bv3[3])<<24);
-    unsigned int p3h=BP4(bv3[4])|(BP4(bv3[5])<<8)|(BP4(bv3[6])<<16)|(BP4(bv3[7])<<24);
-    #undef BP4
-
-    out_lo = p0l; out_hi = p0h; out_fp8s = fp8_0;
-    if (ep01.y == best_err) { out_lo = p1l; out_hi = p1h; out_fp8s = fp8_1; }
-    if (ep23.x == best_err) { out_lo = p2l; out_hi = p2h; out_fp8s = fp8_2; }
-    if (ep23.y == best_err) { out_lo = p3l; out_hi = p3h; out_fp8s = fp8_3; }
-
-#else
-    // ===== Generic NC path (NC=1 or NC>=5) =====
-    constexpr float cand_all[4] = { 6.f, 4.f, 3.f, 2.f };
+    constexpr float cand_all[1] = { 6.f };
     QuantResult q_vec[NUM_CANDIDATES];
     float err_vec[NUM_CANDIDATES];
 
