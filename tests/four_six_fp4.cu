@@ -349,17 +349,27 @@ static __device__ __forceinline__ void process_group(
     asm("cvt.rn.bf16x2.f32 %0, %1, %1;" : "=r"(factor_0_rep) : "f"(factor_0));
     asm("cvt.rn.bf16x2.f32 %0, %1, %1;" : "=r"(factor_1_rep) : "f"(factor_1));
 
+#ifdef BF16_PACKED_ERR
+    // Convert -descale scalars to bf16x2 replicated (for packed fma.bf16x2)
+    unsigned int neg_ds0_rep, neg_ds1_rep;
+    asm("cvt.rn.bf16x2.f32 %0, %1, %1;" : "=r"(neg_ds0_rep) : "f"(-descale_0));
+    asm("cvt.rn.bf16x2.f32 %0, %1, %1;" : "=r"(neg_ds1_rep) : "f"(-descale_1));
+#else
     // Convert -descale scalars to bf16 (used in fma.rn.f32.bf16)
     unsigned short ns0_bf16, ns1_bf16;
     asm("cvt.rn.bf16.f32 %0, %1;" : "=h"(ns0_bf16) : "f"(-descale_0));
     asm("cvt.rn.bf16.f32 %0, %1;" : "=h"(ns1_bf16) : "f"(-descale_1));
+#endif
 
 #ifdef BF16_U32_BYTES
     unsigned int bits_0[E2M1_PAIRS], bits_1[E2M1_PAIRS];
 #else
     unsigned short bits_0[E2M1_PAIRS], bits_1[E2M1_PAIRS];
 #endif
+    float err_c0_acc = 0.f, err_c1_acc = 0.f;
+#ifndef BF16_PACKED_ERR
     unsigned long long err_pair = 0;
+#endif
     #pragma unroll
     for (int k = 0; k < VSIZE; k += 2) {
         unsigned int xpair = w_arr[k >> 1];  // bf16x2 = (x_k, x_{k+1})
@@ -379,6 +389,26 @@ static __device__ __forceinline__ void process_group(
         quant_dequant_fused_bf16(sx_c1, bits_1[k >> 1], dq1);
 #endif
 
+#ifdef BF16_PACKED_ERR
+        // Packed fma.bf16x2: err_bf16x2 = dq * (-ds, -ds) + xpair
+        // (computes err for lo and hi element in one HFMA2.BF16_V2 on FMA-heavy pipe)
+        unsigned int err_c0_bf16x2, err_c1_bf16x2;
+        asm("fma.rn.bf16x2 %0, %1, %2, %3;"
+            : "=r"(err_c0_bf16x2) : "r"(dq0), "r"(neg_ds0_rep), "r"(xpair));
+        asm("fma.rn.bf16x2 %0, %1, %2, %3;"
+            : "=r"(err_c1_bf16x2) : "r"(dq1), "r"(neg_ds1_rep), "r"(xpair));
+
+        // Extract err scalars (mov.b32 {b16, b16} — free register alias)
+        unsigned short e0x, e0y, e1x, e1y;
+        asm("mov.b32 {%0, %1}, %2;" : "=h"(e0x), "=h"(e0y) : "r"(err_c0_bf16x2));
+        asm("mov.b32 {%0, %1}, %2;" : "=h"(e1x), "=h"(e1y) : "r"(err_c1_bf16x2));
+
+        // Square and accumulate in f32 via fma.rn.f32.bf16 (FHFMA.BF16 on FMA-heavy)
+        asm("fma.rn.f32.bf16 %0, %1, %1, %0;" : "+f"(err_c0_acc) : "h"(e0x));
+        asm("fma.rn.f32.bf16 %0, %1, %1, %0;" : "+f"(err_c0_acc) : "h"(e0y));
+        asm("fma.rn.f32.bf16 %0, %1, %1, %0;" : "+f"(err_c1_acc) : "h"(e1x));
+        asm("fma.rn.f32.bf16 %0, %1, %1, %0;" : "+f"(err_c1_acc) : "h"(e1y));
+#else
         // Extract scalar bf16 from each dq pair
         unsigned short d0x = (unsigned short)(dq0 & 0xFFFFu);
         unsigned short d0y = (unsigned short)(dq0 >> 16);
@@ -401,8 +431,13 @@ static __device__ __forceinline__ void process_group(
         asm volatile("{fma.rn.f32.bf16 %0, %1, %2, %3;}"
             : "=f"(e1_c1) : "h"(d1y), "h"(ns1_bf16), "f"(x_hi));
         ffma_ftz_f32x2_acc(err_pair, e1_c0, e1_c1, e1_c0, e1_c1);
+#endif
     }
+#ifdef BF16_PACKED_ERR
+    float2 errs = {err_c0_acc, err_c1_acc};
+#else
     float2 errs = unpack_f32x2(err_pair);
+#endif
 #else
     float x_f32[VSIZE];
     float absmax = 0.f;
