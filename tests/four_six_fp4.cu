@@ -125,6 +125,24 @@ static __device__ __forceinline__ void quant_dequant_fused_bf16(
         : "r"(bf16x2_in));
 }
 
+// u32 output variant: returns byte in low 8 of u32, upper bits explicitly zero.
+// The idea: maybe the compiler trusts u32 output more than u16 (.b16) and skips
+// the LOP3 & 0xff cleanup mask.
+static __device__ __forceinline__ void quant_dequant_fused_bf16_u32(
+    unsigned int bf16x2_in,
+    unsigned int& out_byte_u32,   // e2m1x2 byte in low 8, upper 24 bits = 0
+    unsigned int& out_dq_bf16x2)
+{
+    asm("{ .reg .b8 t;\n\t"
+        "  .reg .b16 t16;\n\t"
+        "  cvt.rn.satfinite.e2m1x2.bf16x2 t, %2;\n\t"
+        "  cvt.rn.bf16x2.e2m1x2 %1, t;\n\t"
+        "  mov.b16 t16, {t, 0};\n\t"
+        "  cvt.u32.u16 %0, t16; }"
+        : "=r"(out_byte_u32), "=r"(out_dq_bf16x2)
+        : "r"(bf16x2_in));
+}
+
 // Pack4-fused: quantize 8 f32 values (4 pairs) AND combine their e2m1x2 bytes
 // into a single u32 via mov.b16 / mov.b32 — no user-visible SHL/OR.
 // The 4 dequant f16x2 results are returned separately for error computation.
@@ -336,7 +354,11 @@ static __device__ __forceinline__ void process_group(
     asm("cvt.rn.bf16.f32 %0, %1;" : "=h"(ns0_bf16) : "f"(-descale_0));
     asm("cvt.rn.bf16.f32 %0, %1;" : "=h"(ns1_bf16) : "f"(-descale_1));
 
+#ifdef BF16_U32_BYTES
+    unsigned int bits_0[E2M1_PAIRS], bits_1[E2M1_PAIRS];
+#else
     unsigned short bits_0[E2M1_PAIRS], bits_1[E2M1_PAIRS];
+#endif
     unsigned long long err_pair = 0;
     #pragma unroll
     for (int k = 0; k < VSIZE; k += 2) {
@@ -349,8 +371,13 @@ static __device__ __forceinline__ void process_group(
 
         // Quantize directly from bf16x2, dequant to bf16x2 (same byte kept internally)
         unsigned int dq0, dq1;  // bf16x2 dequant results
+#ifdef BF16_U32_BYTES
+        quant_dequant_fused_bf16_u32(sx_c0, bits_0[k >> 1], dq0);
+        quant_dequant_fused_bf16_u32(sx_c1, bits_1[k >> 1], dq1);
+#else
         quant_dequant_fused_bf16(sx_c0, bits_0[k >> 1], dq0);
         quant_dequant_fused_bf16(sx_c1, bits_1[k >> 1], dq1);
+#endif
 
         // Extract scalar bf16 from each dq pair
         unsigned short d0x = (unsigned short)(dq0 & 0xFFFFu);
