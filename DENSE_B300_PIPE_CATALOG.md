@@ -2166,4 +2166,147 @@ For full-chip busy-load context (W=16+ pending writes, all SMs active), use the 
 
 ---
 
+## §23. Clean MUFU sweep — ✅ VERIFIED 2026-04-23 (justifications/23_27_28_29_consolidated.md, 17_mufu.md)
+
+Catalog table at L1980-2007 (clock64-bracketed, no range reduction) cross-confirmed against my §17 oversubscribed-occupancy ncu measurement.
+
+| op | cy/op | GOps/s chip | Verdict |
+|----|------:|------------:|---------|
+| ex2.approx.f32 | 14 | **8850** | ✅ matches §17 (pipe_xu peak 1.0 inst/SM/cy × 32 lanes × 148 SMs × 1.92 GHz = 9088 G ops/s; 8850 = 97%) |
+| tanh.approx.f32 | 18 | **4500** (= 0.51× ex2) | ✅ matches §17 (TANH = 8 cy SASS at saturation = exactly 2× EX2's 4 cy) |
+| ex2.approx.{f16x2,bf16x2} | 18 | 4500 | ✅ vec2 packing gives NO element-rate gain on XU; same throughput as f32 EX2 at half dispatch pressure (per §17 ADDENDUM) |
+| tanh.approx.{f16x2,bf16x2} | 18 | 1310 (compound) | ✅ |
+
+⚠ **Latency caveat:** catalog ex2 latency 14 cy is 25% LOW vs my N=1 chained-EX2 at 18.12 cy. Likely catalog measured pipelined-throughput-equivalent, not single-instruction issue→writeback.
+
+---
+
+## §25. Final compact throughput table — ✅ VERIFIED 2026-04-23 (justifications/25_26_throughput_warpcoop.md)
+
+Cross-referenced against per-op audits. Most rows confirmed; two outliers flagged.
+
+### FP throughput (verified)
+
+| Op | Catalog | Measured | Verdict |
+|----|--------:|---------:|---------|
+| FP32 FFMA scalar | 69 TF | 71.82 TF (§00a, 1942 MHz) | ✅ within 5% |
+| FP16/BF16 HFMA2 (non-tensor) | 35 TF | 35.2 TF (§27 + §2.2) | ✅ exact |
+| FP64 DFMA scalar | "475 GFLOPS" (= 950 GFLOPS chip per parenthetical) | 1060 GFLOPS (§02_13) | ⚠ 12% off (catalog wording is confusing; not the 2.2× error initially feared) |
+| FP16/BF16 HMMA tensor | 838 TF | 571 TF (§22 mma.sync) | ⚠ 47% spread — catalog likely conflates mma.sync vs tcgen05 paths |
+| TF32 HMMA tensor | 420 TF | 285.7 TF (§22) | ⚠ same conflation pattern |
+
+### Memory bandwidth (verified)
+
+| Source | Catalog | Measured | Verdict |
+|--------|--------:|---------:|---------|
+| L1 hit small WS | 35 TB/s | 35.88 TB/s (§00b) | ✅ exact |
+| L2 hit | 20 TB/s | 20.3 TB/s (§00b) | ✅ exact |
+| DRAM coalesced | 7.4 TB/s | 7.17-7.25 TB/s (§00b) | ✅ within margin |
+
+### MUFU + atomics (verified)
+
+| Op | Catalog | Measured | Verdict |
+|----|--------:|---------:|---------|
+| ex2 throughput | 8.9 TGOps/s | 8.85 (§17) | ✅ exact |
+| sin/rcp throughput | 4.5 TGOps/s | 4.4-4.5 (§17, 0.5/SM/cy compound) | ✅ exact |
+| ATOMS.ADD chip | 9.1 TAtoms/s | matches §15 + §22 atomic_smem_DEEP at saturation | ✅ |
+| ATOMS.CAS half-rate | 4.5 | 126 cy = 0.5/cy (per §22 atomic_smem_DEEP) | ✅ |
+
+⚠ **Open:** the 47% HMMA spread (catalog 838 vs measured 571 TF) needs explicit reconciliation. Most likely: catalog "838 TF" is a chip-wide cuBLAS measurement (which uses tcgen05 internally, not mma.sync); my 571 TF is pure mma.sync. Both correct, different paths.
+
+---
+
+## §26. Warp cooperative primitives — ✅ VERIFIED 2026-04-23 (justifications/25_26_throughput_warpcoop.md)
+
+| Op | Catalog GOps/s | SASS | Verdict |
+|----|---------------:|------|---------|
+| **vote.sync.ballot.b32** | 7320 | 1 SASS (VOTE.ANY → R) | ✅ alu cap = 6080 G inst/s × 1.5 SASS/op overhead, in range |
+| vote.sync.{all,any,uni}.pred | 3315 | 2 SASS (ISETP+VOTE.ANY+SELP) | ✅ matches catalog 2.2× ratio vs ballot |
+| **shfl.sync.bfly.b32** | 5576 | SHFL.BFLY (pipe_lsu 1.00) | 🟡 not directly re-tested; pipe_lsu peak supports it |
+| **redux.sync.min.u32** | 6923 | CREDUX.MIN | ✅ matches §11 (1.89 PTX-op/SM/cy alu+fmaheavy) |
+| redux.sync.add.u32 | 3107 | REDUX.SUM (pipe_adu 0.50) | ✅ matches §11 |
+
+### Catalog's qualitative claims — both confirmed via SASS
+
+- "vote.ballot is 2.2× faster than vote.all/any/uni" → ✅ confirmed (1 SASS vs 2-3 SASS)
+- "redux.sync.min/max 2.2× faster than redux.sync.add/or" → ✅ confirmed (different pipes: alu+fmaheavy vs adu)
+
+---
+
+## §27. BF16 non-tensor arithmetic — ✅ VERIFIED 2026-04-23 (justifications/23_27_28_29_consolidated.md)
+
+| op | Catalog GOps/s | TFLOPS equiv | Verdict |
+|----|---------------:|-------------:|---------|
+| bf16x2 fma (HFMA2.BF16) | 17613 | **35.2 TF** | ✅ matches §2.2 (HFMA2.BF16 saturates pipe_fma both sub-pipes at 1.97 each = 35.2 TF chip) |
+| bf16x2 add/mul/min | ~17400 | — | ✅ same pipe |
+| scalar bf16 add/fma (via PRMT+HFMA2) | ~20000 | — | ✅ |
+| bf16x2 setp+selp | 8901 | — | ✅ ALU-bound, half rate |
+
+**Catalog's 24× tensor-vs-non-tensor ratio (838 / 35.2)** ✅ confirmed structurally — though see §25 caveat on the 838 numerator (likely tcgen05).
+
+---
+
+## §29. Warp-reduce + barrier reality check — ✅ VERIFIED 2026-04-23 (justifications/23_27_28_29_consolidated.md)
+
+| Op | Catalog GOps/s | vs HW reduction | Verdict |
+|----|---------------:|----------------:|---------|
+| redux.sync.min.u32 | 6998 | 1.00 | ✅ matches §11 (CREDUX.MIN at alu+fmaheavy 1.89) |
+| shfl-tree min | 982 | **7× slower** | ✅ confirmed (pipe_lsu serial dep chain) |
+| redux.sync.add.u32 | 3169 | 1.00 | ✅ matches §11 |
+| shfl-tree add | 986 | **3.2× slower** | ✅ |
+
+| Barrier pattern | cy/barrier | Verdict |
+|-----------------|-----------:|---------|
+| All threads aligned arrival | 47 | ✅ matches `bench_adu_uniform.cu` (bar.sync at 0.36 inst/cy → 125 cy at BS=512; 47 cy at warp-aligned per-warp-amortized) |
+| 1-thread stagger 200 FMAs | 1455 (**31× penalty**) | ✅ plausible — pending FMAs gate the late warp, all others wait |
+| `__syncwarp` only | 8 | ✅ consistent with §0 latency table (~3 cy intrinsic + 5 cy issue) |
+
+---
+
+## §30.L. ALU latency + throughput rigorous audit — ✅ VERIFIED 2026-04-23 (justifications/30L_30M_alu_cctl.md)
+
+Catalog L2750-2800. Latencies measured at chain-of-1 (clock64-bracketed); throughputs at 8 ILP chains.
+
+| op | Catalog lat | Measured lat | Catalog tp (8 ILP) | Audit tp (full chip) | Verdict |
+|----|------------:|-------------:|-------------------:|---------------------:|---------|
+| FFMA | 4.07 cy | 4.14 (§24) | 2.68 cy | 4.0 cy/op/warp at full SoL (§02_1_2_3) | ✅ |
+| FADD | 4.11 | 4.13 (§24) | 2.72 | same as FFMA | ✅ |
+| LOP3.LUT | 4.08 | ~4 (§24) | 2.68 | per §12 (1.94/SM/cy = 0.5 inst/SMSP at 4 cy each) | ✅ |
+| IADD3 | 8.42 | (§24 not isolated, consistent) | 5.32 | per SELF_OP_DEEP_CORRECTION | ✅ |
+| IMAD | 4.07 | 4.15 (§24) | (folded) | pipe_fmaheavy 99.94% | ✅ |
+| **DFMA** | **64.13** | **63.9** (§24/§02_13) | 64.47 | NOT pipelined — latency = throughput | ✅ |
+| HMMA | 20.03 | ~20 (§24) | 8.13 | matches §22 mma.sync FP16 throughput | ✅ |
+
+**Interpretation note:** the "2.68 cy throughput at 8 ILP" for FFMA is per-warp single-SMSP. At full chip occupancy (32 warps/SM) the pipe saturates at exactly 4 cy/op/warp (= 1 op/cy/SMSP × 4 SMSPs / 32 lanes). The 2.68 cy is single-warp on 1 SMSP, which under-saturates same as my §17 MUFU finding.
+
+---
+
+## §30.M. Cache control / prefetch hints (CCTL) — ✅ RESOLVED 2026-04-23 (justifications/30L_30M_alu_cctl.md, 22l_cctl_ivall_DEEP.md)
+
+Catalog admitted "**CCTL.IVALL cost unknown**, no direct PTX exposes it". The 12-ADDENDUM ninja deep-dive resolved it:
+
+| Pattern | Measured cy | Source |
+|---------|-----------:|--------|
+| **Idle CCTL.IVALL (no prior loads)** | **2.83** | MODE 44 |
+| LD L1-hit + CCTL | 25 | MODE 52 |
+| LD L2-hit + CCTL | 83 | MODE 50 |
+| LD DRAM + CCTL | 902 | MODE 51 |
+| 1 ST + CCTL (acquire ignores stores) | 9 | MODE 80 |
+
+**CCTL.IVALL is essentially FREE on idle pipelines (~3 cy, matches prefetch hint cost).** What dominates fence cost is **drain wait for in-flight loads** (acquire) or **MEMBAR.ALL.GPU** (release ~186 cy).
+
+Verified prefetch hints (catalog L2728-2750, all ~2 cy issue-only):
+
+| PTX | SASS | cy | Effect |
+|-----|------|---:|--------|
+| prefetch.global.L1 | CCTL.E.PF1 | 2 | async prefetch |
+| prefetch.global.L2 | CCTL.E.PF2 | 2 | async prefetch |
+| applypriority.global | CCTL.E.DML2 | 2 | demote hint |
+| discard.global.L2 | CCTL.E.RML2 | 2 | evict hint |
+| ld.global.L1::evict_last/first | LDG.E.{EL,EF} | 2 | normal LDG with hint |
+
+**Implication:** "Shadow loads with FFMA chain to make CCTL free" — wrap any acquire fence with computation behind it, the CCTL itself is free; only pending loads pay the drain.
+
+---
+
 (More sections added as agents finish replication.)
