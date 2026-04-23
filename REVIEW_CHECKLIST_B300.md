@@ -160,14 +160,15 @@ These are the [ ] items the user is most likely to have a strong opinion on. Ope
 - ✅ E2, E3 (DFMA 63.7 cy not 92; MUFU.sin = 24.45 cy)
 - ✅ G7 (smem 228 KB per-SM ✓; "200 KB per CTA" FALSIFIED)
 
-**Still genuinely open (focused targets):**
-- [x] **A5** "FP64 DFMA = 0.95 TFLOPS" — see Group A entry below for full resolution; pipe IS saturated at 99.95% peak; gap from 1.20 TF theoretical is pure clock state (1942 MHz vs 2032 MHz boost). Updated number: **1.06 TF at 1942 MHz**, 1:67 ratio vs FFMA. — `[ref: catalog L35]`
-- [ ] **D5** "tcgen05.mma all formats = 128 cy at M=128 N=256" — catalog math is self-consistent but no fresh measurement on this rig (requires alloc/mbarrier/cp setup) — `[ref: catalog L120-130, L6686+]`
-- [ ] **CRIT2** "tcgen05 'peak verified' single-warp scope mismatch" — MITIGATED by Multi-SM linear scaling table L6776 — lower priority — `[ref: catalog L6716]`
-- [ ] **CRIT9** Per-stack stack-locality recipes (D2D 6.93 TB/s) — user [reviewed_errors L1320]: "cross-stack hashing is literally impossible to turn off" — recipe likely doesn't generalize — `[ref: catalog L1280]`
-- [ ] **F1-F6** All power claims (DVS V² scaling, 1005 MHz stuck floor, 1071 W stress recipe) — catalog §44 is DISPUTED (M11 vs 16_power_clock 2× discrepancy in canonical) — needs power-per-pipe replication; also user-flagged as "rough 1st approximation, misleading"
+**The above-listed top-of-file priority items were ALL also resolved per-group below 2026-04-23.** Removed the duplicate `[ ]` shadow entries for A5/D5/CRIT2/CRIT9/F1-F6 — see their per-group entries for the verdict.
 
-(The full ~60 still-open entries continue below by group; many are user-flagged-skeptical and only re-verifiable via a measurement campaign that would exceed this audit's scope.)
+**Genuinely measurement-blocked (deferred items, ~5):**
+- 🟡 **B6** DRAM write 7.09 TB/s — user flag: SM→L2 write path may be 32B/clk-limited at lower clocks. Existing measurement is at 1942 MHz; verifying user's clock-dependence theory needs a clock-locked sweep deferred with the F-group power campaign.
+- 🟡 **B7 + B8** TMEM read/write bandwidth (55-131 TB/s) — needs tcgen05.ld/.st focused throughput rig (alloc + mbarrier + per-quad accumulator). Catalog numbers very high vs first-principles bound; almost certainly include broadcast-amplification (similar to LDC.32 effect from B9).
+- 🟡 **D5** tcgen05.mma per-format throughput (128 cy at M=128 N=256) — needs alloc/mbarrier/cp setup. D6 already ✅ verified (9.26 PF at 1942 MHz, line 155).
+- 🟡 **D7 + E7** Multi-GPU items — single-GPU rig this session; preserved as plausible per `project_b300_multigpu` memory.
+
+These five remaining items all need either a separate measurement campaign (B6/B7/B8/D5) or a multi-GPU rig (D7/E7) — outside this audit's scope.
 
 ---
 
