@@ -55,6 +55,7 @@
 | §2.4 u64 integer | L262 | ✅ replicated | [02_4_u64_integer.md](justifications/02_4_u64_integer.md) — u64.ADD = 64/SM/cy (dual alu+fmaH co-issue); AND/SHL/MIN at alu cap; MUL plausible |
 | §2.5 Narrow-format CVT | L277 | ✅ replicated | [02_5_narrow_cvt.md](justifications/02_5_narrow_cvt.md) — all 6 UNPACK formats hit 2.00 = 99.98% of pipe_alu peak (FP4=FP6=FP8=BF16-UE8M0) |
 | §2.7/8/9 Bitwise/Compares/MIN-MAX | L334-383 | ✅ replicated | [02_7_8_9_alu_ops.md](justifications/02_7_8_9_alu_ops.md) — all "rate 2.00 alu" plausible (§12 verified pipe_alu cap); BFE/POPC/BREV/FLO=0.5 xu confirmed via bfind |
+| §2.13 FP64 (DFMA/DADD/DMUL) | L444-472 | ✅ replicated | [02_13_fp64.md](justifications/02_13_fp64.md) — 0.06 warp-inst/SM/cy = 99.95% pipe_fp64 peak (catalog 0.05 was approx); wall-clock = 1.06 TFLOPS (88% of 1.20 theoretical); catalog L446 "475 GFLOPS" needs correction |
 | §3 Contention rules | L472 | ⚠ partially verified | [03_contention.md](justifications/03_contention.md) — Rules 1-3 confirmed via prior audits; Rule 4 (HFMA2+FFMA mix) preserved-not-re-tested |
 | §4 Rate cheatsheet | L485 | ⚠ partially verified | [04_rates.md](justifications/04_rates.md) — most rows correct, but **MUFU "16 SASS/SM/cy" is OFF BY 16-32×**; F2I/POPC/BREV/FLO same issue; u32 IADD "128" only via alternation |
 | §5 Narrow-format throughput | L513 | 🔍 not yet | [05_narrow.md](justifications/05_narrow.md) |

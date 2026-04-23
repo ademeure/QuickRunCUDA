@@ -43,6 +43,7 @@
 | **§2.2** (NEW) | FFMA2 / HFMA2 packed = 2.00 (= 128 packed FMAs/SM/cy) | ✅ CONFIRMED — pipe_fmaheavy=1.96 + pipe_fmalite=1.97 (both saturate together for 1 dispatch). |
 | **§2.3** (NEW) | IMAD = 2.00 fmaheavy = 64 IMAD/SM/cy | ✅ CONFIRMED EXACTLY at 99.94% pipe_fmaheavy. |
 | **§2.7-§2.9** (NEW) | All "rate 2.00 alu" claims (LOP3/PRMT/SHF/ISETP/FMNMX/HMNMX2/VIMNMX3/copysign) | ✅ CONFIRMED PLAUSIBLE — pipe_alu cap=2.00 verified at 97% via §12; all alu-resident "rate 2.00" claims fit within budget. bfind/FLO confirmed at 0.5 xu. |
+| **§2.13** (NEW) | DFMA = 0.05 warp-inst/SM/cy = 475 GFLOPS chip | ⚠ REFINED: real rate is **0.06** (99.95% peak), not 0.05. **Real chip TFLOPS is 1.06** (= 88% of 1.20 theoretical at 2032 MHz boost), NOT 475 GFLOPS. Catalog L446 "475 GFLOPS FMA" is OFF by 2.2× — likely had wrong denominator. |
 
 ## RESOLVED SUMMARY (prior 15 items, 2026-04-23)
 
