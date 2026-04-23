@@ -112,12 +112,15 @@ If you don't trust a number: it's probably already on `REVIEW_CHECKLIST_B300.md`
 | HBM bus | **7,680 bits** (1/16 controllers fused on AC SKU; full SKU is 8192) | cudaDeviceProp.memoryBusWidth |
 | HBM stacks | **8 × 12-Hi** (3 GB/die) | NVIDIA Tech Blog post-correction |
 | Memory I/O clock | 3,996 MHz (= 7.992 Gbps/pin × 1024 b/stack × 8 stacks ÷ 8 ÷ 1.0625 ≈ **7,672 GB/s post-ECC**) | catalog |
-| **SM clock — sustained boost (long kernel ≥40 ms, unlocked)** | **~1,990 MHz** (98.1% of theoretical 2032) — verified at 1992.5 MHz via long-kernel wall-clock | clock state DEEP audit 2026-04-23 (justifications/CLOCK_STATE_DEEP.md) |
-| ⚠ Earlier "1942 MHz settling" claim | RETRACTED — was a short-kernel intermediate state (artifact of nvidia-smi 1Hz sampling between launches) | clock state DEEP correction |
-| **SM clock — `-lgc 1800` (recommended for sustained reproducibility)** | 1,801 MHz (98.3% honored in long kernel; both range-form and single-form respected) | clock state DEEP audit |
+| **SM clock — boost ceiling** | **2032 MHz** (per `nvidia-smi -q`) — usually achieved or very close in long unlocked kernels, but workload-dependent | nvidia-smi spec |
+| Sample data point: FFMA peak unlocked-long-kernel | ~1,990 MHz observed (98.1% of 2032 ceiling) — workload-specific; not a universal "sustained clock" | clock state DEEP audit (justifications/CLOCK_STATE_DEEP.md), single workload |
+| ⚠ Earlier "1942 MHz settling" claim | RETRACTED — was a short-kernel intermediate state (nvidia-smi 1Hz sampling artifact); also not universal | clock state DEEP correction |
+| **SM clock — `-lgc 1800` (recommended for sustained REPRODUCIBILITY across workloads)** | 1,801 MHz (98.3% honored in long kernel) | clock state DEEP audit |
 | `-lgc 1500` (also reliably respected) | 1,468-1,495 MHz | clock state DEEP audit |
-| `-lgc 1005` (long-kernel) | 987 MHz (long-kernel only — short-kernel has firmware override to ~1800 due to high-power launch demand between L2 flushes) | clock state DEEP audit |
+| `-lgc 1005` (long-kernel) | 987 MHz (long-kernel only — short-kernel firmware-overrides upward) | clock state DEEP audit |
 | `-lgc N` for N≥1920 paradox | ALL silently clamp to ~1920 MHz (verified 2031, 2032, 2033, 2050) | clock state DEEP audit confirms catalog |
+
+⚠ **CLOCK STATE CAVEAT (added 2026-04-23 per user):** the "~1990 MHz" finding is **workload-specific** — it shows that under one particular FFMA-peak workload, the sustained clock falls slightly below the 2032 boost ceiling. **It is NOT a universal "sustained clock" value.** Different workloads can settle at-or-near 2032 (light/short), or significantly below (high-power memory-bound, thermally constrained, etc.). Any "TFLOPS at boost" number assuming 2032 MHz should be treated with a grain of salt — **usually correct** that the actual clock is 2032 or very close, but worth verifying per workload. **For comparable across-workload measurements, use `-lgc 1800` lock.**
 | SM clock — boost spec | 2,032 MHz | nvidia-smi -q |
 | SM clock — `-lgc 2032` paradox | pins to 1920 (NOT 2032) | catalog |
 | SM clock — silent stuck floor | 1005 MHz | catalog observation |
