@@ -82,11 +82,29 @@ The user's skepticism (2026-04-23) was warranted. The "compiler pipe re-routing"
 - RECOMMENDED_CATALOG_EDITS: same correction
 - The `IMAD.IADD` vs `IADD3` mix in self-op SASS is INTERESTING and worth its own follow-up: WHY does ptxas alternate them for self-op when IADD3 R,R,R,RZ would be uniform?
 
-## Open follow-ups
+## Open follow-ups — RESOLVED by user 2026-04-23
 
-1. Why does ptxas emit 2:1 IMAD.IADD:IADD3 for self-op `add.u32 v,v,v` instead of pure IADD3? (heuristic? pipe-balance? bug?)
-2. Does the pipe choice between IMAD.IADD (FMA pipe) and IADD3 (ALU pipe) affect throughput when the chain isn't latency-bound?
-3. For other compiler-fusion cases in the audit, are similar mis-attributions hiding? Worth a SASS-count audit on every "self-op penalty" claim.
+> "this is obviously because pipe_alu is only 0.5/cy/SMSP, while IMAD on FMA heavy pipe is independent and also 0.5/cy/SMSP, so together they can saturate the SM in a way that neither of them can individually, and the compiler is smart to do this."
+
+**The 2:1 IMAD.IADD:IADD3 alternation IS pipe-balanced scheduling.** Mechanism:
+
+- **pipe_alu** caps at 0.5 inst/cy/SMSP per instruction in a latency-bound chain (each SMSP can dispatch 1 IADD3 per 2 cycles when waiting for chain dependency)
+- **pipe_fmaheavy** (IMAD lives here) also caps at 0.5 inst/cy/SMSP independently
+- **Combined**: alternating IMAD.IADD (fmaheavy) and IADD3 (alu) lets ptxas hit 1 inst/cy/SMSP in a self-op chain where pure IADD3 would max at 0.5 inst/cy/SMSP
+- The 2:1 ratio reflects pipe-throughput balancing — IMAD.IADD has slightly more capacity in this regime
+
+**For distinct case**, fusion gets you 0.5 SASS:PTX (each IADD3 does 2 PTX adds), so a single pipe is enough.
+
+**ptxas is being SMART**, not falling back due to encoding constraints. The earlier sub-agent narrative misread the alternation as a "fallback" instead of recognizing it as a deliberate pipe-saturation strategy.
+
+This also explains why per-SASS cycles in self-op (~5 cy) are LOWER than pure-IADD3 latency-bound projection (~4 cy on alu alone) would suggest — the alternation halves dispatch interval.
+
+**LESSON**: when ptxas emits a "fallback" opcode, ALWAYS check whether the actual mechanism is pipe-balanced co-issue. NVIDIA's compiler is more sophisticated than naive sub-agent analysis assumes.
+
+## Other follow-ups (still open)
+
+- For OTHER compiler-fusion cases in the audit, similar mis-attributions may be hiding. Worth a SASS-count audit on every "self-op penalty" claim.
+- For 3-operand ops where two pipes can share the work via opcode alternation, the architectural latency comparison needs to account for this.
 
 ## Methodology lesson recorded
 

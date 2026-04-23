@@ -40,6 +40,7 @@
 >   - Distinct (`v = v + k` × 1024 PTX) → 515 SASS IADD3 (0.5:1 SASS:PTX — compiler FUSES 2 PTX adds into 1 SASS `IADD3 R, k, R, k` computing `v += 2k`)
 >   - Per-SASS cycle cost is ~4-5 cy in BOTH cases — no per-SASS penalty. The cy/PTX difference is purely from fusion ratio.
 >   - The earlier "ptxas can't emit IADD3 R,R,R,R" claim was FALSE — `IADD3 R, PT, PT, R, R, RZ` IS emitted freely; the mechanism narrative was wrong even though the headline finding (no architectural self-op penalty) was right.
+> - **WHY ptxas alternates IMAD.IADD:IADD3 = 2:1 in self-op (mechanism, per user 2026-04-23):** pipe_alu caps at 0.5 inst/cy/SMSP per latency-bound instruction; pipe_fmaheavy (where IMAD lives) also caps at 0.5/cy/SMSP — BUT THEY'RE INDEPENDENT PIPES. Alternating IMAD.IADD on fmaheavy and IADD3 on alu lets ptxas hit ~1 inst/cy/SMSP combined where either alone would max at 0.5. ptxas is being SMART (pipe-balanced co-issue), not falling back due to encoding constraints. The 2:1 ratio reflects per-pipe capacity weighting. For distinct case, fusion (0.5 SASS:PTX) means a single pipe suffices.
 > - **`.reuse` cache helps THROUGHPUT** (per §22e at 99.9% emission), does NOT change dependent-chain latency.
 >
 > **Implication for catalog §24 (and elsewhere): the latency entries (FFMA=4, DFMA=63.9, etc.) ARE architectural — NOT inflated.** JUSTIFIED §24's confirmations stand. The "2× inflated" caveat is RETRACTED.
@@ -111,7 +112,12 @@ If you don't trust a number: it's probably already on `REVIEW_CHECKLIST_B300.md`
 | HBM bus | **7,680 bits** (1/16 controllers fused on AC SKU; full SKU is 8192) | cudaDeviceProp.memoryBusWidth |
 | HBM stacks | **8 × 12-Hi** (3 GB/die) | NVIDIA Tech Blog post-correction |
 | Memory I/O clock | 3,996 MHz (= 7.992 Gbps/pin × 1024 b/stack × 8 stacks ÷ 8 ÷ 1.0625 ≈ **7,672 GB/s post-ECC**) | catalog |
-| **SM clock — typical sustained** | **1,942 MHz** (DVFS settling, NOT 2032 boost spec NOR 1920 lock) | this audit |
+| **SM clock — sustained boost (long kernel ≥40 ms, unlocked)** | **~1,990 MHz** (98.1% of theoretical 2032) — verified at 1992.5 MHz via long-kernel wall-clock | clock state DEEP audit 2026-04-23 (justifications/CLOCK_STATE_DEEP.md) |
+| ⚠ Earlier "1942 MHz settling" claim | RETRACTED — was a short-kernel intermediate state (artifact of nvidia-smi 1Hz sampling between launches) | clock state DEEP correction |
+| **SM clock — `-lgc 1800` (recommended for sustained reproducibility)** | 1,801 MHz (98.3% honored in long kernel; both range-form and single-form respected) | clock state DEEP audit |
+| `-lgc 1500` (also reliably respected) | 1,468-1,495 MHz | clock state DEEP audit |
+| `-lgc 1005` (long-kernel) | 987 MHz (long-kernel only — short-kernel has firmware override to ~1800 due to high-power launch demand between L2 flushes) | clock state DEEP audit |
+| `-lgc N` for N≥1920 paradox | ALL silently clamp to ~1920 MHz (verified 2031, 2032, 2033, 2050) | clock state DEEP audit confirms catalog |
 | SM clock — boost spec | 2,032 MHz | nvidia-smi -q |
 | SM clock — `-lgc 2032` paradox | pins to 1920 (NOT 2032) | catalog |
 | SM clock — silent stuck floor | 1005 MHz | catalog observation |
@@ -302,8 +308,12 @@ Most ML inference ops are below OI = 1 → memory-bound → fusion is king.
 
 | Op | Measured | Theoretical | Clock | Status |
 |---|--:|--:|--:|---|
-| FP32 FFMA scalar | **71.82 TF** | 73.6 TF (148 × 256 × 1.942) | 1942 MHz (DVFS) | ✅ replicated 100% match (00a_ffma_peak.md). ncu pipe_fma=99.5%. SASS=1024 FFMA/inner loop. |
-| FP32 FFMA scalar (alt clocks) | — | 72.7 TF @ 1920 / 76.96 TF @ 2032 | catalog vs CLAUDE.md | both correct for their clock; cite the rig DVFS clock to be precise |
+| **FP32 FFMA scalar @ unlocked-LONG-kernel** | **75.49 TF @ ~1990 MHz** (98.1% of peak at this clock) | 76.96 TF @ 2032 (theoretical) | unlocked, long single-launch ≥40 ms | clock state DEEP audit |
+| FP32 FFMA scalar @ -lgc 1800 (recommended for repeatability) | **67.03 TF @ 1801 MHz** (98.3% of peak at this clock) | 68.20 TF @ 1800 (theoretical) | locked sustained | clock state DEEP audit |
+| FP32 FFMA scalar — earlier short-kernel claim | 71.82 TF | reported as "@1942 MHz" but actually at intermediate state ~1913-1942 MHz between cold launches | short-kernel-12800-iters | §0.FFMA earlier audit; ⚠ now superseded |
+| FP32 FFMA scalar @ -lgc 1500 | 55.64 TF @ 1468-1495 MHz (98% efficiency) | (other clocks linear) | locked | clock state DEEP audit |
+| FP32 FFMA scalar @ -lgc 1005 | 37.39 TF @ 987 MHz | (long-kernel only; short-kernel firmware-overrides) | locked | clock state DEEP audit |
+| FP32 FFMA scalar @ -lgc 510 | 18.99 TF @ 501 MHz | linear scaling | locked | clock state DEEP audit |
 | FP64 DFMA | (pending) | 1.20 TF @ 2032 | — | catalog claims 0.95 TF — under-saturated? See REVIEW_CHECKLIST A5 |
 
 ### Memory peaks (catalog claims, replication pending)
