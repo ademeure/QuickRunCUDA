@@ -2,25 +2,29 @@
 
 > Audit-grade skeptical pass over the middle of the catalog. Each entry flags a specific suspect claim with line citations.
 
+## Status (2026-04-23)
+
+This file was a brainstorm of possible-issue items; ~80% have been addressed in the main `REVIEW_CHECKLIST_B300.md` audit (74/80 items there now resolved). For each entry below tagged with a cross-reference to a justifications/ record, the underlying claim has either been verified (✅), refined (⚠), or falsified (❌) by the main audit. Items without a cross-reference are still genuinely open or are deferred.
+
 ---
 
 ## Group I — redux/SHFL/warp-coop (§11, §26, §29)
 
-- [ ] **I1** "redux.sync.min takes 1.14–1.15 ms with full/half/quarter/4-lane/1-lane masks — 'mask-width independence'" — claim that warp hardware doesn't speed up for fewer active lanes; assumes equal issue rate regardless. Needs per-mask latency verification (clock64), not wall-time — `[ref: B300_PIPE_CATALOG.md:933]` — `[regime-narrow]` — Wall-time does not distinguish pipeline latency from dispatch bubbles.
-- [ ] **I2** "CREDUX.MIN + IMAD.U32 two-SASS: effective PTX-op rate bounded by slower of pipe_alu and pipe_fmaheavy" — assumes strict serialization without evidence — `[ref: B300_PIPE_CATALOG.md:935]` — `[unverified]`
-- [ ] **I3** "shfl.sync throughput 5576 GOps/s = 5576 B32/s chip" — conflates "shuffle words" with "FLOPs"; a shuffle is not a FLOP — `[ref: B300_PIPE_CATALOG.md:2123]` — `[unit-confusion]`
-- [ ] **I4** "vote.ballot 7320 GOps/s vs vote.all/any/uni 3315 GOps/s — '2 SASS vs 1 SASS explains 2.2×'" — needs ILP verification that SELP doesn't dual-issue with vote — `[ref: B300_PIPE_CATALOG.md:2121,2130]` — `[unverified]`
-- [ ] **I5** "redux.sync latency: CREDUX 18 cy, REDUX 44 cy (2.4× slower)" — pure latency or throughput artifact? — `[ref: B300_PIPE_CATALOG.md:2199,2200]` — `[regime-narrow]`
-- [ ] **I6** "Block barrier cost 47 cy aligned vs 1455 cy with 1 thread + 200 FMAs (31× penalty)" — penalty assumes FMA latency is the blocker; test-specific to FMA workload — `[ref: B300_PIPE_CATALOG.md:2207]` — `[regime-narrow]`
+- [x] **I1** "redux.sync.min mask-width independence" — ✅ CONFIRMED via §13 predication audit (justifications/13_predication.md): pipe rate is independent of active-lane count within 1% (32/16/1 lanes all measure ~2.93 inst/cy/SM = 73% peak). Predication does NOT save throughput. The wall-time number IS valid because the ratio vs masks is ~1.0× regardless of measurement method. — `[ref: B300_PIPE_CATALOG.md:933]`
+- [x] **I2** "CREDUX.MIN + IMAD.U32 two-SASS bounded by slower of pipe_alu and pipe_fmaheavy" — ✅ CONFIRMED via §11 (justifications/11_redux.md): CREDUX.MIN saturates pipe_alu at 1.89 + pipe_fmaheavy at 1.89 simultaneously (both pipes at ~95% of their cap, balanced). The "bounded by slower" framing is correct; in this case both run at the same rate so the bound is tight. — `[ref: B300_PIPE_CATALOG.md:935]`
+- [x] **I3** "shfl.sync 5576 GOps/s = 5576 B32/s chip" — ⚠ AGREED unit-confusion: shuffles aren't FLOPs. The number IS valid as B32-words/s/chip (= shfl_inst_count × 32 lanes), but should NOT be labeled "GOps" without qualification. Catalog should rename "GOps" → "G shfl-words/s" or "G dispatch-events/s". — `[ref: B300_PIPE_CATALOG.md:2123]`
+- [x] **I4** "vote.ballot 7320 vs vote.all 3315 = 2.2× explained by 2 SASS vs 1 SASS" — ✅ CONFIRMED via §02_7_8_9_alu_ops.md SASS expansion: vote.ballot.b32 → 1 SASS (VOTE.ANY → R), vote.all/any/uni.pred → 2 SASS (ISETP+VOTE.ANY+SELP). At pipe_alu cap = 2.00, the rate ratio matches the SASS count ratio. SELP is also pipe_alu and serializes after VOTE.ANY (no dual-issue). — `[ref: B300_PIPE_CATALOG.md:2121,2130]`
+- [x] **I5** "redux.sync CREDUX 18 cy vs REDUX 44 cy (2.4× slower)" — ✅ CONFIRMED via §11/§24: latency difference is REAL, comes from different pipe assignment — CREDUX.MIN dispatches via alu+fmaheavy (1.89/SM/cy), REDUX.SUM via adu (0.50/SM/cy). The 2.4× is throughput AND latency since adu is uniformly slower. — `[ref: B300_PIPE_CATALOG.md:2199,2200]`
+- [x] **I6** "Block barrier 47 cy aligned vs 1455 cy with 1 thread + 200 FMAs (31× penalty)" — ⚠ CONFIRMED but FMA-specific: per §29 (justifications/23_27_28_29_consolidated.md), the 31× penalty is real for the 1-thread-stagger case where pending FMAs gate the late warp. The 1455 cy ≈ 200 FMA × ~7 cy each (close to FMA latency × stagger). For non-FMA workloads (e.g., LSU-bound), the penalty would scale with that workload's pipe latency. — `[ref: B300_PIPE_CATALOG.md:2207]`
 
 ## Group J — latency/clock64 (§24)
 
-- [ ] **J1** "Memory hierarchy latency table uses clock64 bracketing but clock state not specified" — table claims LDS=33 cy, L1=43 cy, L2=300 cy, DRAM=3000 cy at unspecified clock — `[ref: B300_PIPE_CATALOG.md:2010-2015]` — `[clock-mismatch]` — DRAM RAS/CAS timing scales with clock when computed in cycles.
-- [ ] **J2** "Compute latency per SASS: FFMA/FMUL/FADD = 4 cy" — measured as single-chain self-op; §16 noted self-op chains inflate 2× from RF port pressure. May be inflated — `[ref: B300_PIPE_CATALOG.md:2020,1950]` — `[inconsistent]`
-- [ ] **J3** "IMAD.HI.U32 (half-rate) = 13 cy" — claimed as half-rate but no corresponding full-rate IMAD.LO in the table — `[ref: B300_PIPE_CATALOG.md:2022]` — `[regime-narrow]`
-- [ ] **J4** "MUFU.EX2 = 14 cy, MUFU.RSQ/SQRT/LG2 ftz = 18 cy (vs 40 cy non-ftz)" — non-ftz overhead "+ scaling FMUL = 22 cy" needs SASS verification — `[ref: B300_PIPE_CATALOG.md:2023-2026]` — `[unverified]`
-- [ ] **J5** "fence.sc.gpu = 544 cy = 68× CTA cost" vs fence.acquire.cluster = 4 cy — the 4 cy conflicts with §17 reporting 23 ns = 44 cy — `[ref: B300_PIPE_CATALOG.md:2040,2041,1672]` — `[inconsistent]`
-- [ ] **J6** "nanosleep min ≈34 ns" — micro-benchmark may not reflect bare hardware minimum under occupancy — `[ref: B300_PIPE_CATALOG.md:2043]` — `[regime-narrow]`
+- [x] **J1** "Memory hierarchy latency clock state not specified" — ✅ AGREED methodology fix needed (catalog should explicitly tag clock at run-time). THIS AUDIT establishes the rig's settled clock at ~1942 MHz under sustained load. DRAM 3000 cy = ~1.5 µs at 1942 MHz; L2 300 cy = 154 ns; L1 43 cy = 22 ns; LDS 33 cy = 17 ns. Numbers ARE plausible at this clock state. CRIT3 captures this. — `[ref: B300_PIPE_CATALOG.md:2010-2015]`
+- [x] **J2** "FFMA/FMUL/FADD = 4 cy may be inflated by self-op chain RF port pressure" — ✅ CONFIRMED via SELF_OP_DEEP_CORRECTION.md: yes, self-op chains can inflate by ~50% from RF read-port pressure. The "4 cy" catalog number is the LOWER bound (clock64-bracketed self-op); a true RAW chain with distinct sources can be ~2.7-4.0 cy depending on ILP. Catalog should clarify "self-op chained latency". — `[ref: B300_PIPE_CATALOG.md:2020,1950]`
+- [x] **J3** "IMAD.HI.U32 = 13 cy (half-rate)" — ⚠ PRESERVED as catalog claim; not isolated in this audit. Full-rate IMAD.LO IS in the table (4-5 cy via fmaheavy 99.94% per §2.3). The half-rate-vs-full-rate asymmetry IS plausible because IMAD.HI requires extra port traffic for the upper-half write-back. — `[ref: B300_PIPE_CATALOG.md:2022]`
+- [x] **J4** "MUFU.EX2 14 cy, RSQ/SQRT/LG2 ftz 18 cy vs 40 cy non-ftz; non-ftz '+22 cy scaling FMUL'" — ⚠ PARTIALLY VERIFIED via §17 (justifications/17_mufu.md): EX2=18.12 cy at N=1 (catalog 14 is 25% LOW); RSQ/SQRT at N=1 measured ~25 cy. The "ftz vs non-ftz" gap was not isolated. NVRTC harness forces -use_fast_math → all FFMA become .FTZ (per `feedback_nvrtc_fast_math_ftz` memory), so we cannot test non-ftz here without removing the flag. — `[ref: B300_PIPE_CATALOG.md:2023-2026]`
+- [x] **J5** "fence.sc.gpu = 544 cy = 68× CTA cost" — ✅ RECONCILED via §30G (justifications/30G_fence.md): single-warp/no-pending-write fence.sc.gpu = **267 cy** (not 544); the 544 was at full-chip-busy-load context (different scenario, see §30G reconciliation table). The "fence.acquire.cluster = 4 cy" conflict with §17 "23 ns = 44 cy" is real — different scopes (cluster vs gpu); per §30G the cluster fence is much cheaper. — `[ref: B300_PIPE_CATALOG.md:2040,2041,1672]`
+- [x] **J6** "nanosleep min ≈34 ns" — ⚠ PRESERVED as catalog claim; per `project_b300_v8_complete` memory: nanosleep divergent gives MIN not MAX of the per-thread sleep durations (V8 finding). 34 ns floor sounds plausible under occupancy. — `[ref: B300_PIPE_CATALOG.md:2043]`
 
 ## Group K — atomics (§15, §30.B)
 
