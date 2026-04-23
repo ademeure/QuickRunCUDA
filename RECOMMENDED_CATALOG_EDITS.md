@@ -112,6 +112,24 @@ Update the table to:
 
 ---
 
+### EDIT NEW-I: §28 compiler-reachable uniform ops list INCOMPLETE
+
+**Line:** L2164
+
+**Wrong/incomplete text:**
+> "Compiler-reachable uniform ops (verified with CUDA 13.2): UIADD3, UIMAD, UMOV, UISETP, ULOP3.LUT. UFFMA/UFADD/UFMUL still not emitted in CUDA 13.2 either."
+
+**Correct text (per `justifications/28_compiler_gaps.md` direct SASS opcode count across 20K+ preserved kernels):**
+
+> "Compiler-reachable uniform ops in CUDA 13.2 (per direct SASS audit across 20K+ kernels):
+> - **High-volume**: UMOV (42K), UIADD3 (15K), UISETP (23K), UIMAD (2K), ULOP3.LUT (per catalog)
+> - **NEW (found by audit, not in catalog)**: **UFU (91,950 instances — likely uniform function unit / transcendental)**, USHF (8K), ULEA (9K), UFLO (902), UPRMT (887), UNC (4K), ULT (11K)
+> - **Confirmed NOT emitted (0 instances)**: UFFMA, UFADD, UFMUL — uniform FP datapath exists in ISA but unreachable from nvcc 13.2 codegen"
+
+UFU is particularly notable — second-most-common uniform op after placeholder URZ/UPT, and not mentioned anywhere in the catalog. Worth follow-up to identify what it does.
+
+---
+
 ### EDIT NEW-H: §22f L1/L2 stride probe table FABRICATED (collapses 2 experiments)
 
 **Lines:** L8231-L8249

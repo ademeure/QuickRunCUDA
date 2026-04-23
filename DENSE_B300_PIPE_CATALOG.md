@@ -1401,6 +1401,23 @@ L2 atomic unit handles up to 32 simultaneously-contending CTAs at 51 cy. Beyond 
 
 ---
 
+## §28. Compiler-emission gaps — ✅ AUDIT-VERIFIED 2026-04-23 (justifications/28_compiler_gaps.md)
+
+✅ Catalog claim CONFIRMED: `uffma` PTX form rejected by ptxas V13.2.78. **Zero UFFMA/UFADD/UFMUL emissions** across ALL 20K+ preserved SASS files. Even uniform-looking C code (`x*2+1`) emits per-lane FFMA, not UFFMA.
+
+⚠ NEW FINDING: catalog L2164's "compiler-reachable uniform ops" list is INCOMPLETE. Direct SASS opcode count reveals these uniform ops also appear:
+- **UFU**: 91,950 instances (likely "uniform function unit" — uniform-pipe transcendental?)
+- **USHF**: 8,404 (uniform shift)
+- **ULEA**: 8,591 (uniform load-effective-address)
+- **UFLO**: 902 (uniform find-leading-one)
+- **UPRMT**: 887 (uniform permute)
+- **UNC**: 4,033 (?)
+- **ULT**: 10,502 (uniform less-than?)
+
+Catalog should add these. UFU specifically is a load-bearing find — second-most-common uniform op after placeholder URZ/UPT — and not documented anywhere in the catalog.
+
+---
+
 ## §22n. CTA scheduler placement pattern — ✅ REPLICATED 2026-04-23 (via DSMEM exhaustive, justifications/13_dsmem_exhaustive.md)
 
 DSMEM exhaustive sweep used `%smid` PTX register and confirmed:
