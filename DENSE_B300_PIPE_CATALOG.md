@@ -482,6 +482,100 @@ The "11 TB/s at 256 MB" was probably L2 partial-hit amortization at the boundary
 
 ---
 
+## §16. tcgen05.mma — Real Tensor Core Peak (catalog L6686+, NOT yet rerun)
+
+⚠ Status: catalog content preserved here pending replication on this rig. The catalog presents results with strong methodology (linear scaling table 1-148 SMs verified separately), but this rig hasn't re-run them yet. Treat as 🟡 MED until replicated.
+
+### Headline peaks (single warp per SM, M=128 N=256, 1000 MMAs)
+
+| kind | Inputs | Output | K | cy/MMA | TFLOPS | % of NVIDIA spec |
+|---|---|---|---:|--:|--:|--:|
+| f16 dense | FP16/BF16 | FP32 | 16 | 128.1 | **2,325** | 93% of 2.5 PF |
+| tf32 dense | TF32 | FP32 | 8 | 128.1 | **1,163** | 93% of 1.25 PF |
+| f8f6f4 dense | FP8/FP6/FP4 | FP32 | 32 | 128.1 | **4,651** | 93% of 5 PF |
+| f8f6f4 sparse | FP8 + meta | FP32 | 64 | 160.2 | **7,439** | 74% of 10 PF |
+| i8 dense | INT8 | INT32 | — | — | — | **NOT SUPPORTED on sm_103a** (illegal-instruction; deliberate B300 spec — use FP8 instead) |
+
+### Multi-SM scaling (catalog L6776) — perfect linear
+
+| SMs | cy/iter | TFLOPS |
+|---:|--:|--:|
+| 1 | 128.12 | 31.4 |
+| 8 | 128.25 | 251.1 |
+| 64 | 128.15 | 2,011 |
+| 148 | 128.20 | **4,648** |
+
+Each SM's tensor pipe is independent. The 4.65 PFLOPS chip-wide IS supported by linear-scaling math (148 × 31.4 = 4647).
+
+### Cross-kind ratio sanity check (CONFIRMED in catalog)
+
+| Kind | TFLOPS | Ratio vs TF32 |
+|---|--:|--:|
+| TF32 | 1163 | 1.0× |
+| FP16 | 2325 | 2.0× |
+| FP8 | 4651 | 4.0× |
+
+Exactly the expected 1:2:4 pattern from K=8 / 16 / 32.
+
+### Multi-warp per SM is FULLY SERIALIZED (1 tensor pipe per SM)
+
+Adding warps does NOT increase per-SM throughput:
+- 1 warp: 31.41 TFLOPS/SM
+- 4 warps: 31.44 TFLOPS/SM (no gain)
+
+There is **exactly 1 tensor pipe per SM**. All 4 SMSPs share it; multi-warp issuance round-robins.
+
+### Iteration count cliff (catalog L6802) — degradation at >10K MMAs
+
+| ITERS | cy/iter | TFLOPS |
+|---:|--:|--:|
+| 100 | 130.26 | 4,575 (98%) |
+| 1000 | 128.13 | 4,651 (100%) |
+| 10000 | 128.02 | 4,655 (steady) |
+| 100000 | **394.10** | **1,512 (33% — degraded)** |
+
+Beyond ~10K MMAs in a single warp loop, throughput drops 3× — likely instruction-cache pressure or scheduling artifacts. Sweet spot is ~10K MMAs/launch.
+
+### cta_group::2 for M=256 (catalog L6826)
+
+cta_group::2 lets you process M=256 tiles by spreading across 2 SMs. Same total peak (4.65 PFLOPS) as cta_group::1 — does NOT unlock 2× peak. Use it when:
+- A tile doesn't fit in 1 SM's smem
+- Kernel requires M=256 for register-sharing reasons
+
+### What was needed to make tcgen05.mma work (catalog L6741)
+
+Critical methodology notes preserved verbatim:
+1. **idesc encoding**: must use UMMA::InstrDescriptor bit layout (sparse_id2_ at [0,2), c_format_ at [4,6), a_format_/b_format_ at [7,13), n_dim_ at [17,23) /8, m_dim_ at [24,29) /16). `idesc=0` is invalid.
+2. **smem matrix descriptor**: layout_type=0 (no swizzle): LBO=16, SBO=128.
+3. **`tcgen05.alloc/dealloc/relinquish` are `.sync.aligned`** — must be called by ALL threads in the warp; behind `if (tid==0)` deadlocks.
+4. **PTX form for cta_group::1 takes 9 operands** (no scale_input_d, no shift). Use 9-operand variant (`__cccl_ptx_isa >= 860`).
+5. **Real mbarrier required** for `tcgen05.commit.mbarrier::arrive::one.b64`. Pointing at u32 instead of `mbarrier.init`'d 64-bit slot causes silent issues.
+6. **M=256 fails with cta_group::1** — requires cta_group::2.
+
+### ⚠ FOOTGUN — INT8 not supported on sm_103a
+
+```
+ptxas: Feature '.kind::i8' not supported on .target 'sm_103a'
+```
+
+Per cccl headers, `kind::i8` is gated on sm_100a / sm_100f / sm_110a / sm_110f only. **B300 (sm_103a) does NOT have IMMA** for tcgen05.mma. INT8 inference must use FP8 (or legacy mma.sync IMMA at 142 TOPS — much slower).
+
+### Sparsity 1.6× not 2× (catalog L6864)
+
+Dense FP8 (K=32): 128 cy/MMA → 4,651 TFLOPS
+Sparse FP8 (K=64): 160 cy/MMA → 7,439 TFLOPS
+Sparse provides **1.6× speedup** (not marketed 2×). HW does 2× logical work but takes 1.25× cycles per MMA — sparse path has higher internal latency.
+
+7.44 PFLOPS / 10 spec = **74% of sparse spec** (vs 93% for dense). Possibly garbage sparse metadata in catalog test; properly-encoded 2:4 metadata should approach spec.
+
+### REVIEW_CHECKLIST entries for tcgen05
+
+- D5 (M=128 N=256 = 128 cy across all formats): verified by catalog table L6694-L6722 ✓
+- D6 (FP4 K=64 = 9856 TFLOPS): catalog says ALL f8f6f4 formats give same TFLOPS (FP4 stored sub-byte but per-MMA throughput identical to FP8). The 9856 number is from a DIFFERENT path (`kind::mxf4nvf4` with block scaling); see §49 NVFP4 K=96 ULTRA.
+- CRIT2 (single-warp scope mismatch): MITIGATED — Multi-SM scaling table L6776 demonstrates per-SM independence so 148×single-warp = chip-wide makes sense. Skeptical review framing was wrong here.
+
+---
+
 ## §15. DSMEM (cluster shared memory) — REPLICATED 2026-04-23 (justifications/13_dsmem.md)
 
 ### ⚠ MAJOR FALSIFICATION — DSMEM is NOT "essentially free"

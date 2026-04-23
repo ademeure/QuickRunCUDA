@@ -1,0 +1,69 @@
+# Status of Replication — B300_PIPE_CATALOG audit
+
+**Generated:** 2026-04-23 (live; updated as agents finish)
+
+This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED_B300_PIPE_CATALOG.md` (per-section audit), `DENSE_B300_PIPE_CATALOG.md` (pruned reliable subset), `REVIEW_CHECKLIST_B300.md` (yes/no items).
+
+---
+
+## Replication results so far
+
+| Section | Topic | Status | Verdict | Justification |
+|---|---|---|---|---|
+| §0.FFMA | FP32 scalar FFMA peak (71.8 TF) | ✅ | **MATCH 100%**: 71.82 TF measured. Clock=**1942 MHz** (not 1920 catalog, not 2032 spec). | `00a_ffma_peak.md` |
+| §0.MEM | smem (35.6) / L2 (22-26) / DRAM (7.18) | ✅⚠ | smem 35.88 ✓; DRAM 7.17-7.25 ✓; L2 20.3 (BELOW catalog upper). NEW FOOTGUN: ncu warp-aggregated metric trap. | `00b_mem_hierarchy.md` |
+| §1 | Pipe topology / dispatch ceiling | ✅⚠ | Cap 4.00 ✓; V52 alu+fma=145% ✓; pipe_xu compound 0.5 vs simple 1.0 ✓. **FALSIFIED**: catalog L218 "FFMA → both fma sub-pipes simultaneously" is wrong — FFMA dispatches to ONE sub-pipe per cycle. | `01_pipe_topology.md` |
+| §22 dual-issue | FFMA2 + ALU vs scalar FFMA | ✅ | FFMA2 + LOP3 1:1 saturates ALL 3 pipes (fmaH=98% / fmaL=97% / alu=97%) → 314 useful ops/SM/cy vs scalar+LOP3's 187. **Dual-issue sweet spot.** | `22_dual_issue_ffma2_alu.md` |
+| §22-§25 | Tensor mma.sync (FP16/TF32/FP8/INT8) | ✅⚠ | FP16=571 ✓; TF32=285.7 ✓; INT8 IMMA 142.4 ✓; **FP8 emulated 309 (catalog 276, +12% LOW)**. Confirmed catalog FADD-artifact warning is real. | `22_tensor_mma_sync.md` |
+| §24 | Latency table (clock64) | ✅⚠ | ~75% accurate ±15%. **Fixes:** DFMA=63.7 (L103's 92 wrong); DRAM=789 (header's 3000 wrong); **__syncthreads = `22+2W` not `12+2W`**; mbarrier RTT=123 (header 54 was arrive-only). NEW FINDING: redux.add/or/and/xor=44 cy is 2.4× slower than min/max=18 cy. | `24_latency_table.md` |
+| §30.B | Atomic latency + contention | ✅⚠ | atom chain = LDS at 45 cy ✓ (K6 was labeling); N=2 anomaly 29× ✓; per-warp 5× claim WRONG (actually 1.09× FASTER); coalesced 0.023 atom/cy/lane (NOT 0.94); scope penalty 2.2× NOT 31×; FP16 atomicAdd 6.3× NOT 45×. | `30B_atomics.md` |
+| §30.G | Memory fence costs (cta/gl/sys) | ✅ | cta=8 ✓ V54; gl=267 ✓ V54; **sys=1727 single-GPU** (V54's 2806 was 2-GPU NVLink rig, +1.62× = one extra coherence round-trip). "+60 cy/write linear" claim RETRACTED — fixed one-time L2-drain. | `30G_fence.md` |
+| §30 TMA | cp.async.bulk size-independence | ✅⚠ | "48 cy floor" is AMORTIZED rate; pure single-issue is ~65 cy. Sharp 8 KiB crossover ✓ (in GB/s metric not cy). Per-SM peak ~240-260 GB/s ✓. **Chip-wide 21.9 TB/s claim requires L2 hits, NOT DRAM** (catalog wording fails to flag). Open: head-to-head TMA vs LDG max-tuned (in flight). | `30_tma_sizes.md` |
+| §13 DSMEM | latency, write throughput, L2 traversal | ✅⚠⚠ | **Catalog "23 cy ≈ free" FALSIFIED**: real read latency 204-223 cy (9× slower). SASS reveals `ld.shared::cluster` → `LD.E` (global LSU path). V53 write 87 GB/s/cluster sustained ✓ confirmed. V21's 560 GB/s is burst not completion. NEW FINDING: DSMEM reads ALSO bypass L2 (correcting V53). Exhaustive sweep in flight. | `13_dsmem.md` |
+
+## Pending agent work
+
+| Agent | Started | Expected done |
+|---|---|---|
+| TMA vs LDG.E.128 max-tuned head-to-head | running | answers G2b open question |
+| DSMEM exhaustive sweep (vector × cluster × placement × ILP × contention) | running | populates Tables A-F |
+
+## Skeptical review supplements (entries indexed but not all replicated)
+
+- `_SKEPTICAL_REVIEW_10_30.md` — 50 entries, Groups I-O (redux/SHFL, latency table, atomics, TMA, ext op cat, research-log repetition, methodology, pipe placement, clock state, vendor doc inconsistencies)
+- `_SKEPTICAL_REVIEW_31_END.md` — 74 entries, Groups P-X (methodology, dual-issue map, tcgen05, DSMEM, fence/barrier, atomics, TMA, cache/L2, architectural limits)
+
+## Catalog corrections recommended (so far)
+
+1. **L27 FP8 mma.sync emulated**: 276 → **308 TFLOPS** (12% increase)
+2. **L103 DFMA latency**: 92 → **63.9 cy**
+3. **L116 syncthreads formula**: `12 + 2W` → **`22 + 2W`** (10 cy fixed barrier overhead missed)
+4. **L218 FFMA "uniquely both sub-pipes"**: → "FFMA can use EITHER sub-pipe per cycle, alternating freely"
+5. **L7029-7031 / L7012 DSMEM "essentially free 23 cy"**: → DSMEM read = 204-223 cy (9× slower); SASS reveals LD.E path
+6. **L7836-7860 DSMEM 99% local SMEM**: FALSE; actual 5-43%; recommend deletion
+7. **L3084 fence "+60 cy/write linear"**: → fixed one-time ~280 cy L2-drain, NOT linear
+8. **§30.B per-warp 5× / coalesced 0.94 atom/cy/lane**: BOTH wrong; clean per-warp 1.09× FASTER, coalesced 0.023 atom/cy/lane
+9. **§30.B "31.3× scope penalty"**: → real penalty 2.0-2.2× apples-to-apples
+10. **§30.B "atom.f16/bf16 ~45× slower"**: → real 6.3× slower
+11. **mbarrier RTT 54 cy**: → 123 cy (54 was arrive-only)
+12. **redux.sync header**: add row for add/or/and/xor at 44 cy (only min/max=18 documented currently)
+
+## What's still NOT replicated (high-priority remaining)
+
+1. tcgen05.mma direct re-run on this rig (catalog L6686+ has self-consistent linear-scaling math, but no fresh measurement here yet)
+2. NVFP4 K=96 ULTRA path (catalog §49)
+3. Power per pipe (catalog §44 — DISPUTED in canonical with M11 vs 16_power_clock 2× discrepancy)
+4. L2 wire BW measurement separated from kernel-effective (catalog claims 13.30/23.85/30 TB/s split)
+5. cluster launch overhead (catalog §57 / §58)
+6. Multi-GPU NVLink-attached fence (catalog 2806 cy sys; needs 2-GPU rig)
+7. Predication/divergence cost (catalog §13)
+8. Many specific REVIEW_CHECKLIST entries (61 still open out of 74)
+
+## Progress numbers
+
+- DENSE_B300_PIPE_CATALOG.md: **~870 lines** (vs 19,742 source, 22:1 prune ratio; covers §0-§16)
+- JUSTIFIED_B300_PIPE_CATALOG.md: **~120 lines index** + 9 full justification records totaling ~2,100 lines
+- REVIEW_CHECKLIST_B300.md: **~150 lines + 124 supplementary entries**, of which **13 [x] resolved** (and 10 specific catalog corrections recommended)
+- 124 suspect claims indexed
+- 9 replication agents completed; 2 in flight
+- Next iteration of /loop will dispatch more on the remaining priority list above
