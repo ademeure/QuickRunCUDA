@@ -270,7 +270,7 @@ If you don't trust a number: it's probably already on `REVIEW_CHECKLIST_B300.md`
 - ❌ Cheat-sheet Rule 11 "FP64 300× slower than FP16 tensor" understates real **~2300×** (FP64 1.06 TF / FP16 mma.sync 2465 TF)
 - ❌ Cheat-sheet mbarrier.arrive "8.1 cy" likely measured `.relaxed.cta` modifier; default is **27 cy**
 - ⚠ Catalog "atom.global.cas → ATOMG.E.CAS.STRONG.GPU" — actual SASS emit is **STRONG.SYS** (system scope, NVLink-visible)
-- ⚠ Catalog "ld.shared bank-conflict-sensitive" — only TRUE for v2/v4 wide LDS; FALSE for 32-bit LDS on B300 (random=stride for any pattern at ~6.88 cy)
+- ✅ Catalog "ld.shared bank-conflict-sensitive" — CONFIRMED for all widths including 32-bit. My earlier "FALSE for 32-bit" was a methodology error: I tested broadcast (all-same-addr) not true bank conflict (lane-varying-addr-in-same-bank). True 32-way conflict measures 9.6× slowdown (catalog 13×).
 
 ### Roofline (operational intensity ridge)
 

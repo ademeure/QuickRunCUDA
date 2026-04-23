@@ -88,3 +88,50 @@ access wins.
 Not tested here, but LDSM (tensor shared load) is known to have broadcast
 capability that eliminates bank conflicts for registered 8×8 tiles. Worth
 verifying separately.
+
+---
+
+## ADDENDUM 2026-04-23 — IMPORTANT CORRECTION
+
+The earlier "random = coalesced" claim was based on a TEST METHODOLOGY ERROR.
+
+### What was wrong
+
+My original tests used patterns like `idx_base = (lane * 32) & 31` which masks ALL lanes to the same index (broadcast pattern), not the bank-conflict pattern that the catalog measured (lane-varying addresses in the same bank).
+
+### Correct test (true bank-conflict pattern)
+
+`idx = ((lane * STRIDE + i) & (SMEM_SIZE-1))` — each lane gets a DIFFERENT address, controlled by STRIDE in u32 units. Stride=32 means lanes 0-31 hit addresses 0, 32, 64, ..., 992 — all in bank 0 (since bank = (addr/4) mod 32).
+
+| STRIDE | cy/load | Slowdown vs stride-1 |
+|--------|--------:|---------------------:|
+| 1 | 7.01 | 1.0× (no conflict) |
+| 2 | 7.20 | 1.03× |
+| 4 | 11.13 | **1.59×** (4-way conflict) |
+| 8 | 19.13 | **2.73×** (8-way) |
+| 16 | 35.13 | **5.01×** (16-way) |
+| 32 | 67.13 | **9.6×** (32-way) |
+
+Catalog L1199 claims 13× slowdown at 32-way; I measure 9.6× — qualitatively confirming the catalog finding (bank conflicts are real).
+
+### Correct claim
+
+**Bank conflicts ARE real on B300 for lane-varying addresses in the same bank.** For 32-bit LDS:
+- True 32-way conflict = ~10× slowdown
+- True 16-way = ~5×
+- True 8-way = ~3×
+- 4-way = ~1.6×
+
+The "broadcast is fast" finding is a separate phenomenon — when ALL 32 lanes hit the SAME address (not just the same bank), B300 has a broadcast optimization that serves all lanes at no extra cost.
+
+### Updated catalog claim status
+
+Catalog L1191-1200 ("Smem bank conflict cost") is **CONFIRMED with my own test** (within 30% of the catalog's 13× — methodology differs slightly).
+
+The DENSE catalog correction "ld.shared bank-conflict only for v2/v4" was **WRONG** — I should walk that back. Bank conflicts ARE real for 32-bit LDS in proper benchmarks.
+
+Wider loads (v2/v4) have additional pressure (need more banks per lane) but the basic 32-bit bank-conflict mechanism is also active.
+
+### Corrected REVIEW_CHECKLIST entry
+
+The previous "ld.shared bank-conflict-sensitive needs scoping" claim was wrong. Real status: catalog is correct; bank conflicts apply to 32-bit LDS too with the right access pattern.

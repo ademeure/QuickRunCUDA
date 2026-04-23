@@ -28,16 +28,26 @@
 | st.shared.u32 (STS) | implicit from §1 pipe_lsu = 1.00 cap | ✅ |
 | **atom.* "not measured"** | `15_atomics.md` + 2 detail docs comprehensively measure atomics | ✅ NOW MEASURED (was open) |
 
-## NEW INSIGHT (cross-section)
+## NEW INSIGHT (cross-section) — REVISED 2026-04-23
 
-The `22j_smem_bank_conflicts_DEEP.md` finding refines catalog's "bank-conflict-sensitive" wording:
-- **32-bit LDS**: bank conflict penalty is essentially **zero** on B300 (random = stride-N for any N — all hit ~6.88 cy)
-- **64-bit (v2.b32) LDS**: stride-2 = 10.94 cy = **1.58× slower** than seq
-- **128-bit (v4.b32) LDS**: stride-2 = 19.69 cy = **1.68× slower**
+EARLIER CLAIM (now retracted): "32-bit LDS bank conflict is zero on B300".
 
-So bank conflicts ARE real for wider loads but eliminated for single-dword on B300 (likely via hash-accelerated bank arbitration).
+**CORRECTED via `22j_smem_bank_conflicts_DEEP.md` ADDENDUM:**
 
-The catalog row "ld.shared.u32 ... bank-conflict-sensitive" is technically WRONG for u32 LDS on B300 — needs scoping to wider loads.
+Bank conflicts ARE real on B300 for 32-bit LDS, with proper test methodology:
+
+| pattern | cy/load | Slowdown |
+|---------|--------:|---------:|
+| stride-1 (no conflict) | 7.0 | 1.0× |
+| 4-way conflict (lane-varying addr in 4 banks) | 11.1 | 1.59× |
+| 16-way | 35.1 | 5.0× |
+| 32-way | 67.1 | 9.6× |
+
+My earlier "no conflict" claim was a methodology error: I tested **broadcast** (all-lanes-same-address, B300-optimized fast path) instead of **true bank conflict** (lane-varying addresses falling in same bank).
+
+Catalog L1191-1200 claim "32-way = 13× slowdown" is CONFIRMED qualitatively (within 30% — different test patterns).
+
+Wider loads (v2/v4) have ADDITIONAL pressure on top of basic bank conflict.
 
 ## VERDICT
 

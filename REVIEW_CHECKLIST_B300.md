@@ -16,7 +16,7 @@
 | 6 | Rule 11 FP64 = **300×** slower than FP16 tensor | **~2300×** (1.06 TF / 2465 TF) | §2.13 |
 | 7 | mbarrier.arrive = **8.1 cy** (cheat-sheet) | **27 cy** for default `.shared.b64` | §0 cheatsheet audit |
 | 8 | atom.global.cas → **STRONG.GPU** | actual SASS is **STRONG.SYS** | §15 |
-| 9 | "ld.shared bank-conflict-sensitive" | only TRUE for v2/v4 wide; FALSE for 32-bit on B300 | §22j |
+| 9 | "ld.shared bank-conflict-sensitive" | ✅ TRUE for ALL load widths (32-bit too); my prior "FALSE for 32-bit" claim was a methodology error (tested broadcast not conflict) | §22j ADDENDUM |
 
 **Top NEW architectural facts to ADD (audit-discovered, missing from catalog):**
 
