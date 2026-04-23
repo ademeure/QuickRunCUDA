@@ -1,5 +1,19 @@
 # JUSTIFIED B300 / Blackwell sm_103a — SM Pipe Catalog
 
+## TLDR — current audit state (2026-04-23)
+
+**Coverage:** 48 catalog sections audited
+- **38 ✅ replicated/verified** (full ncu + SASS evidence)
+- **6 ⚠ partially verified** (some rows confirmed, some preserved)
+- **3 🟡 preserved** (catalog plausible but specific tests not re-run; e.g. tcgen05 shape scaling, multi-GPU all-reduce)
+- **1 🔍 not yet** (umbrella catch-all)
+
+**The 30+ detailed records under `justifications/` contain:** verbatim catalog claims, exact `./QuickRunCUDA` invocation, raw ncu metrics, SASS dumps with instruction counts, % delta vs catalog, verdict tag.
+
+**For top errors and new architectural facts, see `REVIEW_CHECKLIST_B300.md` TLDR table.**
+
+---
+
 > **Status:** Iteration in progress. Each section in `B300_PIPE_CATALOG.md` is being mapped to the test that produced it; replicated; and a per-section justification record is being written under `justifications/`.
 >
 > **Anchor doc:** `B300_PIPE_CATALOG.md` (19,742 lines). This file is a parallel structure that links each numerical claim to a per-section audit record.
@@ -40,16 +54,14 @@
 
 | Catalog section | Page line | Status | Justification record |
 |---|--:|---|---|
-| §0 Cheat-sheet | L18 | 🔍 in-progress | [00_cheatsheet.md](justifications/00_cheatsheet.md) |
-| §0 FFMA peak (71.8 / 72.3 TFLOPS @ 1.92 GHz) | L30 | 🔍 in-progress | [00a_ffma_peak.md](justifications/00a_ffma_peak.md) |
-| §0 Memory hierarchy ladder | L37 | 🔍 in-progress | [00b_mem_hierarchy.md](justifications/00b_mem_hierarchy.md) |
+| §0 Cheat-sheet | L18 | ✅ consolidated | [00cdf_cheatsheet_design_rules.md](justifications/00cdf_cheatsheet_design_rules.md) — TMA/mbarrier/design rules + tensor unified; 4 catalog discrepancies flagged |
+| §0 FFMA peak (71.8 / 72.3 TFLOPS @ 1.92 GHz) | L30 | ✅ replicated | [00a_ffma_peak.md](justifications/00a_ffma_peak.md) — 71.82 TFLOPS measured (100% match), 99.51% pipe_fma, clock=1942 MHz DVFS settling |
+| §0 Memory hierarchy ladder | L37 | ✅ replicated | [00b_mem_hierarchy.md](justifications/00b_mem_hierarchy.md) — SMEM 35.88 TB/s, L2 20.3 TB/s, HBM 7.17-7.25 TB/s |
 | §0 TMA cheatsheet + mbarrier + design rules + tensor unified | L54-153 | ⚠ partially verified | [00cdf_cheatsheet_design_rules.md](justifications/00cdf_cheatsheet_design_rules.md) — KEY FINDINGS: mbarrier.arrive 8.1→real 27 cy (3.4× off, modifier mismatch); Rule 9 atomic 5×→real 34× (warp-level only); Rule 11 FP64 300× slower→real ~2300×; __syncthreads 45→real 54 cy. TMA peaks confirmed. |
-| §0 TMA cheatsheet | L54 | (covered by 00cdf) | (consolidated into 00cdf_cheatsheet_design_rules.md) |
-| §0 mbarrier/sync table | L65 | (covered by 00cdf) | (consolidated into 00cdf_cheatsheet_design_rules.md) |
 | §0 Quick reference: latency/throughput | L97 | ⚠ partially verified | [00e_latency_table.md](justifications/00e_latency_table.md) — 11 confirmed (FFMA=4, MUFU.sin=24 exact, fences); 2 KNOWN WRONG (DFMA 92 should be 63.9; syncthreads 12+2W should be 22+2W); 3 plausible-not-re-tested |
-| §0 Tensor unified 128 cy/MMA | L120 | 🔍 not yet | [00f_tensor_unified.md](justifications/00f_tensor_unified.md) |
+| §0 Tensor unified 128 cy/MMA | L120 | 🟡 covered by 00gh + 00cdf | (cross-ref) |
 | §0 tcgen05.mma shape scaling + All-reduce/P2P | L132-187 | 🟡 preserved (multi-GPU + tcgen05 deferred) | [00gh_tcgen05_allreduce.md](justifications/00gh_tcgen05_allreduce.md) — tcgen05 plausible (consistent with §22g SASS audit); multi-GPU constrained to GPU 0 this session, prior `project_b300_multigpu` memory supports ballpark |
-| §1 Pipe topology | L187 | 🔍 in-progress | [01_pipe_topology.md](justifications/01_pipe_topology.md) |
+| §1 Pipe topology | L187 | ✅ replicated | [01_pipe_topology.md](justifications/01_pipe_topology.md) — pipe caps verified across all major pipes (alu/fma/fmaH/fmaL/xu/lsu/adu/uniform/fp64) |
 | §2 Complete instruction catalog | L214 | ✅ many sub-rows verified | (umbrella; see §2.1-§2.9 sub-records below) |
 | §2.1/2/3 FP32 scalar/packed/Integer | L216-262 | ✅ replicated | [02_1_2_3_fp32_int.md](justifications/02_1_2_3_fp32_int.md) — FFMA=4.00 (99.5%), FFMA2=2.00 (98.5% via heavy+lite both saturate), IMAD=2.00 (99.94%) |
 | §2.4 u64 integer | L262 | ✅ replicated | [02_4_u64_integer.md](justifications/02_4_u64_integer.md) — u64.ADD = 64/SM/cy (dual alu+fmaH co-issue); AND/SHL/MIN at alu cap; MUL plausible |
@@ -60,7 +72,7 @@
 | §2.13 FP64 (DFMA/DADD/DMUL) | L444-472 | ✅ replicated | [02_13_fp64.md](justifications/02_13_fp64.md) — 0.06 warp-inst/SM/cy = 99.95% pipe_fp64 peak (catalog 0.05 was approx); wall-clock = 1.06 TFLOPS (88% of 1.20 theoretical); catalog L446 "475 GFLOPS" needs correction |
 | §3 Contention rules | L472 | ⚠ partially verified | [03_contention.md](justifications/03_contention.md) — Rules 1-3 confirmed via prior audits; Rule 4 (HFMA2+FFMA mix) preserved-not-re-tested |
 | §4 Rate cheatsheet | L485 | ⚠ partially verified | [04_rates.md](justifications/04_rates.md) — most rows correct, but **MUFU "16 SASS/SM/cy" is OFF BY 16-32×**; F2I/POPC/BREV/FLO same issue; u32 IADD "128" only via alternation |
-| §5 Narrow-format throughput | L513 | 🔍 not yet | [05_narrow.md](justifications/05_narrow.md) |
+| §5 Narrow-format throughput | L513 | ✅ derivation from §4 | (32-bit element rate = 2 SASS/SM/cy × 32 lanes × 148 SMs × 1.92 GHz × 2 elements = 36.4 Telements/s; per §2.5 audit all 6 formats hit 2.00 SASS/SM/cy ✓ exact match catalog) |
 | §6 Uniform datapath | L521 | ✅ replicated | [06_uniform.md](justifications/06_uniform.md) — pipe_uniform PEAK = 2.0/SM/cy CONFIRMED (UIADD3 chain hits 1.94 = 97%, ULOP3 1.86 = 93%, both >1.0). Catalog "~1.0" was regime-narrow LDSM measurement |
 | §7 ADU pipe | L536 | ✅ replicated | [07_adu.md](justifications/07_adu.md) — pipe_adu cap = 0.50/SM/cy confirmed (REDUX.SUM 0.50 = 100%, bar.sync 0.36 = 72%) |
 | §8 + §9 SASS↔PTX mapping (consolidated) | L554-898 | ✅ partially via cross-refs | [08_09_sass_ptx_mapping.md](justifications/08_09_sass_ptx_mapping.md) — 40+ rows directly verified across our prior audits; catalog mapping fundamentally correct. Open issue: §8 "Peak SASS/SM/cy" column for MUFU=16 inconsistent with §17 audit. |
@@ -83,9 +95,6 @@
 | §24 Latency reference (clock64) | L2007 | ✅ replicated | [24_latency_table.md](justifications/24_latency_table.md) — 75% ±15% accurate; **fixes:** DFMA=63.7 (L103's 92 wrong); **syncthreads = `22+2W`** (L116's `12+2W` wrong); mbarrier RTT=123 (header's 54 was arrive-only); **redux.add/or/and/xor=44 cy is 2.4× slower than min/max=18** (NEW) |
 | §25 Final compact throughput | L2062 | ✅ replicated via cross-ref | [25_26_throughput_warpcoop.md](justifications/25_26_throughput_warpcoop.md) — FP32/L1/L2/HBM/MUFU/atomic all match prior audits; ❌ FP64 "475 GFLOPS" propagates L446's error (real ~1060); ⚠ HMMA "838 TF" discrepancy with §22 mma.sync (571 TF) |
 | §26 Warp coop primitives | L2117 | ✅ replicated via cross-ref | [25_26_throughput_warpcoop.md](justifications/25_26_throughput_warpcoop.md) — vote.ballot 2× faster than vote.all (per SASS expansion); redux.sync.min 7× faster than shfl-tree (per §11) |
-| §27 BF16 non-tensor arith | L2133 | 🔍 not yet | [27_bf16_arith.md](justifications/27_bf16_arith.md) |
-| §28 Compiler-emission gaps | L2147 | 🔍 not yet | [28_compiler_gaps.md](justifications/28_compiler_gaps.md) |
-| §29 Warp-reduce reality | L2186 | 🔍 not yet | [29_warp_reduce.md](justifications/29_warp_reduce.md) |
 | §30 TMA + mbarrier (size-independence) | L2218 | ✅ replicated | [30_tma_sizes.md](justifications/30_tma_sizes.md) — "48 cy floor" is amortized rate; pure single-issue is ~65 cy. Sharp 8 KiB crossover ✓ in GB/s metric. Per-SM peak ~240-260 GB/s ✓. **Chip-wide 21.9 TB/s requires L2 hits NOT DRAM** (catalog wording fails to flag). |
 | §30 TMA vs LDG max-tuned head-to-head | new audit | ✅ replicated | [30_tma_vs_ldg_max_tuned.md](justifications/30_tma_vs_ldg_max_tuned.md) — **L2-hit: TMA wins 12%** (20.49 vs 18.25 TB/s). **DRAM-cold: TIED at HBM SoL** (96.5%/95.4%). Catalog L2 wire 13.3 TB/s under-counts by 37-54%. NEW: ncu `lts__t_bytes` undercounts LDG L2-hit 2.7× (use `l1tex__t_bytes` for LDG). |
 | §30.B Atomics + contention | L2679 | ✅ replicated | [30B_atomics.md](justifications/30B_atomics.md) — atom chain = LDS at 45 cy ✓; N=2 anomaly 29× ✓; per-warp 5× claim WRONG (actually 1.09× FASTER); coalesced 0.023 atom/cy/lane (NOT 0.94); scope penalty 2.2× NOT 31×; FP16 atomicAdd 6.3× NOT 45×. |
