@@ -7,7 +7,12 @@
 - **6 ⚠ partially verified** (some rows confirmed, some preserved)
 - **4 🟡 preserved** (catalog plausible but specific tests not re-run; e.g. tcgen05 throughput, multi-GPU all-reduce, methodology notes, tensor unified)
 
-**REVIEW_CHECKLIST status:** **66 [x] resolved / 19 [ ] still open** (out of 85 main items + 124 supplements). Remaining open items are mostly TMEM/write-path (need fresh measurement), tcgen05.mma direct (needs alloc/mbarrier setup), multi-GPU (D7/E7, single-GPU rig), and 2 documentation improvements (G3/G4). Power group (F1-F6) deferred en bloc to a separate power campaign; methodology meta-claims (H1-H7) resolved as documented audit lessons.
+**REVIEW_CHECKLIST status:** **190 [x] resolved / 6 [ ] still open** across all checklist files:
+- **Main:** 74 closed / 6 open (started session at 23/61)
+- **Supp _10_30:** 55 closed / 0 open (DONE)
+- **Supp _31_END:** 61 closed / 0 open (DONE)
+
+The 6 remaining open are all genuinely measurement-blocked (B6 DRAM-write clock-dep, B7/B8 TMEM, D5 tcgen05 multi-format, D7+E7 multi-GPU). Power group (F1-F6) deferred en bloc to a separate power campaign; methodology meta-claims (H1-H7) resolved as documented audit lessons. All other catalog claims have been either verified, refined, or falsified with cross-link to a per-section justification record.
 
 **The 51 detailed records under `justifications/` contain:** verbatim catalog claims, exact `./QuickRunCUDA` invocation, raw ncu metrics, SASS dumps with instruction counts, % delta vs catalog, verdict tag.
 

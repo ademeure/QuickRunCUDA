@@ -49,6 +49,8 @@ This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED
 
 For the full per-section trail with raw output, SASS, and ncu: see `JUSTIFIED_B300_PIPE_CATALOG.md` and `justifications/<id>.md`.
 
+**Checklist completion (2026-04-23):** 190/196 items closed across main REVIEW_CHECKLIST (74/80) + both supplementary reviews (_10_30: 55/55 DONE; _31_END: 61/61 DONE). The 6 remaining are all genuinely measurement-blocked (TMEM, tcgen05 multi-format, multi-GPU, DRAM-write clock-dep).
+
 ---
 
 ## Replication results so far

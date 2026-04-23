@@ -85,7 +85,9 @@
 
 ### "I want to know what's still unverified"
 
-→ STATUS_OF_REPLICATION.md "What's still NOT replicated" section. Or REVIEW_CHECKLIST_B300.md, count `[ ]` entries (~19 still open in main + 124 supplements). Power F-group and methodology H-group resolved en bloc 2026-04-23.
+→ STATUS_OF_REPLICATION.md "What's still NOT replicated" section. Or REVIEW_CHECKLIST_B300.md (6 still open in main; both supplementary review files are now DONE: _10_30 = 55/55 closed, _31_END = 61/61 closed). Power F-group and methodology H-group resolved en bloc 2026-04-23.
+
+**Full audit total: 190/196 checklist items resolved.** The 6 remaining are genuinely measurement-blocked (TMEM, tcgen05 multi-format, multi-GPU items, DRAM-write clock-dependence) — outside this audit's scope.
 
 ## Audit conventions
 
