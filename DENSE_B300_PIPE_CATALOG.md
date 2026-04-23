@@ -616,17 +616,19 @@ Per-warp throughput (single warp on 1 SMSP, ILP=16, all OTHER SMSPs idle):
 | `ld.shared.u32` | LDS | lsu | ~1.0 issue, bank-conflict-sensitive |
 | `st.shared.u32` | STS | lsu | 1.00 saturating |
 
-### §2.13 FP64 — severely throttled
+### §2.13 FP64 — severely throttled — ✅ AUDIT-VERIFIED 2026-04-23 ([02_13_fp64.md](justifications/02_13_fp64.md))
 
-| PTX | SASS | Pipe | r |
-|---|---|---|--:|
-| `fma.rn.f64` | DFMA | fp64 | **0.05 = 1.6 DFMA/SM/cy = ~475 GFLOPS-FMA chip-wide** |
-| `add.rn.f64` | DADD | fp64 | 0.05 |
-| `mul.rn.f64` | DMUL | fp64 | 0.05 |
+| PTX | SASS | Pipe | rate (warp-inst/SM/cy) | Chip TFLOPS |
+|---|---|---|--:|--:|
+| `fma.rn.f64` | DFMA | fp64 | **0.06** (99.95% pipe peak) | **1.06** measured |
+| `add.rn.f64` | DADD | fp64 | 0.06 (assumed same) | 1.06 |
+| `mul.rn.f64` | DMUL | fp64 | 0.06 (assumed same) | 1.06 |
 
-DFMA is **NOT pipelined** per catalog L460 — 4 chains give zero ILP benefit (63.9 cy/op each). FFMA + ALU co-issue freely during the 64 cy window. ⚠ Catalog has DFMA latency = 92 cy (L103) AND 63.9 cy (L460) — inconsistent; likely 63.9 is the corrected number from a later test.
+**True architectural rate = 0.06 warp-inst/SM/cy** (catalog "0.05" was approx). Chip-wide TFLOPS = **1.06 measured = 88% of 1.20 theoretical** at 2032 MHz boost (theoretical ratio 1:64 vs FP32 76.97 TF).
 
-⚠ B300 FP64 peak = ~1.2 TFLOPS (CLAUDE.md). Catalog says 0.95 TFLOPS measured — under-saturated; needs replication. (REVIEW_CHECKLIST A5)
+**DFMA is NOT pipelined** — 4 chains give zero ILP benefit (latency = 63.9 cy/op single-chain or 4-chain). FFMA + ALU co-issue freely during the 64 cy window. ⚠ Catalog L103 "92 cy" is WRONG; L460's 63.9 is correct (E2 RESOLVED in REVIEW_CHECKLIST).
+
+⚠ **Catalog L446 "475 GFLOPS FMA chip-wide" is WRONG by 2.2×** — real is ~1060 GFLOPS. The parenthetical "≈ 950 FLOPS" line was likely a typo for 950 GFLOPS and is approximately correct.
 
 ---
 

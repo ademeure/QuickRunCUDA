@@ -48,8 +48,7 @@
 | §0 mbarrier/sync table | L65 | (covered by 00cdf) | (consolidated into 00cdf_cheatsheet_design_rules.md) |
 | §0 Quick reference: latency/throughput | L97 | ⚠ partially verified | [00e_latency_table.md](justifications/00e_latency_table.md) — 11 confirmed (FFMA=4, MUFU.sin=24 exact, fences); 2 KNOWN WRONG (DFMA 92 should be 63.9; syncthreads 12+2W should be 22+2W); 3 plausible-not-re-tested |
 | §0 Tensor unified 128 cy/MMA | L120 | 🔍 not yet | [00f_tensor_unified.md](justifications/00f_tensor_unified.md) |
-| §0 tcgen05.mma shape scaling | L132 | 🔍 not yet | [00g_tcgen05_shape.md](justifications/00g_tcgen05_shape.md) |
-| §0 All-reduce latency (NV18) | L153 | 🔍 not yet | [00h_allreduce.md](justifications/00h_allreduce.md) |
+| §0 tcgen05.mma shape scaling + All-reduce/P2P | L132-187 | 🟡 preserved (multi-GPU + tcgen05 deferred) | [00gh_tcgen05_allreduce.md](justifications/00gh_tcgen05_allreduce.md) — tcgen05 plausible (consistent with §22g SASS audit); multi-GPU constrained to GPU 0 this session, prior `project_b300_multigpu` memory supports ballpark |
 | §1 Pipe topology | L187 | 🔍 in-progress | [01_pipe_topology.md](justifications/01_pipe_topology.md) |
 | §2 Complete instruction catalog | L214 | ✅ many sub-rows verified | (umbrella; see §2.1-§2.9 sub-records below) |
 | §2.1/2/3 FP32 scalar/packed/Integer | L216-262 | ✅ replicated | [02_1_2_3_fp32_int.md](justifications/02_1_2_3_fp32_int.md) — FFMA=4.00 (99.5%), FFMA2=2.00 (98.5% via heavy+lite both saturate), IMAD=2.00 (99.94%) |
