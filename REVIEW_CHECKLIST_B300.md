@@ -44,6 +44,8 @@
 | **§2.3** (NEW) | IMAD = 2.00 fmaheavy = 64 IMAD/SM/cy | ✅ CONFIRMED EXACTLY at 99.94% pipe_fmaheavy. |
 | **§2.7-§2.9** (NEW) | All "rate 2.00 alu" claims (LOP3/PRMT/SHF/ISETP/FMNMX/HMNMX2/VIMNMX3/copysign) | ✅ CONFIRMED PLAUSIBLE — pipe_alu cap=2.00 verified at 97% via §12; all alu-resident "rate 2.00" claims fit within budget. bfind/FLO confirmed at 0.5 xu. |
 | **§2.13** (NEW) | DFMA = 0.05 warp-inst/SM/cy = 475 GFLOPS chip | ⚠ REFINED: real rate is **0.06** (99.95% peak), not 0.05. **Real chip TFLOPS is 1.06** (= 88% of 1.20 theoretical at 2032 MHz boost), NOT 475 GFLOPS. Catalog L446 "475 GFLOPS FMA" is OFF by 2.2× — likely had wrong denominator. |
+| **§2.6** (NEW) | Other CVTs (HADD2.F32 fmaH 2.00; F2I=0.5 xu; F2IP.U8=2.00 alu surprise; I2FP=2.00 alu) | ✅ all 4 directly testable rows CONFIRMED at 98-99% (HADD2.F32=1.97, F2I=0.50, F2IP.U8=1.97, I2FP=1.98). I2F.S64 "super slow" plausible but too low for ncu sampling. |
+| **§2.6** (NEW) | F2IP.U8 alu fast path is 4× faster than F2I.S8 xu | ✅ ARCHITECTURALLY CONFIRMED — pick `cvt.rni.sat.u8` over `cvt.rni.sat.s8` for 4× CVT throughput when format permits. |
 
 ## RESOLVED SUMMARY (prior 15 items, 2026-04-23)
 
