@@ -34,7 +34,197 @@ If you don't trust a number: it's probably already on `REVIEW_CHECKLIST_B300.md`
 
 ---
 
-## §0. Spec card (verified 2026-04-23)
+## §0. Comprehensive reference card (catalog L8807+, with corrections)
+
+**This combines the catalog's "Comprehensive Reference Card" (L8807) with the corrections from this audit.** Numbers in **bold** are post-audit replicated/corrected; plain text is catalog-claim-preserved.
+
+### Hardware
+
+| Property | Value | Source |
+|---|---|---|
+| GPU | NVIDIA B300 SXM6 AC | nvidia-smi |
+| Compute capability | sm_103a (PTX 10.3) | cudaGetDeviceProperties |
+| SMs | **148** (IDs 1-147; SM 0 never scheduled) | cudaDeviceProp.multiProcessorCount |
+| **GPCs** | **9 × 16 SMs + 1 partial × 4 SMs = 148** ⚠ | DSMEM exhaustive `%smid` (catalog "8 GPCs" elsewhere is WRONG) |
+| Warps per SM | 64 (4 SMSPs × 16 warps each) | catalog |
+| Max CTAs per SM | 32 | catalog L7682 (concurrent CTA cap test) |
+| Max threads/CTA | 1024 | spec |
+| FP32 cores per SM | **128** (4 SMSPs × 32 lanes; NOT 256) | per CLAUDE.md |
+| Registers per SM | 65,536 (256 KB) | spec |
+| Max regs per thread | 232 (via setmaxnreg; spill at ~192 live floats) | catalog |
+| Shared memory per SM | 228 KB pool (227 KB usable per CTA; 1 KB reserved) | catalog |
+| L1 cache | 256 KB (shared with smem pool) | spec |
+| L2 cache | **126.5 MiB** (LRU, 2 partitions with address hash) | cudaDeviceProp.l2CacheSize |
+| HBM | **268 GiB HBM3e** (visible, post-ECC) | nvidia-smi |
+| HBM bus | **7,680 bits** (1/16 controllers fused on AC SKU; full SKU is 8192) | cudaDeviceProp.memoryBusWidth |
+| HBM stacks | **8 × 12-Hi** (3 GB/die) | NVIDIA Tech Blog post-correction |
+| Memory I/O clock | 3,996 MHz (= 7.992 Gbps/pin × 1024 b/stack × 8 stacks ÷ 8 ÷ 1.0625 ≈ **7,672 GB/s post-ECC**) | catalog |
+| **SM clock — typical sustained** | **1,942 MHz** (DVFS settling, NOT 2032 boost spec NOR 1920 lock) | this audit |
+| SM clock — boost spec | 2,032 MHz | nvidia-smi -q |
+| SM clock — `-lgc 2032` paradox | pins to 1920 (NOT 2032) | catalog |
+| SM clock — silent stuck floor | 1005 MHz | catalog observation |
+| PCIe | Gen 6 x16 card; realized Gen 5 on this host (57 GB/s/dir) | catalog L8830 |
+| NVLink | 18 lanes × 53.125 GB/s = 956 GB/s bidirectional per peer | catalog |
+| ECC | always ON | spec |
+| Async copy engines | 4 | cudaDevAttr |
+| Media | 7 NVDEC + 1 NVENC + 1 OFA + 7 JPEG | catalog |
+| MIG | supported (up to 7 × 1g.34gb slices) | catalog |
+| TDP | 1,100 W | spec |
+| Idle baseline | 144-198 W | catalog |
+
+### Compute throughput (chip-wide, this rig DVFS at 1942 MHz unless noted)
+
+| Path | Catalog peak TF | This audit | Status |
+|---|--:|--:|---|
+| Scalar FFMA (FP32) | 72.3 | **71.82 ✓** | ✅ JUSTIFIED §0.FFMA |
+| FFMA2 / HFMA2 / BFMA2 (packed) | 72.3 | (per §22 inferred 256 FLOPS/SM/cy) | ✅ |
+| FFMA2 + LOP3 1:1 (dual-issue total useful) | — | **314 ops/SM/cy** | ✅ NEW §22 |
+| TF32 mma.sync | 1,200 | (cuBLAS 1,016 = 85%; mma.sync micro 285.7 ✓) | ✅ JUSTIFIED §22 |
+| FP16/BF16 mma.sync (m16n8k16) | 569-578 | **571 ✓** (99.5% pipe_tensor) | ✅ JUSTIFIED §22 |
+| FP16 tensor (cuBLAS 8K GEMM) | 2,325 | (catalog: 2,034 = 87%) | 🟡 cuBLAS not retested |
+| FP8 mma.sync emulated | 276 | **309** (+12% over catalog) | ⚠ JUSTIFIED §22 — recommend bumping catalog |
+| FP8 tcgen05.mma micro | 4,651 | (catalog L6720; 93% of 5 PF spec) | 🟡 not yet rerun |
+| FP8 sparse tcgen05.mma | ~9,300 | 7,440 (74% of spec) | 🟡 catalog claim |
+| NVFP4 K=64 standard | ~10,000 | (cuBLAS 10,800; CUTLASS 8,700 — capped) | 🟡 |
+| **NVFP4 K=96 ULTRA** | **~15,000 spec** | (catalog: 1.5× over K=64; replication TODO) | 🔍 K=96 ULTRA agent failed (token limit) |
+| FP64 (DFMA) | ~1.2 | 0.95 catalog (under-saturated; A5 in checklist) | 🟡 |
+| INT32 (IMAD/IMUL) | — | 18.2 TOPS catalog | 🟡 |
+| INT8 dp4a SIMD | — | 54.5 TOPS catalog | 🟡 |
+| MUFU (sin/cos/rsqrt) | — | 4.8 TOPS catalog (ex2 = 8.1) | 🟡 |
+
+### Memory throughput
+
+| Level | Read TB/s | Write TB/s | Latency cy |
+|---|--:|--:|--:|
+| **HBM (coalesced 256-bit, max-tuned)** | **7.41 ✓** (96.5% of 7672) | (catalog 7.5 memset) | ~789 (catalog L24) |
+| L2 cache @ 64 MB WS, max-tuned | **18-20 ✓** (catalog wire 13.3 was under-counted by 37-54%) | — | ~300 (catalog L24) |
+| **L2 cache @ 64 MB WS, TMA max-tuned** | **20.49 ✓ (12% better than LDG)** | — | — |
+| Shared memory (`ld.shared.v4`) | **35.88 ✓** (97.5% of 36.79) | catalog 34 | **29 ✓** (catalog L24's 33 was 14% high) |
+| PCIe H2D | 0.057 | — | 6.5 µs |
+| PCIe D2H | 0.057 | — | 9.0 µs |
+| PCIe full-duplex | 0.099 combined | | |
+| NVLink peer | 0.820 | 0.718 | ~2,700 |
+| Pinned (zero-copy) | 0.054 | 0.053 | ~1 µs/hop |
+| **DSMEM read (single-chain)** | **204-223 cy ❌** (catalog "23 cy free" FALSIFIED — 9× slower) | **87-117 GB/s/cluster** sustained | — |
+| **DSMEM read (ILP=32)** | **9 cy/load ✓** (close to LDS) | (different config) | — |
+
+### Synchronization costs (cycles, this rig 1942 MHz unless noted)
+
+| Primitive | Catalog | This audit |
+|---|--:|--:|
+| `__syncwarp` | 36 | (no SASS emitted in some cases per memory) |
+| `bar.sync 0,32` (1-warp partial) | 26 | not retested |
+| `__syncthreads` (1024 thr) | 86 | not retested at 1024 |
+| `__syncthreads` BS=512 | catalog 45 | **54 ✓ (formula `22+2W` not `12+2W`)** |
+| `__syncthreads_count/_and/_or` | 150 | not retested |
+| `mbarrier` arrive+wait cycle | 318 | — |
+| `mbarrier` RTT (count=1) | catalog 54 | **123 ✓** (catalog header was arrive-only) |
+| Cluster barrier | 380 (flat 2-16 CTAs) | not retested |
+| Cooperative `grid.sync` (148 blocks) | 2,371 (1.24 µs) | not retested |
+| `fence.*.cta` | catalog 27 (L8878) / 8.6 (L114) | **8 ✓** |
+| `fence.*.gpu` | catalog 292 / 274 | **267-281 ✓** (+~280 first-fence-after-write FIXED) |
+| `fence.*.sys` (single-GPU) | catalog 3,500 | **1,727 ✓** (V54's 2806 was 2-GPU NVLink rig) |
+| `fence.proxy.async` | 36 | not retested |
+
+### Atomic costs (cycles per atom, uncontended unless noted)
+
+| Op | Catalog | This audit |
+|---|--:|--:|
+| `atom.global.add.u32` chain | 24 | **45 ✓** (matches LDS chain at 45 cy — the "33 cy LDS" elsewhere was throughput-derived) |
+| `atom.global.add.{f32,f16x2,bf16x2,f64}` | 24 (all native per catalog) | f16/bf16 atomicAdd are NOT native — emit ATOM.E.CAS loops 6.3× slower than u32 (NOT 45×) |
+| `atom.global.add.u64` | 156 | not retested |
+| `atom.global.cas.b64` | 731 (30× slower) | not retested |
+| `atom.shared.add.u32` | 24 | not retested |
+| `atom.shared.add.f32` | 97 (emulated via bsync+CAS) | not retested |
+| **atom.relaxed vs acq_rel scope penalty** | catalog 31.3× | **2.0-2.2× ✓** (catalog compared chip-throughput vs single-thread chain — apples-to-oranges) |
+| **chip-wide same-addr 1 hotspot** | — | **49.1 Gops/s ✓** |
+| **N=2 hotspot anomaly** | catalog 32× slower | **29× slower ✓** confirmed |
+| **per-warp pattern (clean addr_idx=warpId)** | catalog "5× slowest" | **1.09× FASTER than 1-hotspot** ❌ catalog wrong |
+| **per-CTA pattern** | catalog "same as single" | **12.4× FASTER than 1-hotspot** ❌ catalog wrong |
+| **coalesced unique-per-lane** | catalog 0.94 atom/cy/lane | **0.023 atom/cy/lane** ❌ catalog 41× off |
+
+### Warp primitives
+
+| Op | cy |
+|---|--:|
+| `__shfl_xor_sync` (raw) | 6 |
+| SHFL (saturated at 32 warps) | 1 w-inst/cy/SM |
+| `__ballot_sync` | 29 |
+| `__reduce_min/max_sync` | 31 (SASS = CREDUX.MIN/MAX, 18 cy in §24) |
+| `__reduce_add_sync` | 54 (SASS = REDUX.SUM, 44 cy chain in §24 — **NEW: 2.4× slower than min/max**) |
+| `__match_any_sync` | 56 (very slow, 375 cy in another section — verify) |
+| Warp-wide scan (5-step Kogge-Stone) | 186 |
+
+### Host API costs
+
+| Operation | µs |
+|---|--:|
+| `cudaGetLastError` | 0.011 (always check!) |
+| `cudaEventElapsedTime` | 0.037 |
+| `cudaStreamWaitEvent` (host enqueue) | 0.13 |
+| NVTX push+pop (no profiler) | 0 |
+| `cudaMallocAsync` + `FreeAsync` cycle | 0.4-1.2 |
+| `cudaMalloc` | 18 |
+| `cudaFree` | 20 |
+| Kernel launch (`<<<>>>`) | 2.0 |
+| `cudaLaunchKernelEx` + PSS | 1.47 |
+| cudaGraph launch (1000 kernels) | 0.56 / kernel |
+| `cudaGraphExecUpdate` | 0.15 |
+| `cudaStreamSynchronize` (after tiny kernel) | 6.3 |
+| `cudaDeviceSynchronize` (idle) | 1.3 |
+| CUDA cold start (cuInit → first kernel) | 326 ms |
+| NVRTC compile | 6 ms (warm) |
+| `cuLibraryLoadData` | 14 (6.5× faster than cuModule) |
+
+### Key design rules (catalog L8927, mostly confirmed)
+
+1. Fuse elementwise ops: N ops fused → near-linear N× speedup
+2. Use wide loads: uint4 (16 B) = 85% HBM; 2×uint4 (32 B) = 94% (per JUSTIFIED §0.MEM, max-tuned hits 96%+)
+3. ≥16 warps/SM for 90% of HBM peak
+4. Smem-privatize histograms: 200× faster than naive global atomics
+5. Persistent 32 CTAs/SM for memory-bound (not 1/SM — 2.6× better)
+6. Prefer `__reduce_*_sync` over manual shuffle trees (40% faster)
+7. Use `max(x,0)` not `x>0?x:0`: fused min/max is 2× faster than setp+selp
+8. Avoid function pointers in inner loops (5× overhead)
+9. Avoid warp specialization without async overlap (3.8× anti-pattern)
+10. Always use NonBlocking streams (12% faster than default)
+
+### Roofline (operational intensity ridge)
+
+| Compute path | Ridge OI (FLOP/byte) |
+|---|--:|
+| Scalar FFMA | 18 |
+| FP16 tensor (tcgen05) | 314 |
+| FP8 tensor | 628 |
+
+Most ML inference ops are below OI = 1 → memory-bound → fusion is king.
+
+### B300 vs H100 vs A100 (catalog L8957+)
+
+| Spec | A100 SXM (2020) | H100 SXM (2022) | **B300 SXM6 (2025)** | B300/A100 | B300/H100 |
+|---|--:|--:|--:|--:|--:|
+| SMs | 108 | 132 | **148** | 1.37× | 1.12× |
+| FP32 TFLOPS (scalar) | 19.5 | 67 | **72** | 3.7× | 1.07× |
+| FP16 tensor TFLOPS | 312 | 990 | **2,325 spec / 2,034 measured** | 6.5× | 2.1× |
+| FP8 tensor TFLOPS | — | 1,979 | **4,651** | — | 2.3× |
+| HBM capacity | 80 GB | 80 GB | **268 GB** | 3.4× | 3.4× |
+| HBM bandwidth | 2.0 TB/s | 3.35 TB/s | **7.4 TB/s** | 3.7× | 2.2× |
+| L2 cache | 40 MB | 50 MB | **126.5 MB** | 3.2× | 2.5× |
+| NVLink BW (bidi) | 600 GB/s | 900 GB/s | **956 GB/s** | 1.6× | 1.06× |
+| SM clock (boost) | 1,410 | 1,830 | **2,032** | 1.44× | 1.11× |
+| TDP | 400 W | 700 W | **~490 W measured tensor / 1,100 W max** | 1.23× | 0.70× |
+| Compute capability | sm_80 | sm_90 | **sm_103a** | — | — |
+
+### Per-watt (TFLOPS / W)
+
+| Metric | A100 | H100 | B300 | B300/A100 | B300/H100 |
+|---|--:|--:|--:|--:|--:|
+| FP16 tensor / W | 0.78 | 1.41 | **4.17** | **5.3×** | **3.0×** |
+| HBM BW / W (GB/s/W) | 5.0 | 4.8 | **15.1** | 3.0× | 3.2× |
+
+---
+
+## §0a. Spec card (legacy, kept for backward compat — see §0 for canonical)
 
 ### Hardware (`cudaGetDeviceProperties`)
 
@@ -479,6 +669,136 @@ Catalog claim "L2 cap at 126 MB, then 11 TB/s at 256 MB, 7.18 TB/s at 1 GB" is r
 - 1 GB measured 7.8 TB/s (catalog says 7.18 — close)
 
 The "11 TB/s at 256 MB" was probably L2 partial-hit amortization at the boundary — explanation rather than mystery.
+
+---
+
+## §17. MUFU transcendental throughput — per-warp (catalog L7696+, 🟡 catalog claim)
+
+8 independent chains, throughput per warp:
+
+| Op | cy/op | Chip GOPS @ 1.92 GHz × 4 SMSP × 148 SM |
+|---|--:|--:|
+| **ex2.approx.f32** | **10.5** | **433** ← fastest |
+| tanh.approx.f32 | 11.3 | 403 |
+| sin.approx.f32 | 12.0 | 379 |
+| cos.approx.f32 | 12.0 | 379 (same as sin — likely shared HW) |
+| sqrt.approx.f32 | 13.9 | 328 |
+| rsqrt.approx.f32 | 13.9 | 328 |
+| lg2.approx.f32 | 13.9 | 328 |
+| **rcp.approx.f32** | **15.5** | **294** ← slowest (counterintuitive — normally simplest) |
+
+⚠ Catalog uses 1.92 GHz; rig DVFS settles at 1942 — chip GOPS are ~1% under-stated. Latency cy/op is clock-independent.
+
+**Practical guidance:**
+- Softmax: prefer `ex2` over `exp` (which is `ex2 × ln(2)`)
+- Normalization: use `rsqrt × x` instead of `sqrt → rcp`
+- Activations: `tanh.approx` is reasonably cheap (11 cy)
+- For division: `__fdividef(a, b)` (= `div.approx`, 5.5 cy) is **3× FASTER than rcp(b) × a**
+
+---
+
+## §18. Branch divergence patterns (catalog L7724+, 🟡 catalog claim)
+
+| Pattern | cy/iter | Notes |
+|---|--:|---|
+| No divergence | 28 | baseline |
+| **2-way `if` (compiler-predicated)** | **23** ← FASTER than no-branch | compiler emits `selp`, no real branch |
+| 2-way + `__syncwarp()` | 23 | sync no-op when no divergence |
+| 32-way lookup table | 153 (5.5×) | local array indexed by lane |
+| 4-way switch | 162 (5.8×) | compiler emits jump table |
+
+**Key insight:** simple 2-way `if` branches are **faster than no-branch** because compiler turns them into predicated `selp`. True divergence appears only when compiler can't predicate (table lookup, function pointer, switch).
+
+---
+
+## §19. INT8 compute path (catalog L7744+, 🟡 catalog claim with VERIFIED tcgen05 INT8 absence)
+
+⚠ `tcgen05.mma kind::i8` is NOT supported on sm_103a (verified by tcgen05 catalog content; cccl gates kind::i8 on sm_100a/100f/110a/110f only). B300 INT8 must use dp4a SIMD or convert to FP8.
+
+| Op | cy/op | Chip TOPS | Effective use |
+|---|--:|--:|---|
+| **dp4a.{s32,u32,u32.s32}** (4×INT8 dot) | 5.25 | **54.5** | INT8 inference fallback |
+| dp2a.{lo,hi}.s32 (2×INT16) | 5.25 | 25.4 | INT16 dot |
+| mad.lo.s32 (IMAD) | 3.5 | 18.1 | scalar 32×32+32 |
+| mad.wide.s32 (32×32→64) | 3.5 | 18.1 | free 64-bit accum |
+
+### Comparison for INT8 inference on B300
+
+| Path | TOPS | Notes |
+|---|--:|---|
+| tcgen05.mma kind::i8 | ❌ N/A | Not supported on sm_103a |
+| dp4a SIMD | 54 | Slowest "modern" INT8 path |
+| mma.sync m16n8k32 (FP8 emulated) | 309 | per JUSTIFIED §22 (catalog 276 was 12% LOW) |
+| **tcgen05.mma kind::f8f6f4** | **4651** | **85× faster than dp4a** |
+
+**Critical practical guidance:** for INT8 inference on B300, **convert to FP8 immediately** and use tcgen05.mma. dp4a is 85× slower than tensor-core FP8.
+
+---
+
+## §20. FMIN penalty under FFMA2 pressure (catalog L7773+, 🟡 catalog claim)
+
+Direct A/B test of FFMA2 with interleaved instructions:
+
+| Pattern | cy/iter | Overhead |
+|---|--:|---|
+| Pure FFMA2 (= 2 scalar FFMA / 1 inst) | 5.57 | baseline |
+| FFMA2 + 1 IADD | 6.76 | **+21%** |
+| FFMA2 + 1 scalar FFMA | 7.57 | +36% |
+| FFMA2 + 2 FMIN | 9.45 | +70% (= +35% per FMIN) |
+
+⚠ **Different from §22 dual-issue finding!** §22 settled "FFMA2 + LOP3 1:1 saturates all 3 pipes for net win". This catalog §20 finding says "+1 op of any kind costs 21-36% overhead at 1:1 ratio". Reconciliation: §22's "win" is in TOTAL useful ops (314 vs 187), but the FFMA2 portion DOES drop slightly (from 256 to 252 FLOPS/SM/cy, a 1.5% loss). The ALU work added (LOP3) more than makes up for it. Catalog §20's "+21%" is the FFMA2 *throughput* penalty, not total work.
+
+**Design rule:** for *peak FFMA2 throughput specifically*, minimize pipe_alu instructions. For *peak total useful work*, FFMA2 + ALU at 2:1+ ratio is optimal (per §22).
+
+---
+
+## §21. tcgen05.mma sustained-load throttling cliff (catalog L7797+, 🟡 catalog claim)
+
+| ITERS (continuous MMAs from one warp) | cy/iter | TFLOPS (148 SM) | % peak |
+|---:|--:|--:|--:|
+| 5,000 | 128.05 | 4654 | 100% |
+| 10,000 | 128.02 | 4655 | 100% |
+| 20,000 | 128.01 | 4655 | 100% |
+| **30,000** | **128.01** | **4655** | **100% (cliff edge)** |
+| 50,000 | 305.90 | 1949 | 42% |
+| 75,000 | 364.71 | 1634 | 35% |
+| 100,000 | 394.16 | 1512 | 32% |
+
+**What's NOT happening (probed via nvidia-smi):**
+- Clock stays at 1920 MHz (no clock throttle)
+- Power only 193-197 W (nowhere near 1100 W TDP)
+- Temp 40°C (cool, no thermal throttle)
+- Forced clock-lock at 1920 MHz: no improvement (cliff persists)
+
+**What IS happening:** dispatch bubbles inserted at SM level, NOT clock/power reduction. Mechanism candidates: hardware running-average power tracking inserts wait states ahead of any hard limit; tcgen05 internal queue/scheduler limits sustained issue rate; some sustained-utilization governor.
+
+**Practical implication:** real GEMM kernels interleave MMAs with TMA loads / register reads / etc. — that work creates "idle time" for the tensor pipe and AVOIDS this throttle. The cliff ONLY appears in pure-MMA microbenchmarks. **Published peak TFLOPS in real workloads is achievable.**
+
+---
+
+## §22a. tcgen05 — known catalog DSMEM-related claim FALSIFIED
+
+Catalog L7836-L7860 ("DSMEM Bandwidth & Atomic Costs", task #88) makes 3 claims that are **all WRONG per justifications/13_dsmem_exhaustive.md**:
+
+| Catalog claim | Reality |
+|---|---|
+| "Load (u32) 25 cy local / 23 cy DSMEM = 0× free" | DSMEM read = 204-223 cy = **9× slower** (single-chain). With ILP=32, drops to 9 cy. |
+| "Load (v4) 170 GB/s/SM local / 169 DSMEM = 0%" | DSMEM bandwidth depends heavily on cluster size + ILP + pattern; exhaustive sweep shows 5-43% of local SMEM aggregate. The 169 GB/s/SM was at one specific config. |
+| "Cluster size doesn't matter (2/4/8 all identical)" | Cluster=2 latency 222 cy, c=4/8 at 207, c=16 at 231. Throughput per cluster scales linearly to c=8 (69→139→278), then drops at c=16. |
+
+**DENSE recommendation:** delete catalog §30.H DSMEM rows; use justifications/13_dsmem_exhaustive.md as authoritative.
+
+---
+
+## §22b. TMA multicast on sm_103a (catalog L7864, 🟡 partial)
+
+Catalog claims `cp.async.bulk.multicast::cluster` works on sm_103a despite cccl gating it to SM_90a/100a/110a. Wait latency per CTA after multicast:
+
+| Cluster | Bytes | Wait cy | Effective BW |
+|---:|--:|--:|--|
+| (catalog had a table here — preserved verbatim in catalog L7869+ — replication TODO) | | | |
+
+⚠ Multicast can amplify L2/HBM bandwidth (one DRAM read serves N CTAs in cluster). Catalog claims 14.9 TB/s aggregate multicast (V32 result) but this is L2-resident-source amplification, not DRAM peak. (REVIEW_CHECKLIST G4)
 
 ---
 
