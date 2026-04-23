@@ -94,8 +94,14 @@ The cheat-sheet aggregates results from many sub-tests. It is split into per-row
 
 #### §0.FFMA — "FP32 scalar FFMA: 71.8 TFLOPS = 98.8% of theoretical 72.7 TFLOPS at 1920 MHz"
 - **[CLAIM]:** "Pattern: 8 chains × 1024-FFMA inner unroll × 100-iter outer loop with `#pragma unroll 1`, bs=1024, mb=6. SASS verified 1024 FFMA insts." (L30)
-- **[CANDIDATE TESTS]:** `tests/bench_fp32_fma.cu`, `tests/bench_a1_dual_issue.cu`, `tests/bench_a1_dual_v2.cu`
-- **[STATUS]:** 🔍 — see [justifications/00a_ffma_peak.md](justifications/00a_ffma_peak.md)
+- **[TEST]:** `tests/bench_fp32_fma.cu`
+- **[RUN]:** `./QuickRunCUDA tests/bench_fp32_fma.cu -t 1024 -b 888 -0 12800 -T 30 -H "#define UNROLL 128"`
+- **[MEASURED]:** 71.82 TFLOPS (mean of 30 runs, σ=0.1%) = **100.0% match to catalog**
+- **[NCU]:** `sm__inst_executed_pipe_fma.avg.pct_of_peak_sustained_active` = 99.51%
+- **[SASS]:** `sass/bench_fp32_fma_1552823151.sass`, 1024 FFMA in inner loop ✓ matches catalog
+- **[CLOCK]:** settles at **1942 MHz** (sampled 12×) — NOT 1920, NOT 2032. DVFS-policy floor, not thermal/power (<300 W, well under 1100 W TDP). Using 1920 → 72.7 GFLOPS × 148 = 72.7 TF, 71.82/72.7 = 98.8% (matches catalog formula). Using 2032 → 76.96 TF, 71.82/76.96 = 93.3%.
+- **[VERDICT]:** ✅ **REPLICATED exactly** — see [justifications/00a_ffma_peak.md](justifications/00a_ffma_peak.md)
+- **[NEW FINDING]:** this-rig FFMA-saturated clock floor is **1942 MHz** (DVFS, not 1920 or 2032). Catalog's 72.7 TF denominator used 1920; the real denominator at rig-clock would be ~74.1 TF (148 × 256 × 1.942 GFLOPS/SM = 73.64 TF → 97.5% MFU). Propose: DENSE catalog should cite **71.82 TF = 97.5% of 73.64 TF (148 SM × 256 FLOPS/SM/cy × 1.942 GHz sustained-FFMA DVFS point)**.
 
 #### §0.MEM — Memory hierarchy table (L37)
 - **[CLAIM]:** Smem read 35.6 TB/s (98% theoretical at 1.92 GHz); HBM 7.18 TB/s ncu-verified
