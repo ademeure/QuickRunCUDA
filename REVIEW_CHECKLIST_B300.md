@@ -23,7 +23,15 @@
 
 ---
 
-## RESOLVED SUMMARY (15 items, 2026-04-23)
+## RESOLVED SUMMARY (17 items, 2026-04-23)
+
+| Entry | Catalog claim | Resolution |
+|---|---|---|
+| **§22e** (NEW) | ".reuse cache 94% of FFMA2" | ✅ AUDIT-VERIFIED via direct SASS grep: scalar FFMA 99.9%, FFMA2 82.8-99.2% across 5 configs. Catalog 94% is in-range for FFMA2; conservative for scalar FFMA. |
+| **§22h** (NEW) | "FFMA fully hidden by 522 cy memory load; ~16 FFMA free" | ✅ qualitative CONFIRMED but quantitative DIFFERS — cold DRAM is **882 cy** (not 522), free budget is **~225 FFMAs** (not ~16). Catalog's 522 was partial-cold; updated to "cold 882 / warm 335". |
+| **§30B SASS-mapping** (CORRECTION) | "atom.global.add → REDG NOT ATOMG" | ⚠ OVERSTATED: direct SASS grep across 20K kernels shows ALL THREE opcodes emitted (REDG / ATOMG.E / ATOM.E) depending on context. Throughput numbers still valid; only SASS-name attribution was wrong. See `30B_atomics_FOLLOWUP.md`. |
+
+## RESOLVED SUMMARY (prior 15 items, 2026-04-23)
 
 These items have been replicated, verified, or had their resolution settled. Skim this list to see what's verified vs what's still open.
 

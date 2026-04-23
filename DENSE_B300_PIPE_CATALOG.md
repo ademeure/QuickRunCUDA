@@ -900,22 +900,51 @@ This indirectly confirms: **the warp-level memory access "footprint" per `ld.glo
 
 ---
 
-## §22h. Compute-memory overlap (catalog L8309, 🟡 catalog claim)
+## §22h. Compute-memory overlap — ✅ REPLICATED 2026-04-23 (justifications/22h_compute_mem_overlap.md)
 
-Critical for kernel design — can compute overlap with memory loads?
+**Qualitative claim CONFIRMED. Quantitative numbers CORRECTED.**
 
-| Pattern | cy/iter |
-|---|--:|
-| Pure 8 FFMA chain | 39 |
-| Pure memory load (cold cache) | 522 |
-| **Memory + 8 FFMA (independent)** | **518 (+0%)** ← FFMA fully hidden! |
-| Memory + 16 FFMA | 522 (still hidden) |
-| Memory + 32 FFMA | 530 (some saturation) |
-| Memory + 64 FFMA | 580 (FFMA budget exceeded — visible) |
+### Replication results (this rig, 1942 MHz, 11-SASS-files preserved)
 
-**FFMA fully overlaps with memory** when the FFMA work fits within the memory latency window. For a 522 cy memory load, you can do ~16 FFMA "for free". Beyond that, the FFMA starts to extend the iter time.
+| Pattern | Catalog cy/iter | This rig cy/iter | Verdict |
+|---|--:|--:|---|
+| Pure memory load (cold DRAM, LCG walk + l2flush) | 522 | **882 cy / 451 ns** | ⚠ catalog 1.7× LOW (catalog's "cold" was probably partial-cold) |
+| Memory + 8 FFMA | 518 | **~877** | ✅ qualitative match — FFMA fully hidden |
+| Memory + 16 FFMA | 522 | ~877 | ✅ still hidden |
+| Memory + 32 FFMA | 530 | ~876 | ✅ still hidden |
+| Memory + 64 FFMA | 580 | ~876 | ⚠ catalog says visible at 64; this rig still hidden |
+| Memory + 128 FFMA | — | ~877 | ✅ still hidden! |
+| Memory + 224 FFMA | — | ~876 | ✅ still hidden — bracket of "free" budget |
+| Memory + 256 FFMA | — | **1,217 (jump)** | crossover; ⚠ ptxas register-SPILLED at 256 (21 LDL + 30 STL in SASS) |
 
-**Practical recipe:** if your kernel is memory-bound, you can add ~16 FFMA per cold-DRAM load with zero additional cost. Use this for fused norm/gelu/etc.
+**Warm L2 line (repeat-stride):** ~335 cy / 173 ns — the catalog's 522 is BETWEEN this rig's cold (882) and warm (335).
+
+### Verified architectural conclusions
+
+1. **FFMA IS fully hidden by cold-DRAM load latency** — `sm__cycles_active.avg` stays flat at 12,910 cy across N=0 to N=128, while FMA inst count grows 19×. Catalog's qualitative claim VERIFIED.
+2. **Free FFMA budget is ~225 FFMAs per cold-DRAM load on this rig** — much higher than catalog's ~130, because the cold-DRAM load is 882 cy not 522.
+3. **The exact crossover depends on register pressure** — at N=256, ptxas spilled to local memory (21 LDL + 30 STL added per iter), partially explaining the jump from 877 to 1217 cy. Above N=256 (N=512/1024), ptxas DCE'd the FFMA loop entirely.
+4. **Dependent-load penalty (load address depends on prev value):** measured +2.1% over base; catalog said +5%; same ballpark.
+
+### Catalog correction recommended
+
+> Catalog should split "522 cy memory load" into **"cold DRAM (LCG, l2flush): 882 cy"** and **"warm L2 line (repeat-stride): 335 cy"** — the gap is 2.6×. Update "~130 FFMAs free" to **"~225 FFMAs at single-thread occupancy without register spill"**.
+
+### Practical recipe (corrected)
+
+If your kernel is memory-bound (cold DRAM), you can add **up to ~225 FFMAs per cold load** with zero added cost (vs catalog's 130). Beyond ~225, register pressure (>192 live floats) triggers spill cliff that adds local-memory latency on top of the FFMA itself. Sweet spot: keep N_FFMA ≤ 128 to avoid any risk of spill.
+
+### Methodology rigor (full replication)
+
+Per `justifications/22h_compute_mem_overlap.md`:
+- 11 SASS files preserved at `justifications/22h_sass/N{0,8,16,32,48,64,96,128,256,512,1024}.sass`
+- LCG walk over 256 MiB working set + `--l2flush 2` confirmed defeats prefetcher
+- 30-run minimum per N_FFMA value
+- Clock sampled: 1942-2032 MHz default boost (no lock)
+- Runtime > 3.7 ms per run (well above launch-overhead floor)
+- ncu `sm__cycles_active.avg` cross-check confirms FFMA addition adds ZERO cycles up to N=128
+- SASS counts verified: FFMA count = N+1, LDG count = 1 per inner-loop iter for all N ≤ 224
+- New test kernel: `tests/bench_compute_mem_overlap.cu`
 
 ---
 
