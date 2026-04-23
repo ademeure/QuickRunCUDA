@@ -147,8 +147,8 @@ If you don't trust a number: it's probably already on `REVIEW_CHECKLIST_B300.md`
 | FP8 tcgen05.mma micro | 4,651 | (catalog L6720; 93% of 5 PF spec) | 🟡 not yet rerun |
 | FP8 sparse tcgen05.mma | ~9,300 | 7,440 (74% of spec) | 🟡 catalog claim |
 | NVFP4 K=64 standard | ~10,000 | (cuBLAS 10,800; CUTLASS 8,700 — capped) | 🟡 |
-| **NVFP4 K=96 ULTRA** | **~15,000 spec** | (catalog: 1.5× over K=64; replication TODO) | 🔍 K=96 ULTRA agent failed (token limit) |
-| FP64 (DFMA) | ~1.2 | 0.95 catalog (under-saturated; A5 in checklist) | 🟡 |
+| **NVFP4 K=96 ULTRA** | **~15,000 spec** | ❌ **NOT a real path on cuBLAS 13.4 / CUTLASS** — ✅ RESOLVED via `49_nvfp4.md`: K=96 via idesc bit 31 does NOT add MACs (D[0] identical at K=64 and K=96 with same inputs; if K=96 added MACs you'd get 432 not 288). Catalog "1.5× over K=64" is FALSIFIED on this rig. Per `project_b300_nvfp4_k96_ceiling`: 15 PF spec is unattainable in any public lib. |
+| FP64 (DFMA) | ~1.2 | 1.06 measured (99.95% pipe peak; A5 RESOLVED — gap is clock state, NOT under-saturation) | ✅ |
 | INT32 (IMAD/IMUL) | — | 18.2 TOPS catalog | 🟡 |
 | INT8 dp4a SIMD | — | 54.5 TOPS catalog | 🟡 |
 | MUFU (sin/cos/rsqrt) | — | 4.8 TOPS catalog (ex2 = 8.1) | 🟡 |
@@ -1610,7 +1610,7 @@ Catalog claims `cp.async.bulk.multicast::cluster` works on sm_103a despite cccl 
 
 | Cluster | Bytes | Wait cy | Effective BW |
 |---:|--:|--:|--|
-| (catalog had a table here — preserved verbatim in catalog L7869+ — replication TODO) | | | |
+| (catalog had a table here — preserved verbatim in catalog L7869+ — multicast not in this audit's scope, see G4 in REVIEW_CHECKLIST for "already pipeline-saturated" reframing) | | | |
 
 ⚠ Multicast can amplify L2/HBM bandwidth (one DRAM read serves N CTAs in cluster). Catalog claims 14.9 TB/s aggregate multicast (V32 result) but this is L2-resident-source amplification, not DRAM peak. (REVIEW_CHECKLIST G4)
 
@@ -2076,7 +2076,7 @@ ncu metric implications:
 | FFMA / FMUL / FADD | 4 | 4.2-4.4 | ✅ matches |
 | HFMA2 / LOP3 / SHF | 4 | 4.2-4.4 | ✅ matches |
 | **DFMA** | 92 (L103) / 63.9 (L460) | **63.7** | ⚠ L103 WRONG; L460 RIGHT |
-| IMAD.HI.U32 | 13 | (TBD) | needs follow-up |
+| IMAD.HI.U32 | 13 | preserved as plausible (per J3 review) — not isolated; consistent with extra port traffic for upper-half write-back | 🟡 |
 | MUFU.EX2 (simple) | 14 | 14 | ✅ matches |
 | MUFU.SIN/COS (compound) | 24 | 24 | ✅ matches |
 | MUFU.RSQ/SQRT/LG2 ftz | 18 | 18 | ✅ matches |
@@ -2086,7 +2086,7 @@ ncu metric implications:
 | SHFL | 24 | 24 | ✅ matches |
 | **LDS hit** | 33 | 29 | ⚠ 14% high in catalog |
 | **L1 hit (.ca)** | 43 | 38 | ⚠ 14% high in catalog |
-| L2 | 300 | (TBD verified) | likely matches |
+| L2 | 300 | **301** verified via L1_L2_DRAM_latency.md (rock-solid across multiple WS sizes) | ✅ exact match |
 | **DRAM cold** | 789 (L112) / 3000 (header) | **789** verified | ⚠ "3000 cy" header WRONG (came from unrelated 2-SM topology metric) |
 | **__syncthreads BS=512** | 45 (L74) / 12+2W=44 (L116) | **54** | ⚠ both wrong; correct empirical formula is **`22+2W`** |
 | **fence.sc.gpu** | 274 (L115) / 544 (header) | **281** | ✅ L115 close (281 vs 274); header WRONG |
