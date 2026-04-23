@@ -10,7 +10,7 @@
 |---|---------|------|--------|
 | 1 | DFMA latency = **92 cy** (L103) | **63.9 cy** | E2 — §24, §2.13 |
 | 2 | __syncthreads = **12+2W cy** | **22+2W** (54 at BS=512) | E5 — §24 |
-| 3 | FP64 chip = **475 GFLOPS** (L446) | **~1060 GFLOPS** (88% of 1.20 TF) | §2.13 |
+| 3 | FP64 rate = **0.05 warp-inst/SM/cy** (L446) | **0.06 (99.95% peak)**; chip ≈ 1.06 TF (catalog 0.95 TF is 12% lower); "475 GFLOPS FMA" wording was 475 G FMA-ops/s (= 950 GFLOPS, NOT misstatement) | §2.13 refined |
 | 4 | §4 MUFU rate = **~16 SASS/SM/cy** | **~1.0 SASS/SM/cy** (off by 16-32×) | §17 ncu pipe_xu peak |
 | 5 | Rule 9 atomic hotspot = **5× slower** | **34×** at warp-level (none at CTA-level) | §22r |
 | 6 | Rule 11 FP64 = **300×** slower than FP16 tensor | **~2300×** (1.06 TF / 2465 TF) | §2.13 |
@@ -80,7 +80,8 @@
 | **§2.2** (NEW) | FFMA2 / HFMA2 packed = 2.00 (= 128 packed FMAs/SM/cy) | ✅ CONFIRMED — pipe_fmaheavy=1.96 + pipe_fmalite=1.97 (both saturate together for 1 dispatch). |
 | **§2.3** (NEW) | IMAD = 2.00 fmaheavy = 64 IMAD/SM/cy | ✅ CONFIRMED EXACTLY at 99.94% pipe_fmaheavy. |
 | **§2.7-§2.9** (NEW) | All "rate 2.00 alu" claims (LOP3/PRMT/SHF/ISETP/FMNMX/HMNMX2/VIMNMX3/copysign) | ✅ CONFIRMED PLAUSIBLE — pipe_alu cap=2.00 verified at 97% via §12; all alu-resident "rate 2.00" claims fit within budget. bfind/FLO confirmed at 0.5 xu. |
-| **§2.13** (NEW) | DFMA = 0.05 warp-inst/SM/cy = 475 GFLOPS chip | ⚠ REFINED: real rate is **0.06** (99.95% peak), not 0.05. **Real chip TFLOPS is 1.06** (= 88% of 1.20 theoretical at 2032 MHz boost), NOT 475 GFLOPS. Catalog L446 "475 GFLOPS FMA" is OFF by 2.2× — likely had wrong denominator. |
+| **§2.13** (NEW) | DFMA = 0.05 warp-inst/SM/cy = 475 GFLOPS chip | ⚠ REFINED: real rate is **0.06** (99.95% peak), not 0.05. **Real chip TFLOPS is 1.06** (= 88% of 1.20 theoretical at 2032 MHz boost). Catalog "475 GFLOPS FMA" wording = "475 G FMA-ops/s = 950 GFLOPS" per parenthetical (12% off measured, plausible from clock + rate). |
+| **§25 FP64 propagation** | "475 GFLOPS" in summary table | ⚠ same as §2.13 — wording-confusion not 2.2× error |
 | **§2.6** (NEW) | Other CVTs (HADD2.F32 fmaH 2.00; F2I=0.5 xu; F2IP.U8=2.00 alu surprise; I2FP=2.00 alu) | ✅ all 4 directly testable rows CONFIRMED at 98-99% (HADD2.F32=1.97, F2I=0.50, F2IP.U8=1.97, I2FP=1.98). I2F.S64 "super slow" plausible but too low for ncu sampling. |
 | **§2.6** (NEW) | F2IP.U8 alu fast path is 4× faster than F2I.S8 xu | ✅ ARCHITECTURALLY CONFIRMED — pick `cvt.rni.sat.u8` over `cvt.rni.sat.s8` for 4× CVT throughput when format permits. |
 | **§0 latency table** (NEW) | Headline-card table at top of catalog | ⚠ 11 entries CONFIRMED via §24 + per-section audits; 2 KNOWN WRONG (already in REVIEW_CHECKLIST as E2 + E5: DFMA 92→63.9, syncthreads 12+2W→22+2W); 3 plausible-but-not-re-tested. |

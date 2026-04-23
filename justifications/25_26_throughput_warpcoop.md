@@ -14,7 +14,7 @@
 | FP16/BF16 HFMA2 (non-tensor) | 35k = 35 TF | `02_1_2_3_fp32_int.md` + §27 audit (35.2 TF) | ✅ exact |
 | FP16/BF16 HMMA tensor | **838k = 838 TF** | `22_tensor_mma_sync.md`: FP16 mma.sync = 571 TF | ⚠ catalog 47% higher; possibly tcgen05 vs mma.sync confusion |
 | TF32 HMMA tensor | 420k = 420 TF | `22_tensor_mma_sync.md`: 285.7 TF | ⚠ catalog 47% higher |
-| **FP64 DFMA scalar** | **475 GFLOPS** | `02_13_fp64.md`: **1060 GFLOPS** | ❌ catalog WRONG by 2.2× (already in REVIEW NEW-§2.13) |
+| **FP64 DFMA scalar** | **475 GFLOPS** ("475 G FMA-ops/s = 950 GFLOPS" per L446 parenthetical) | `02_13_fp64.md`: **1060 GFLOPS** | ⚠ catalog 12% off (0.95 TF vs 1.06 TF measured); see §2.13 refined |
 
 ### Memory BW
 
@@ -63,7 +63,7 @@
 ✅ **§25 + §26 mostly confirmed via cross-references.**
 
 ⚠ **OPEN ISSUES already in REVIEW:**
-- §25 FP64 DFMA "475 GFLOPS" propagates L446's wrong number; real ~1060 GFLOPS (§2.13)
+- §25 FP64 DFMA "475 GFLOPS" — was confusing wording; means "475 G FMA-ops/s = 950 GFLOPS"; real 1060 GFLOPS measured = 12% off (acceptable, see §2.13 refined)
 - §25 HMMA "838 TF" higher than my §22 mma.sync (571 TF); likely conflates mma.sync and tcgen05 paths
 
 🟡 **Division ladder** — catalog ratios plausible (matches expected pipe assignments) but not independently re-tested
@@ -74,7 +74,7 @@
 - [x] §25 L1/L2/HBM BW — ✅ matches §00b
 - [x] §25 ex2 8.9 TGOps/s — ✅ matches §17/§23
 - [x] §25 ATOMS.ADD 9.1 TAtoms/s — ✅ at saturation
-- [x] §25 FP64 475 GFLOPS — ❌ WRONG (real ~1060, see §2.13)
+- [x] §25 FP64 475 GFLOPS — ⚠ wording confusing (= 950 GFLOPS chip); real 1060 GFLOPS = 12% off (see §2.13 refined)
 - [ ] §25 HMMA FP16 838 TF — discrepancy with §22 mma.sync (571 TF); needs reconciliation (mma.sync vs tcgen05?)
 - [ ] §25 div.rn 330× slower than FFMA — plausible but not verified
 - [x] §26 vote.ballot 2× faster than vote.all/any/uni — ✅ confirmed via SASS expansion

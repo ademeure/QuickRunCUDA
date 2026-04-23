@@ -264,7 +264,7 @@ If you don't trust a number: it's probably already on `REVIEW_CHECKLIST_B300.md`
 
 - ❌ `__syncthreads` formula: catalog `12+2W` is WRONG, real is `22+2W` (BS=512 → 54 cy not 45)
 - ❌ DFMA latency catalog L103 "92 cy" is WRONG, real **63.9 cy** (L460 was right)
-- ❌ Catalog L446 FP64 chip "475 GFLOPS" is WRONG by 2.2×, real **~1060 GFLOPS** (= 88% of 1.20 TF theoretical)
+- ⚠ Catalog L446 FP64 rate "0.05 warp-inst/SM/cy" → real **0.06** (99.95% peak); chip ~1.06 TF measured vs catalog 0.95 TF (12% gap, plausible — "475 GFLOPS FMA" parses as "475 G FMA-ops/s = 950 GFLOPS" per catalog's parenthetical)
 - ❌ Catalog L504 §4 MUFU "16 SASS/SM/cy" is OFF by 16-32×, real ~1.0/SM/cy (peak pipe_xu)
 - ❌ Cheat-sheet Rule 9 "atomic hotspot 5×" understates real **34×** at warp-level (CTA-level shows no slowdown)
 - ❌ Cheat-sheet Rule 11 "FP64 300× slower than FP16 tensor" understates real **~2300×** (FP64 1.06 TF / FP16 mma.sync 2465 TF)
@@ -651,7 +651,7 @@ Per-warp throughput (single warp on 1 SMSP, ILP=16, all OTHER SMSPs idle):
 
 **DFMA is NOT pipelined** — 4 chains give zero ILP benefit (latency = 63.9 cy/op single-chain or 4-chain). FFMA + ALU co-issue freely during the 64 cy window. ⚠ Catalog L103 "92 cy" is WRONG; L460's 63.9 is correct (E2 RESOLVED in REVIEW_CHECKLIST).
 
-⚠ **Catalog L446 "475 GFLOPS FMA chip-wide" is WRONG by 2.2×** — real is ~1060 GFLOPS. The parenthetical "≈ 950 FLOPS" line was likely a typo for 950 GFLOPS and is approximately correct.
+⚠ **Catalog L446 wording**: "475 GFLOPS FMA chip-wide (≈ 950 FLOPS)" parses as "475 G FMA-ops/s = 950 GFLOPS" per the parenthetical. Catalog 0.95 TF vs my measured **1.06 TF** = 12% gap (plausible: catalog at 1920 MHz vs my 1942 MHz DVFS + slight rate difference 0.05 vs 0.06 warp-inst).
 
 ---
 
