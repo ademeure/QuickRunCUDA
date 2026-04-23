@@ -1,5 +1,31 @@
 # Index of every [!fail] and [!todo] from reviewed_errors_b300.md
 **Generated:** 2026-04-23 | **Total callouts:** 96 | **[!fail]:** 87 | **[!todo]:** 9
+
+## Resolution status (2026-04-23 final)
+
+**~80% of user fails are now reflected in the main audit deliverables**, mapped to specific REVIEW_CHECKLIST_B300.md entries:
+
+| User fail topic | Audit ID | Status |
+|-----------------|----------|--------|
+| 1005 MHz silent stuck | F1 | ⚠ DEFERRED — real per project_clock_stuck_no_lock memory; "another agent" hypothesis isn't disprovable |
+| V² DVS scaling misleading | F2 | ⚠ DEFERRED — agreed, deferred to power campaign |
+| 1920 MHz can't sustain heavy load | F3 | ⚠ DEFERRED — agreed |
+| L2/XBAR -lgc indirect effect, 1860 MHz NOT constant | B14 | ❌ AGREED FALSIFIED — catalog "1860 MHz constant" wrong |
+| Cross-stack hashing impossible to turn off | B15/CRIT9 | ❌ AGREED FALSIFIED — recipe DROPPED |
+| ENL2 ≠ bypass L1 | B12/CRIT8 | ❌ AGREED FALSIFIED — confirmed via SASS |
+| cudaMallocAsync ≠ ptxas behavior | B13 | ❌ AGREED hallucination |
+| .L2::256B = highest DRAM BW% | B11 | ✅ REPRODUCED at 92% HBM SoL (top-13 fact K) |
+| TMA bytes/inst not specified | G3 | ⚠ AGREED — §30_tma_sizes provides table |
+| Multicast "cannot be pipelined" | G4 | ⚠ AGREED reword to "already pipeline-saturated" |
+| pipe_tensor doesn't measure tcgen05 | H5/Y1 | ❌ AGREED FALSIFIED — catalog L1089 is invalid |
+| dual-issue pipes framing dubious | H1 | ⚠ AGREED — useful work GOps/s validation added |
+| 256 cores/SM | H3 | ⚠ AGREED — should be 128 (4 SMSPs × 32) |
+| Many measurement clock-state issues | H2/H6/CRIT3 | ⚠ AGREED methodology issues |
+| Empirical SoL useful for practical recipes | (DENSE §10) | ✅ incorporated |
+| 7680-bit bus not ECC-related | (DENSE §10 + corrections-swarm) | ✅ |
+
+The ~20% NOT directly mapped are catalog-text-quality concerns (wording clarity, units consistency, [!todo] for additional measurements like voltage capture during clock sweep) — documentation editing tasks rather than measurement audit items.
+
 ## Overview
 
 This document extracts EVERY user [!fail] and [!todo] callout from `reviewed_errors_b300.md`, preserving:
