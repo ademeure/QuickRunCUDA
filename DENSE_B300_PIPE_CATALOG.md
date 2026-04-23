@@ -513,11 +513,22 @@ The `cy/TMA` curve looks gradual (48→52→65). But `GB/s/SM` jumps 20→40→7
 
 Engine-bound regardless of L2 vs HBM source (ncu confirms HBM-cold path also at 250 GB/s).
 
-### ⚠ Chip-wide 21.9 TB/s claim is SUSPECT
+### ⚠ Chip-wide 21.9 TB/s claim is L2-HIT not DRAM (catalog wording fails to flag)
 
 Catalog says 21.9 TB/s chip-wide via 4 KiB batched. Naive math: 158 GB/s/SM × 148 SM = 23 TB/s — but **HBM3E spec is ~7 TB/s, so 23 TB/s exceeds DRAM by 3×**.
 
-Replication: chip-scale `bench_tma_throughput.cu` at 132 CTAs × 4 KiB × NT=24 caps at **6.4 TB/s (HBM-bound)**. Catalog's 21.9 TB/s requires L2 hits (small reused dataset). **The catalog wording fails to flag this.** ⚠ Add to footgun list.
+Replication: chip-scale `bench_tma_throughput.cu` at 132 CTAs × 4 KiB × NT=24 caps at **6.4 TB/s (HBM-bound)**. The 21.9 TB/s requires L2 hits (small reused dataset).
+
+### Useful framing — TMA vs LDG, both maxed out
+
+The interesting comparison is **maximally-optimized TMA read vs maximally-optimized 256-bit LDG read**, not "TMA tuned vs LDG default":
+
+| Regime | LDG.E.128 (256-bit, max-tuned) | TMA cp.async.bulk (max-tuned) | Gap |
+|---|--:|--:|--:|
+| **DRAM-cold (WS≥4 GB)** | 7.30-7.37 TB/s ≈ 95-96% of 7672 spec (per §10) | 7.20 TB/s 8-deep pipelined (per catalog §6) | TMA -1.5pp behind LDG; both within HBM ceiling |
+| **L2-hit (WS in 4-128 MB plateau)** | 20.3 TB/s measured (per §10); catalog 22-26 TB/s claim | 21.9 TB/s catalog (claim) — close to 23 TB/s naive max | needs joint replication; gap may be ±2pp |
+
+⚠ Open question (worth a dedicated agent): when TMA and LDG.E.128 are BOTH max-tuned (depth-pipelined / batched / right tile size), what's the gap on this rig? Catalog reports them in different sections with different methodologies, so cross-comparison is unreliable. — see `feedback_tma_vs_ldg_comparison.md`.
 
 ### Bonus finding — silent zero-corruption bug
 
