@@ -2,12 +2,12 @@
 
 ## TLDR — current audit state (2026-04-23)
 
-**Coverage:** 48 catalog sections audited, 0 still pending
-- **38 ✅ replicated/verified** (full ncu + SASS evidence on this rig)
+**Coverage:** 50 catalog sections audited, 0 still pending
+- **40 ✅ replicated/verified** (full ncu + SASS + cudaDeviceProp evidence on this rig)
 - **6 ⚠ partially verified** (some rows confirmed, some preserved)
 - **4 🟡 preserved** (catalog plausible but specific tests not re-run; e.g. tcgen05 throughput, multi-GPU all-reduce, methodology notes, tensor unified)
 
-**The 35+ detailed records under `justifications/` contain:** verbatim catalog claims, exact `./QuickRunCUDA` invocation, raw ncu metrics, SASS dumps with instruction counts, % delta vs catalog, verdict tag.
+**The 51 detailed records under `justifications/` contain:** verbatim catalog claims, exact `./QuickRunCUDA` invocation, raw ncu metrics, SASS dumps with instruction counts, % delta vs catalog, verdict tag.
 
 **Important methodology lessons surfaced this audit:**
 - ncu pipe-utilization measurements need **oversubscribed occupancy** (32+ warps/SM) to actually fill the pipe; single-warp under-saturates by 2-4× (caught in §17 MUFU + §6 uniform + §12 alu)
@@ -18,6 +18,7 @@
 - `MATCH.ANY 20× slower` understates; real **62× slower** at chip saturation (E16 in §16)
 - L2 latency = 301 cy is rock-solid; L1 latency claim is methodology-dependent (catalog 39 cy, my pointer-chase 56.9 cy at 4 KB)
 - Pointer-chase methodology can't reach DRAM latency due to locality (cache stays hot at small visited-set count, even at 65 MB WS)
+- **Catalog confuses three different smem caps** (G7): default 48 KB / opt-in 227 KB / per-SM HW 228 KB — calling all three "200 KB" is wrong
 
 **This audit's self-corrections** (caught and walked back during the audit):
 1. FP64 catalog "off by 2.2×" → actually 12% off (wording confusion not numerical error)
@@ -127,6 +128,8 @@
 | §30.G Memory fence costs | L2883 | ✅ replicated | [30G_fence.md](justifications/30G_fence.md) — cta=8/gl=267/sys=1727 single-GPU; V54's 2806 sys was 2-GPU rig; "+60 cy/write" claim RETRACTED |
 | §30.L ALU latency + throughput | L2750 | ✅ replicated | [30L_30M_alu_cctl.md](justifications/30L_30M_alu_cctl.md) — FFMA/FADD/LOP3=4 cy lat ✓; DFMA=64 cy NOT pipelined ✓; HMMA=20 cy lat ✓; throughput 2.68 cy/op single-warp matches expected at full SoL scaling |
 | §30.M Cache control (CCTL) | L2728 | ✅ replicated | [30L_30M_alu_cctl.md](justifications/30L_30M_alu_cctl.md) — **catalog open question RESOLVED**: CCTL.IVALL = 2-3 cy on idle (essentially FREE); drain-wait dominates fence cost. Per 22l_cctl_ivall_DEEP.md ADDENDUMs 3-16. |
+| §2.12 const mem broadcast (B9) | L47 | ✅ replicated | [02_12b_const_mem_broadcast.md](justifications/02_12b_const_mem_broadcast.md) — 17.99 TB/s effective / 0.562 TB/s actual cache traffic / 31.7× broadcast amplification = catalog 17.8 TB/s within 1.1%. **NEW finding:** LDC.32 dispatches via **ADU pipe**, not LSU (catalog §1 PTX→pipe table missing). |
+| G7 smem capacities (228 KB / 200 KB / 48 KB) | L84 | ✅⚠ replicated + corrected | [G7_smem_capacities.md](justifications/G7_smem_capacities.md) — per-SM HW max 228 KB ✓; opt-in CTA max 227 KB ✓. **❌ "200 KB per CTA without opt-in" FALSIFIED** — real default cap is 48 KB; catalog conflated three caps. Also confirmed: 126.5 MB L2, 7680-bit bus, 148 SMs, 64K regs/SM, 64 warps/SM. |
 | §31 Methodological notes | L4185 | 🟡 descriptive content (no perf claims) | (methodology rules: DCE-resistance, metric aliasing, clock state, etc. — not testable as numbers; cross-references to our methodology lessons in §17/§12 audits about needing oversubscribed occupancy for ncu pipe-utilization) |
 | Tensor TFLOPS — tcgen05.mma | L6686 | 🟡 covered by 00gh + 22g_tcgen05_sass | (tcgen05 SASS opcodes verified; TFLOPS values preserved as plausible — full tcgen05 throughput rig setup deferred) |
 | HBM/L2/L1 measurement | L8558 | ✅ covered by 00b_mem_hierarchy | (cross-reference: SMEM 35.88 TB/s, L2 20.3 TB/s, HBM 7.17-7.25 TB/s all verified) |
