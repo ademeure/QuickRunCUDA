@@ -66,8 +66,8 @@ For the full per-section trail with raw output, SASS, and ncu: see `JUSTIFIED_B3
 | §24 | Latency table (clock64) | ✅⚠ | ~75% accurate ±15%. **Fixes:** DFMA=63.7 (L103's 92 wrong); DRAM=789 (header's 3000 wrong); **__syncthreads = `22+2W` not `12+2W`**; mbarrier RTT=123 (header 54 was arrive-only). NEW FINDING: redux.add/or/and/xor=44 cy is 2.4× slower than min/max=18 cy. | `24_latency_table.md` |
 | §30.B | Atomic latency + contention | ✅⚠ | atom chain = LDS at 45 cy ✓ (K6 was labeling); N=2 anomaly 29× ✓; per-warp 5× claim WRONG (actually 1.09× FASTER); coalesced 0.023 atom/cy/lane (NOT 0.94); scope penalty 2.2× NOT 31×; FP16 atomicAdd 6.3× NOT 45×. | `30B_atomics.md` |
 | §30.G | Memory fence costs (cta/gl/sys) | ✅ | cta=8 ✓ V54; gl=267 ✓ V54; **sys=1727 single-GPU** (V54's 2806 was 2-GPU NVLink rig, +1.62× = one extra coherence round-trip). "+60 cy/write linear" claim RETRACTED — fixed one-time L2-drain. | `30G_fence.md` |
-| §30 TMA | cp.async.bulk size-independence | ✅⚠ | "48 cy floor" is AMORTIZED rate; pure single-issue is ~65 cy. Sharp 8 KiB crossover ✓ (in GB/s metric not cy). Per-SM peak ~240-260 GB/s ✓. **Chip-wide 21.9 TB/s claim requires L2 hits, NOT DRAM** (catalog wording fails to flag). Open: head-to-head TMA vs LDG max-tuned (in flight). | `30_tma_sizes.md` |
-| §13 DSMEM | latency, write throughput, L2 traversal | ✅⚠⚠ | **Catalog "23 cy ≈ free" FALSIFIED**: real read latency 204-223 cy (9× slower). SASS reveals `ld.shared::cluster` → `LD.E` (global LSU path). V53 write 87 GB/s/cluster sustained ✓ confirmed. V21's 560 GB/s is burst not completion. NEW FINDING: DSMEM reads ALSO bypass L2 (correcting V53). Exhaustive sweep in flight. | `13_dsmem.md` |
+| §30 TMA | cp.async.bulk size-independence | ✅⚠ | "48 cy floor" is AMORTIZED rate; pure single-issue is ~65 cy. Sharp 8 KiB crossover ✓ (in GB/s metric not cy). Per-SM peak ~240-260 GB/s ✓. **Chip-wide 21.9 TB/s claim requires L2 hits, NOT DRAM** (catalog wording fails to flag). TMA vs LDG max-tuned ✅ DONE via `30_tma_vs_ldg_max_tuned.md`. | `30_tma_sizes.md` |
+| §13 DSMEM | latency, write throughput, L2 traversal | ✅⚠⚠ | **Catalog "23 cy ≈ free" FALSIFIED**: real read latency 204-223 cy (9× slower). SASS reveals `ld.shared::cluster` → `LD.E` (global LSU path). V53 write 87 GB/s/cluster sustained ✓ confirmed. V21's 560 GB/s is burst not completion. NEW FINDING: DSMEM reads ALSO bypass L2 (correcting V53). Exhaustive sweep ✅ DONE via `13_dsmem_exhaustive.md`. | `13_dsmem.md` |
 | §30 TMA vs LDG max-tuned | head-to-head, L2-hit + DRAM-cold | ✅⚠ | **L2-hit: TMA wins 12%** (20.49 vs 18.25 TB/s). **DRAM-cold: TIED at HBM SoL** (LDG 96.5%, TMA 95.4%). Catalog L2 wire 13.3 TB/s under-counts by 37-54%. NEW FOOTGUN: ncu lts__t_bytes undercounts LDG L2-hit by 2.7× (MSHR dedup) — use l1tex__t_bytes for LDG, lts__t_bytes for TMA. | `30_tma_vs_ldg_max_tuned.md` |
 | §15a DSMEM exhaustive | 9-dim sweep (width × cluster × placement × ILP × R/W × fence × contention) | ✅⚠⚠⚠ | NEW: v4 is 3.5× per-byte efficient vs u32. Cluster=16 WORKS (non-portable opt-in). ILP=32 collapses DSMEM to 9 cy/load (LDS-equivalent). **Topology: 9 GPCs × 16 SMs + 1 partial 4-SM GPC = 148 — catalog "8 GPCs" WRONG**. **Per-GPC silicon variation 20%** (GPC2 189 cy vs GPC1 229 cy). Fence cost fixed ~1500 cy. R+W shared fabric arbiter. Aggregate chip 2.4 TB/s W / 1.9 TB/s R. | `13_dsmem_exhaustive.md` |
 | §22e .reuse cache | 94% of FFMA2 carry .reuse | ✅ | Direct SASS grep: scalar FFMA 99.9% (1023/1024), FFMA2 82.8-99.2% across 5 configs. Catalog 94% in-range. | `22e_reuse_cache.md` |
@@ -128,9 +128,9 @@ These are now in DENSE §22o-§22r and §22e-§22n.
 
 ## Progress numbers
 
-- DENSE_B300_PIPE_CATALOG.md: **~870 lines** (vs 19,742 source, 22:1 prune ratio; covers §0-§16)
-- JUSTIFIED_B300_PIPE_CATALOG.md: **~120 lines index** + 9 full justification records totaling ~2,100 lines
-- REVIEW_CHECKLIST_B300.md: **~150 lines + 124 supplementary entries**, of which **13 [x] resolved** (and 10 specific catalog corrections recommended)
-- 124 suspect claims indexed
-- 9 replication agents completed; 2 in flight
-- Next iteration of /loop will dispatch more on the remaining priority list above
+**Final progress (2026-04-23):**
+- DENSE_B300_PIPE_CATALOG.md: **~2200 lines** (vs 19,742 source, 9:1 prune ratio; covers §0-§30 + design rules 1-20 + supplementary §17-§22r/§28/§30.L/§30.M)
+- JUSTIFIED_B300_PIPE_CATALOG.md: index + **51+ full justification records** under `justifications/`
+- REVIEW_CHECKLIST_B300.md: 80 main items + 116 supplementary; **190/196 = 97% resolved** (74/80 main + 55/55 + 61/61)
+- B300_AUDIT_README.md, _USER_FAILS_INDEX.md, _AUDIT_OF_AUDIT.md — all consistent with mature state
+- 6 remaining open items are all genuinely measurement-blocked (TMEM, tcgen05 multi-format, multi-GPU, DRAM-write clock-dep)
