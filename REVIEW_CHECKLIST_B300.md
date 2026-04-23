@@ -54,6 +54,7 @@
 | **§0 mbarrier.arrive = 8.1 cy** (NEW) | Catalog headline | ❌ Real **~27 cy** for default `mbarrier.arrive.shared.b64`. Catalog 8.1 likely measured `mbarrier.arrive.relaxed.cta` (lighter). Catalog should specify modifier. |
 | **§0 __syncthreads 45/89 cy** (NEW) | At BS=512/1024 | ❌ Real 54/86 cy via formula 22+2W (E5 RESOLVED). Catalog values from wrong 12+2W formula. |
 | **§14** (NEW) | FMNMX3 fusion (Blackwell 3-input FP min/max, 2× min.f32 → 1 SASS) | ✅ CONFIRMED via SASS (128 FMNMX3 emitted) + ncu pipe_alu=1.97 (98.54%). Real architectural feature. 128 logical FP min ops/SM/cy (same multiplier trick as IADD3 for ints). |
+| **§8/§9 mapping** (NEW) | SASS opcode → pipe assignment tables | ✅ FUNDAMENTALLY CORRECT — 40+ rows directly verified across our pipe-rate audits. Catalog mapping reliable. Open: §8 "Peak SASS/SM/cy" column for MUFU=16 cross-conflicts §17 audit (which gives ~1.0). |
 
 ## RESOLVED SUMMARY (prior 15 items, 2026-04-23)
 

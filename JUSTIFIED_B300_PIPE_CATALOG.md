@@ -64,8 +64,7 @@
 | §5 Narrow-format throughput | L513 | 🔍 not yet | [05_narrow.md](justifications/05_narrow.md) |
 | §6 Uniform datapath | L521 | ✅ replicated | [06_uniform.md](justifications/06_uniform.md) — pipe_uniform PEAK = 2.0/SM/cy CONFIRMED (UIADD3 chain hits 1.94 = 97%, ULOP3 1.86 = 93%, both >1.0). Catalog "~1.0" was regime-narrow LDSM measurement |
 | §7 ADU pipe | L536 | ✅ replicated | [07_adu.md](justifications/07_adu.md) — pipe_adu cap = 0.50/SM/cy confirmed (REDUX.SUM 0.50 = 100%, bar.sync 0.36 = 72%) |
-| §8 SASS opcode → pipe classification | L554 | 🔍 not yet | [08_sass_opcode_pipe.md](justifications/08_sass_opcode_pipe.md) |
-| §9 PTX → SASS mapping | L821 | 🔍 not yet | [09_ptx_sass.md](justifications/09_ptx_sass.md) |
+| §8 + §9 SASS↔PTX mapping (consolidated) | L554-898 | ✅ partially via cross-refs | [08_09_sass_ptx_mapping.md](justifications/08_09_sass_ptx_mapping.md) — 40+ rows directly verified across our prior audits; catalog mapping fundamentally correct. Open issue: §8 "Peak SASS/SM/cy" column for MUFU=16 inconsistent with §17 audit. |
 | §11 redux.sync deep | L898 | ✅ replicated | [11_redux.md](justifications/11_redux.md) — min/max=1.89 (catalog 1.92 ✓), add=0.50 ADU (catalog 0.50 ✓), 4× asymmetry confirmed |
 | §12 pipe_alu ceiling | L937 | ✅ replicated | [12_alu_ceiling.md](justifications/12_alu_ceiling.md) — pure LOP3 hits 1.94 (97% of 2.00 cap) at NC=16+MB=4; methodology lesson: need both high ILP and high occupancy |
 | §13 Predication/divergence | L957 | ✅ replicated | [13_predication.md](justifications/13_predication.md) — pipe_fma rate identical (within 1%) across 32/16/1 active lane masks; predication zero-effect confirmed |
