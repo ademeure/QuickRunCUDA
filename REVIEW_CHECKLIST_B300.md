@@ -33,6 +33,7 @@
 | I | release.gpu drain is **SM-WIDE** (drains all co-resident CTAs' loads + stores), can compound to 11,000+ cy at high occupancy | §22l ADDENDUMs |
 | J | cp.async (LDGSTS) **bypasses acquire fence drain** unless commit_group is issued first | §22l ADDENDUM 12 |
 | K | **`.L2::256B` cache hint gives 40% DRAM BW boost** (5.07→7.06 TB/s = 92% HBM SoL) for sparse-but-spatially-local access patterns (4B reads at 256B stride between threads). Compiler emits LDG.E.LTC256B. | `16_L2_256B_modifier.md` |
+| L | **.ca beats .cg by 1.88× (NOT 1.25×)** at L1-fitting workloads — catalog L1571 understates the gap by 3.5×. .ca → 13.13 TB/s L1TEX (catalog ✓ exact); .cg → only 6.97 TB/s (catalog claimed 10.5). | `16_ca_vs_cg_hot.md` |
 
 **Format below:** group by catalog section, single-line yes/no per claim. RESOLVED items have `[x]`; OPEN items have `[ ]` for your review.
 
