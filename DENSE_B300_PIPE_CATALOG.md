@@ -903,7 +903,22 @@ This indirectly confirms: **the warp-level memory access "footprint" per `ld.glo
 
 ---
 
-## §22g. tcgen05 SASS encoding (catalog L8263, 🟡 catalog claim)
+## §22g. tcgen05 SASS encoding — ✅ AUDIT-VERIFIED 2026-04-23 (justifications/22g_tcgen05_sass.md)
+
+All 5 catalog opcodes confirmed in NVFP4 audit's preserved SASS files:
+- `UTCATOMSWS.FIND_AND_SET.ALIGN UP0, UR5, UR5` ✅ verbatim (tcgen05.alloc)
+- `UTCATOMSWS.AND URZ, UR5` ✅ verbatim (tcgen05.relinquish_alloc_permit)
+- `UTCBAR [UR4], URZ` ✅ verbatim (tcgen05.commit.mbarrier::arrive)
+- `UTCOMMA.BLOCK16 gdesc[UR4], gdesc[UR6], tmem[UR39], tmem[UR12], idesc[UR13], tmem[UR10], UP0` ✅ matches structure (tcgen05.mma; block-scaled FP4 variant emits `UTCOMMA.BLOCK16` instead of catalog's exemplar `UTCQMMA`)
+- `UTCOMMA.2CTA.BLOCK16` ✅ confirms `.2CTA` modifier for `cta_group::2`
+
+⚠ Family naming observed: `UTCOMMA` (block-scaled FP4) and `UTCQMMA` (catalog exemplar for f8f6f4 quad-MMA) and `UTCHMMA` (half-precision; not tested directly here). All share the UTC* prefix + UR*/UP0 uniform-pipe operands.
+
+✅ **Uniform datapath claim CONFIRMED**: all observed UTC* use UR* operands and UP0 predicates (no per-lane R* registers). Executes on SM's uniform datapath, one issue per warp.
+
+(Catalog opcode table preserved below.)
+
+---
 
 | PTX | SASS |
 |---|---|
