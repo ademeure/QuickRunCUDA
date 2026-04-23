@@ -92,7 +92,7 @@
 | §30.G Memory fence costs | L2883 | ✅ replicated | [30G_fence.md](justifications/30G_fence.md) — cta=8/gl=267/sys=1727 single-GPU; V54's 2806 sys was 2-GPU rig; "+60 cy/write" claim RETRACTED |
 | §30.L ALU latency + throughput | L2750 | ✅ replicated | [30L_30M_alu_cctl.md](justifications/30L_30M_alu_cctl.md) — FFMA/FADD/LOP3=4 cy lat ✓; DFMA=64 cy NOT pipelined ✓; HMMA=20 cy lat ✓; throughput 2.68 cy/op single-warp matches expected at full SoL scaling |
 | §30.M Cache control (CCTL) | L2728 | ✅ replicated | [30L_30M_alu_cctl.md](justifications/30L_30M_alu_cctl.md) — **catalog open question RESOLVED**: CCTL.IVALL = 2-3 cy on idle (essentially FREE); drain-wait dominates fence cost. Per 22l_cctl_ivall_DEEP.md ADDENDUMs 3-16. |
-| §31 Methodological notes | L4185 | 🔍 not yet | [31_methodology.md](justifications/31_methodology.md) |
+| §31 Methodological notes | L4185 | 🟡 descriptive content (no perf claims) | (methodology rules: DCE-resistance, metric aliasing, clock state, etc. — not testable as numbers; cross-references to our methodology lessons in §17/§12 audits about needing oversubscribed occupancy for ncu pipe-utilization) |
 | Tensor TFLOPS — tcgen05.mma | L6686 | 🔍 not yet | [TC_tcgen05.md](justifications/TC_tcgen05.md) |
 | HBM/L2/L1 measurement | L8558 | 🔍 not yet | [HBM_measurement.md](justifications/HBM_measurement.md) |
 

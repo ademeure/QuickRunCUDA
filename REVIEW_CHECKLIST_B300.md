@@ -1,5 +1,42 @@
 # B300 Catalog — Review Checklist (one-line yes/no per claim)
 
+## TLDR — current audit state (2026-04-23)
+
+**JUSTIFIED status:** **27 ✅ replicated/verified** sections + **5 🟡 partial** + **1 deferred** (multi-GPU). Audit covers essentially the entire foundational early/mid catalog (§0 through §29 + §30.G/L/M/B).
+
+**Top catalog errors to flag for correction (mark these first):**
+
+| # | Catalog | Real | Source |
+|---|---------|------|--------|
+| 1 | DFMA latency = **92 cy** (L103) | **63.9 cy** | E2 — §24, §2.13 |
+| 2 | __syncthreads = **12+2W cy** | **22+2W** (54 at BS=512) | E5 — §24 |
+| 3 | FP64 chip = **475 GFLOPS** (L446) | **~1060 GFLOPS** (88% of 1.20 TF) | §2.13 |
+| 4 | §4 MUFU rate = **~16 SASS/SM/cy** | **~1.0 SASS/SM/cy** (off by 16-32×) | §17 ncu pipe_xu peak |
+| 5 | Rule 9 atomic hotspot = **5× slower** | **34×** at warp-level (none at CTA-level) | §22r |
+| 6 | Rule 11 FP64 = **300×** slower than FP16 tensor | **~2300×** (1.06 TF / 2465 TF) | §2.13 |
+| 7 | mbarrier.arrive = **8.1 cy** (cheat-sheet) | **27 cy** for default `.shared.b64` | §0 cheatsheet audit |
+| 8 | atom.global.cas → **STRONG.GPU** | actual SASS is **STRONG.SYS** | §15 |
+| 9 | "ld.shared bank-conflict-sensitive" | only TRUE for v2/v4 wide; FALSE for 32-bit on B300 | §22j |
+
+**Top NEW architectural facts to ADD (audit-discovered, missing from catalog):**
+
+| # | Fact | Source |
+|---|------|--------|
+| A | `cvt.rni.sat.u8.f32` (F2IP.U8 alu 2.00) is **4× faster** than `cvt.rni.sat.s8.f32` (F2I.S8 xu 0.5) | §2.6 |
+| B | `atomicAdd(addr, 1u)` no-return → **ATOMS.POPC.INC.32** (2.5× speedup at warp-broadcast); only fires for constant=1 | §22 atomic_smem |
+| C | Global REDG (no-return) is **25× faster than ATOMG** (with return) for ADD/MIN/MAX/etc. | §15 + 22 atomic_ops |
+| D | EX2 is uniquely **2× faster than other MUFU** (4 cy vs 8 cy at saturation) | §17 |
+| E | bf16x2 EX2 (`MUFU.EX2.BF16x2`) gives same throughput at **HALF dispatch pressure** | §17 ADDENDUM |
+| F | FMNMX3 fusion (Blackwell 3-input fused FP min/max) — 2× chained min.f32 → 1 SASS, 128 logical mins/SM/cy | §14 |
+| G | u64.ADD demonstrates clean **alu+fmaheavy co-issue** (IADD3 + IMAD.X both saturate together = 64 u64-adds/SM/cy) | §2.4 |
+| H | CCTL.IVALL is **essentially FREE (~3 cy)** on idle pipeline; observed cost is drain-wait for in-flight loads (acquire fence semantics) | §22l ADDENDUMs 3-16 |
+| I | release.gpu drain is **SM-WIDE** (drains all co-resident CTAs' loads + stores), can compound to 11,000+ cy at high occupancy | §22l ADDENDUMs |
+| J | cp.async (LDGSTS) **bypasses acquire fence drain** unless commit_group is issued first | §22l ADDENDUM 12 |
+
+**Format below:** group by catalog section, single-line yes/no per claim. RESOLVED items have `[x]`; OPEN items have `[ ]` for your review.
+
+---
+
 > **What this is:** My OWN skeptical review of `B300_PIPE_CATALOG.md` claims, sectioned for fast yes/no scanning. The user's `reviewed_errors_b300.md` notes were on a DIFFERENT (lower-quality) doc — I use them as INSPIRATION for the kinds of issues to look for here (clock-state assumptions, formula-as-measurement, DCE, denominator mixing, agent-hallucinations of names/mechanisms, etc.), but the claims listed below are the catalog's own.
 >
 > **Instructions for user:** Each row is a single claim I am NOT 100% certain of. Mark with `[x]` for "yes, this is correct", `[ ]` for "no, wrong", and add a `// short note` after the line if you want to leave a comment. The structure is grouped by catalog section so you can stop after any group without losing context.
