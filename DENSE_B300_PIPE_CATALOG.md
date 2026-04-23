@@ -1042,12 +1042,50 @@ Grid sync cost is **~constant at ~4200 cy = 2.2 µs**, regardless of grid size. 
 
 ---
 
-## §22m. Kernel launch overhead (catalog L7650, 🟡 catalog claim)
+## §22m. Kernel launch overhead — ✅ REPLICATED 2026-04-23 (justifications/22m_launch_overhead.md)
 
-Empty kernel launched 100× via CUDA events:
-- **Per-launch time: ~5.7 µs**
+**Catalog's 2.0 µs vs 5.7 µs is NOT contradictory** — they're different timing modes (catalog L8395 already noted this; agent confirmed by reading QuickRunCUDA.cpp:529).
 
-Same as cluster launch (§22d). Combine with cudaGraph for amortization (catalog: 0.56 µs/kernel for cudaGraph batch of 1000).
+| Mode | This rig | Catalog | Verdict |
+|---|--:|--:|---|
+| Pipelined (overall/N, 2-event around N launches) | **2.05 µs** | 2.0 µs (L8917) | ✅ matches (zero variance over T=100k) |
+| Per-iter event (`--timesPerRun`) | **5.20 µs** | 5.7 µs (L7654) | ✅ matches (9% under catalog) |
+
+The 3 µs gap = per-launch event recording overhead in `--timesPerRun` mode.
+
+### Kernel-size table — EXACT replication of L8385
+
+| Inst count | This rig (µs) | Catalog (µs) | Cubin size this rig | Cubin size catalog |
+|---:|--:|--:|--:|--:|
+| 10 | **2.05** | 2.06 | 8.5 KB | 8.7 KB |
+| 100 | **2.05** | 2.06 | 13.3 KB | 13.7 KB |
+| 1000 | **4.10** | 4.11 | 62.7 KB | 63 KB |
+| 4000 | **10.25** | 10.25 | 232.6 KB | 237 KB |
+
+SASS-verified: FFMA inst counts exactly 10/100/1000/4000 in inner loops.
+
+### Cluster launch = single-CTA launch (L8252 CONFIRMED)
+
+| Cluster size | µs/launch |
+|---:|--:|
+| 1 (single-CTA) | 2.05 |
+| 2 | 2.05 |
+| 4 | 2.05 |
+| 8 | 2.05 |
+
+**Flat as a board** across cluster sizes — no cluster setup overhead. Cluster activation verified at runtime via `%cluster_nctaid.x` write-back to C[0].
+
+### NOT verified by this audit
+
+- **1.47 µs `cudaLaunchKernelEx + PSS`** (catalog L8918) — standalone harness shows `cudaLaunchKernel` ≡ `cudaLaunchKernelEx` at 7.18 µs each WHEN syncing per launch. Catalog's 1.47 µs requires batched-pipelined timing which would need a custom harness. **Marked "not refuted, not independently reproduced"** — separate audit task.
+- **0.56 µs/kernel `cudaGraph × 1000`** (catalog L8919) — same: needs cudaGraph harness.
+
+### Methodology rigor preserved
+
+- `justifications/22m_launch_overhead.md` (13.7 KB)
+- `justifications/22m_artifacts/` (11 files: A_empty / B_standalone / C_size_sweep / D_cluster_sweep / D_cluster_verify + per-test stdout)
+- New test kernels: `tests/bench_22m_empty.cu`, `tests/bench_22m_size.cu`, `tests/bench_22m_cluster.cu`
+- Clock sampled twice during T=100k run: 1942 MHz default boost throughout
 
 ---
 

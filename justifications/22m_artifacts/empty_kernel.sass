@@ -1,0 +1,38 @@
+	.target	sm_103a
+
+	.elftype	@"ET_EXEC"
+
+
+//--------------------- .text.kernel              --------------------------
+	.section	.text.kernel,"ax",@progbits
+	.align	128
+        .global         kernel
+        .type           kernel,@function
+        .size           kernel,(.L_x_1 - kernel)
+        .other          kernel,@"STO_CUDA_ENTRY STV_DEFAULT"
+kernel:
+.text.kernel:
+        /*0000*/                   LDC R1, c[0x0][0x37c] ;
+        /*0010*/                   EXIT ;
+.L_x_0:
+        /*0020*/                   BRA `(.L_x_0);
+        /*0030*/                   NOP;
+        /*0040*/                   NOP;
+        /*0050*/                   NOP;
+        /*0060*/                   NOP;
+        /*0070*/                   NOP;
+        /*0080*/                   NOP;
+        /*0090*/                   NOP;
+        /*00a0*/                   NOP;
+        /*00b0*/                   NOP;
+        /*00c0*/                   NOP;
+        /*00d0*/                   NOP;
+        /*00e0*/                   NOP;
+        /*00f0*/                   NOP;
+.L_x_1:
+
+
+//--------------------- SYMBOLS --------------------------
+
+	.type		.nv.reservedSmem.offset0,@object
+	.size		.nv.reservedSmem.offset0,0x4
