@@ -11,9 +11,26 @@
 >
 > **The 🟡 tag is load-bearing.** Earlier iterations of this DENSE doc were less careful about distinguishing these — many §22c-§22r entries were essentially catalog claims preserved verbatim. They're plausible but not yet in the audit-verified set.
 >
-> **What IS audit-verified:** §0 spec card key numbers (148 SMs, 7680-bit, 126 MB L2, 1942 MHz DVFS, etc.), §1 pipe topology, §0 FFMA peak, §10 mem hierarchy, §11 latency table key entries, §12 fence costs, §13 atomics scope/contention basics, §13a TMA sizes, §14 mma.sync FP16/TF32/FP8/INT8, §15 + §15a DSMEM, §22 dual-issue FFMA2+ALU, §22e (.reuse cache verified via FFMA2 SASS dump in audit). All have `justifications/<id>.md` records.
+> **What IS audit-verified** (16 sections, 2026-04-23):
+> - §0 spec card key numbers (148 SMs, 7680-bit, 126 MB L2, 1942 MHz DVFS, etc.)
+> - §1 pipe topology
+> - §0 FFMA peak (00a_ffma_peak.md)
+> - §10 memory hierarchy (00b_mem_hierarchy.md)
+> - §11 latency table key entries (24_latency_table.md)
+> - §12 fence costs (30G_fence.md)
+> - §13 atomics scope/contention basics (30B_atomics.md + 30B_atomics_FOLLOWUP.md correction)
+> - §13a TMA sizes (30_tma_sizes.md)
+> - §14 mma.sync FP16/TF32/FP8/INT8 (22_tensor_mma_sync.md)
+> - §15 + §15a DSMEM (13_dsmem.md + 13_dsmem_exhaustive.md)
+> - §22 dual-issue FFMA2+ALU (22_dual_issue_ffma2_alu.md)
+> - §22e .reuse cache (22e_reuse_cache.md)
+> - §22h compute-memory overlap — **with quantitative corrections** (22h_compute_mem_overlap.md, 11 SASS files preserved)
+> - §30 TMA-vs-LDG max-tuned head-to-head (30_tma_vs_ldg_max_tuned.md)
 >
-> **What is NOT audit-verified yet:** §17 MUFU throughput, §18 branch divergence, §19 INT8 dp4a numbers, §20 FMIN penalty, §21 tcgen05 throttling cliff, §22c CTA capacity formula, §22d cluster launch overhead, §22f L1/L2 stride probe, §22g tcgen05 SASS encoding, §22h compute-mem overlap, §22i per-GPC L2 variation (catalog) [though DSMEM exhaustive corroborates], §22j smem bank conflict sweep, §22k PTX special registers (only `%nsmid`,`%clock64` informally checked), §22l grid sync 2.2 µs, §22m kernel launch 5.7 µs, §22n CTA scheduler placement (DSMEM exhaustive corroborates partially), §22o NVFP4 (agent dispatched), §22p power efficiency, §22q register spilling, §22r atomic contention at scale.
+> All have `justifications/<id>.md` records with full evidence (CLAIM/TEST/BUILD/RUN/STDOUT/SASS/COUNT/NCU/CLOCK/VERDICT/DELTA per the audit-of-the-audit rubric).
+>
+> **What is NOT audit-verified yet** (still 🟡 CATALOG-PRESERVED):
+> §17 MUFU throughput, §18 branch divergence, §19 INT8 dp4a numbers, §20 FMIN penalty, §21 tcgen05 throttling cliff, §22c CTA capacity formula, §22d cluster launch overhead, §22f L1/L2 stride probe, §22g tcgen05 SASS encoding (UTC* opcodes confirmed in SASS but exact-cycle claims not retested), §22i per-GPC L2 variation (DSMEM exhaustive partially corroborates), §22j smem bank conflict sweep, §22k PTX special registers (only `%nsmid`/`%clock64` informally checked), §22l grid sync 2.2 µs, §22m kernel launch 5.7 µs, §22n CTA scheduler placement (DSMEM exhaustive partially corroborates), §22o NVFP4 (agent IN FLIGHT — preliminary evidence supports catalog), §22p power efficiency, §22q register spilling, §22r atomic contention at scale.
 >
 > **Status:** Iteration in progress. This is a pruned, dense version of `B300_PIPE_CATALOG.md` that removes content known to be wrong, outdated, or low-value. Every numerical claim that survives has either a JUSTIFIED entry or a REVIEW_CHECKLIST flag.
 >
@@ -318,8 +335,8 @@ Most ML inference ops are below OI = 1 → memory-bound → fusion is king.
 | pipe_alu | **2.00 confirmed** | ✅ Pure LOP3 (xor.b32) saturates at 96.97% pipe_alu | LOP3, PRMT, F2FP, SHF, FMNMX, ISETP, FSETP, I2FP |
 | pipe_fmaheavy | **2.00** | (component view; see footgun below) | IMAD, IMAD.X, IMAD.WIDE, IDP.4A/2A, HADD2.F32 |
 | pipe_fmalite | **2.00** | (component view) | "lite" half of FFMA path |
-| pipe_xu compound | **0.50 confirmed** | ✅ MUFU.SIN saturates at exactly 49.79% of pipe_xu | MUFU.SIN/COS (need range-reduction) |
-| pipe_xu simple | **1.00 confirmed** | ✅ MUFU.EX2 saturates at 98.46% of pipe_xu | MUFU.EX2/RSQ/SQRT/RCP/LG2/TANH, POPC, BREV, FLO/CLZ |
+| pipe_xu compound | **~0.50 confirmed** | ✅ MUFU.SIN saturates at 49.79% of pipe_xu (≈ half rate) | MUFU.SIN/COS (need range-reduction) |
+| pipe_xu simple | **~1.00 confirmed** | ✅ MUFU.EX2 saturates at 98.46% of pipe_xu (near full rate) | MUFU.EX2/RSQ/SQRT/RCP/LG2/TANH, POPC, BREV, FLO/CLZ |
 | pipe_lsu | 1.00 | (catalog claim, not yet rerun) | LDG, STG, LDS, STS, LDSM, SHFL.SYNC |
 | pipe_adu | ~0.5 | (catalog claim) | BAR.SYNC, MATCH.ANY |
 | pipe_uniform | ~1.0 | (catalog claim) | S2UR, LDSM.sync, ACTIVEMASK, UFFMA family |
@@ -726,9 +743,11 @@ The "11 TB/s at 256 MB" was probably L2 partial-hit amortization at the boundary
 
 ---
 
-## §19. INT8 compute path (catalog L7744+, 🟡 catalog claim with VERIFIED tcgen05 INT8 absence)
+## §19. INT8 compute path (catalog L7744+, 🟡 CATALOG-PRESERVED)
 
-⚠ `tcgen05.mma kind::i8` is NOT supported on sm_103a (verified by tcgen05 catalog content; cccl gates kind::i8 on sm_100a/100f/110a/110f only). B300 INT8 must use dp4a SIMD or convert to FP8.
+⚠ `tcgen05.mma kind::i8` claimed NOT supported on sm_103a per catalog L6816 (cccl headers gate kind::i8 on sm_100a/100f/110a/110f only). **NOT independently verified by this audit** — would require trying to compile `kind::i8` PTX on this rig and observing ptxas reject. The NVFP4 agent's evidence file `49_nvfp4_ptxas_errors.txt` shows ptxas DOES reject several other `kind::*` variants on sm_103a, lending plausibility to the claim, but the exact `kind::i8` form was not in that test.
+
+If verified, INT8 inference on B300 must use dp4a SIMD or convert to FP8.
 
 | Op | cy/op | Chip TOPS | Effective use |
 |---|--:|--:|---|
