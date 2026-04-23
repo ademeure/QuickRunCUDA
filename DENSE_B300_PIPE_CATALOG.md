@@ -834,9 +834,14 @@ Cluster launch is **identical cost to single-CTA launch** (~5.7 µs). No additio
 
 ---
 
-## §22e. SASS `.reuse` operand cache (catalog L8142, 🟡 catalog claim)
+## §22e. SASS `.reuse` operand cache (✅ AUDIT-VERIFIED 2026-04-23 — justifications/22e_reuse_cache.md)
 
-In real benchmark FFMA2 SASS, **480 of 512 instructions (94%) carry `.reuse` annotation** on at least one operand:
+Direct count from this audit's preserved SASS files:
+- **Scalar FFMA in §0.FFMA peak: 1023 of 1024 (99.9%)** carry `.reuse` (catalog's 94% claim is conservative)
+- FFMA2 in §22 dual-issue audit: **82.8% to 99.2%** across 5 kernel configs (catalog 94% is mid-range)
+
+Catalog claim text:
+> "480 of 512 FFMA2 instructions (94%) carry `.reuse` annotation"
 
 ```
 FFMA2 R22, R22.F32x2.HI_LO, R4.reuse.F32, 0.5 ;
