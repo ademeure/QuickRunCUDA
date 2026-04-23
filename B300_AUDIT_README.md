@@ -30,7 +30,7 @@
 
 **🟡 preserved**: tcgen05.mma throughput (alloc/mbarrier setup deferred), multi-GPU all-reduce (GPU 0 only this session), methodology notes, tensor unified.
 
-**9 catalog ERRORS** flagged in REVIEW_CHECKLIST top-9:
+**10 catalog ERRORS** flagged in REVIEW_CHECKLIST top-10:
 - DFMA latency: 92 → real **63.9 cy**
 - syncthreads formula: 12+2W → real **22+2W** (= 54 cy at BS=512, NOT 45)
 - FP64 chip: "475 GFLOPS" wording = "475 G FMA-ops/s = 950 GFLOPS"; real 1060 GFLOPS (12% off)
@@ -40,6 +40,7 @@
 - mbarrier.arrive 8.1 cy → real **27 cy** for default `.shared.b64` modifier
 - atom.global.cas SASS: "STRONG.GPU" → actual **STRONG.SYS**
 - ld.shared bank-conflict scoping (TRUE for v2/v4 AND 32-bit, methodology error in our prior claim)
+- smem "200 KB per CTA without opt-in" → real default is **48 KB**; opt-in MAX is 227 KB; per-SM hardware max is 228 KB
 
 **13 NEW architectural facts** missing from catalog (top-13 in REVIEW_CHECKLIST TLDR):
 - F2IP.U8 fast path (4× faster than F2I.S8)

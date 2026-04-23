@@ -14,7 +14,7 @@ This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED
 - **6 ⚠ partial** (replicated but with a regime caveat or methodology note)
 - **4 🟡 preserved** (catalog plausible, not re-run — tcgen05.mma, multi-GPU, methodology, tensor unified)
 
-**Top 9 catalog ERRORS** (numbers and recommended fix):
+**Top 10 catalog ERRORS** (numbers and recommended fix):
 1. DFMA latency: catalog 92 → real **63.9 cy**
 2. __syncthreads formula: `12+2W` → **`22+2W`** (54 cy at BS=512, NOT 45)
 3. FP64 chip "475 GFLOPS" wording = "475 G FMA-ops/s = 950 GFLOPS"; real **1060 GFLOPS** (12% off, NOT 2.2× as initially claimed)
@@ -24,6 +24,7 @@ This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED
 7. mbarrier.arrive 8.1 cy → real **27 cy** for default `.shared.b64`
 8. atom.global.cas SASS "STRONG.GPU" → actual **STRONG.SYS**
 9. ld.shared bank-conflict scoping: real at 9.6× for 32-bit LDS (catalog claim that B300 is bank-conflict-free FALSIFIED — methodology error in our prior dismissal too)
+10. smem "200 KB per CTA without opt-in" (L84) → real default is **48 KB**; opt-in MAX is 227 KB; per-SM HW max 228 KB ✓ confirmed (catalog conflated three different caps)
 
 **Top 12 NEW architectural facts** missing from catalog:
 - F2IP.U8 fast path (4× faster than F2I.S8)

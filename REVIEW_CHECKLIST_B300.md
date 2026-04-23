@@ -17,6 +17,7 @@
 | 7 | mbarrier.arrive = **8.1 cy** (cheat-sheet) | **27 cy** for default `.shared.b64` | §0 cheatsheet audit |
 | 8 | atom.global.cas → **STRONG.GPU** | actual SASS is **STRONG.SYS** | §15 |
 | 9 | "ld.shared bank-conflict-sensitive" | ✅ TRUE for ALL load widths (32-bit too); my prior "FALSE for 32-bit" claim was a methodology error (tested broadcast not conflict) | §22j ADDENDUM |
+| 10 | smem **"200 KB per CTA without opt-in"** (L84) | ❌ Real default is **48 KB** (`sharedMemPerBlock`); opt-in MAX is 227 KB (`sharedMemPerBlockOptin`); per-SM hardware max is 228 KB (`sharedMemPerMultiprocessor`). Catalog conflated three different caps. | G7 — `justifications/G7_smem_capacities.md` |
 
 **Top NEW architectural facts to ADD (audit-discovered, missing from catalog):**
 
@@ -244,7 +245,7 @@ These are the [ ] items the user is most likely to have a strong opinion on. Ope
 - [ ] **G4** "Multicast cannot be pipelined" claim — user: "this doesn't mean it cannot be pipelined - just that we are hitting maximum throughput with the amount of latency tolerance we already have" — `[ref: reviewed_errors L1029]` — `[regime-narrow]`
 - [ ] **G5** "fence.proxy.async.shared::cta lowers to MEMBAR.ALL.CTA + FENCE.VIEW.ASYNC.S" — needs SASS verification — `[ref: B300_PIPE_CATALOG.md:81]` — `[unverified]`
 - [ ] **G6** "mbarrier RTT = 54 cy single-thread count=1" — needs replication — `[ref: B300_PIPE_CATALOG.md:73]` — `[unverified]`
-- [ ] **G7** "228 KB hardware max smem per-SM, 200 KB per CTA without opt-in" — likely from cudaDeviceProp; verify on this machine — `[ref: B300_PIPE_CATALOG.md:84]` — `[unverified]`
+- [x] **G7** "228 KB hardware max smem per-SM" — ✅ CONFIRMED EXACTLY via cudaDeviceProp (sharedMemPerMultiprocessor = 233472 B). **"200 KB per CTA without opt-in" is FALSIFIED** — real default cap is 48 KB; opt-in MAX is 227 KB. See `justifications/G7_smem_capacities.md`. Also confirmed: 126 MB L2, 7680-bit bus, 148 SMs, 64K regs/SM, 64 warps/SM. — `[ref: B300_PIPE_CATALOG.md:84]`
 
 ## Group H — Methodology assumptions baked into many measurements
 
