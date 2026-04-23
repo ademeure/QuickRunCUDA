@@ -24,7 +24,9 @@
 
 ## What's been done (TL;DR — UPDATED 2026-04-23 mature state)
 
-**JUSTIFIED status:** **38 ✅ verified + 6 ⚠ partial + 4 🟡 preserved** = 48 sections covered (essentially the entire foundational early/mid catalog: §0-§30).
+**JUSTIFIED status:** **40 ✅ verified + 6 ⚠ partial + 4 🟡 preserved** = 50 sections covered (essentially the entire foundational early/mid catalog: §0-§30). 51+ detailed records under `justifications/`.
+
+**Combined REVIEW_CHECKLIST closure: 190/196 = 97%** (main 74/80 + supplementary _10_30 55/55 DONE + supplementary _31_END 61/61 DONE). The 6 remaining open items are all genuinely measurement-blocked.
 
 **The ✅ verified sections** include: cheat-sheet, latency table, FFMA peak, memory hierarchy, pipe topology, all of §2.1-§2.13 instruction catalog, contention rules, rate cheatsheet, narrow-format throughput, uniform datapath, ADU pipe, SASS↔PTX mapping, redux.sync, pipe_alu ceiling, predication, extended ops, atomics, MUFU, dual-issue, .reuse, compute-mem-overlap, N=2 atomic hotspot, MUFU sweep, latency reference, final throughput, warp coop, BF16, compiler-emission gaps, warp-reduce, fence/ALU/CCTL.
 
