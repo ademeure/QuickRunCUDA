@@ -43,8 +43,9 @@
 | §0 Cheat-sheet | L18 | 🔍 in-progress | [00_cheatsheet.md](justifications/00_cheatsheet.md) |
 | §0 FFMA peak (71.8 / 72.3 TFLOPS @ 1.92 GHz) | L30 | 🔍 in-progress | [00a_ffma_peak.md](justifications/00a_ffma_peak.md) |
 | §0 Memory hierarchy ladder | L37 | 🔍 in-progress | [00b_mem_hierarchy.md](justifications/00b_mem_hierarchy.md) |
-| §0 TMA cheatsheet | L54 | 🔍 not yet | [00c_tma.md](justifications/00c_tma.md) |
-| §0 mbarrier/sync table | L65 | 🔍 not yet | [00d_mbarrier.md](justifications/00d_mbarrier.md) |
+| §0 TMA cheatsheet + mbarrier + design rules + tensor unified | L54-153 | ⚠ partially verified | [00cdf_cheatsheet_design_rules.md](justifications/00cdf_cheatsheet_design_rules.md) — KEY FINDINGS: mbarrier.arrive 8.1→real 27 cy (3.4× off, modifier mismatch); Rule 9 atomic 5×→real 34× (warp-level only); Rule 11 FP64 300× slower→real ~2300×; __syncthreads 45→real 54 cy. TMA peaks confirmed. |
+| §0 TMA cheatsheet | L54 | (covered by 00cdf) | (consolidated into 00cdf_cheatsheet_design_rules.md) |
+| §0 mbarrier/sync table | L65 | (covered by 00cdf) | (consolidated into 00cdf_cheatsheet_design_rules.md) |
 | §0 Quick reference: latency/throughput | L97 | ⚠ partially verified | [00e_latency_table.md](justifications/00e_latency_table.md) — 11 confirmed (FFMA=4, MUFU.sin=24 exact, fences); 2 KNOWN WRONG (DFMA 92 should be 63.9; syncthreads 12+2W should be 22+2W); 3 plausible-not-re-tested |
 | §0 Tensor unified 128 cy/MMA | L120 | 🔍 not yet | [00f_tensor_unified.md](justifications/00f_tensor_unified.md) |
 | §0 tcgen05.mma shape scaling | L132 | 🔍 not yet | [00g_tcgen05_shape.md](justifications/00g_tcgen05_shape.md) |

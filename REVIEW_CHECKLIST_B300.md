@@ -49,6 +49,10 @@
 | **§0 latency table** (NEW) | Headline-card table at top of catalog | ⚠ 11 entries CONFIRMED via §24 + per-section audits; 2 KNOWN WRONG (already in REVIEW_CHECKLIST as E2 + E5: DFMA 92→63.9, syncthreads 12+2W→22+2W); 3 plausible-but-not-re-tested. |
 | **§2.12** (NEW) | "ld.shared bank-conflict-sensitive" | ⚠ NEEDS SCOPING: TRUE for v2/v4 wide LDS (1.58-1.68× penalty), FALSE for 32-bit LDS on B300 (random=stride for any pattern hits ~6.88 cy). |
 | **§2.12** (NEW) | atom.* "not measured" placeholder | ✅ NOW MEASURED via §15 + 22_atomic_ops_DEEP.md + 22_atomic_smem_DEEP.md — comprehensive matrix of 10 ops × 2 return modes × 3 contention. |
+| **§0 cheat-sheet Rule 9** (NEW) | "Per-warp atomic hotspot 5× SLOWER than single-address chip-wide" | ⚠ ALREADY in REVIEW (§22r): real factor at warp-level N=2 is **34×** (not 5×); CTA-level shows NO slowdown. Catalog rule misses warp-vs-CTA distinction. |
+| **§0 cheat-sheet Rule 11** (NEW) | "FP64 is 300× slower than FP16 tensor" | ❌ Real ratio is **~2300×** (FP64=1.06 TF vs FP16 mma.sync ~2465 TF). Catalog 300× understates by 8×. |
+| **§0 mbarrier.arrive = 8.1 cy** (NEW) | Catalog headline | ❌ Real **~27 cy** for default `mbarrier.arrive.shared.b64`. Catalog 8.1 likely measured `mbarrier.arrive.relaxed.cta` (lighter). Catalog should specify modifier. |
+| **§0 __syncthreads 45/89 cy** (NEW) | At BS=512/1024 | ❌ Real 54/86 cy via formula 22+2W (E5 RESOLVED). Catalog values from wrong 12+2W formula. |
 
 ## RESOLVED SUMMARY (prior 15 items, 2026-04-23)
 
