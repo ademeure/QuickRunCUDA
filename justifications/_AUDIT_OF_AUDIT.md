@@ -79,3 +79,31 @@ These ARE NOT covered by this audit-of-audit. They need their own replications b
 3. §22p power efficiency — needs NVML + GEMM + multiple precisions
 4. §22f L1/L2 stride probe (sharp 64B break) — easy to test
 5. §22m kernel launch overhead — easy to test
+
+---
+
+## UPDATE 2026-04-23 (final session state)
+
+The above audit-of-audit was an early-session snapshot of 13 justification files. **Since then the audit has grown to 51+ records.** Status of the 5 originally-recommended candidates:
+
+1. **§22h compute-mem overlap** ✅ DONE (justifications/22h_compute_mem_overlap.md): catalog 522 cy → real **882 cy** cold DRAM, free budget ≈ **225 FFMAs** (not 16).
+2. **§22o NVFP4** ✅ DONE (justifications/49_nvfp4.md, 364 lines + 14 evidence files): 9.26 PF at 1942 MHz; K=96 ULTRA bit 31 doesn't add MACs; 2 catalog corrections surfaced.
+3. **§22p power efficiency** 🟡 still preserved — deferred to F-group power campaign per main checklist.
+4. **§22f L1/L2 stride probe** ❌ FABRICATED (justifications/22f_stride_probe.md): catalog table doesn't reproduce; sharp 64B break NOT observed.
+5. **§22m kernel launch overhead** ✅ DONE (justifications/22m_launch_overhead.md): 2.05 µs pipelined / 5.20 µs per-iter event mode; both regimes reconciled.
+
+**Plus the rest of the originally-deferred 🟡 set:**
+- §17 MUFU ✅ — EX2 unique 2× advantage missed by catalog
+- §22e .reuse cache ✅
+- §22g tcgen05 SASS ✅ — UTCQMMA/UTCOMMA opcodes confirmed
+- §22i per-GPC L2 latency variation ✅ — 25% spread (GPC2 115 cy vs GPC3 143)
+- §22j smem bank conflicts ✅ — major correction: real at 9.6× for 32-bit LDS, my prior dismissal was a methodology error
+- §22k PTX special regs ✅
+- §22l grid sync + CCTL.IVALL ✅ — 12 ADDENDUM ninja deep-dive resolved catalog's "unknown cost" → 2.83 cy idle
+- §22n CTA scheduler placement ✅
+- §22q register spilling ✅ — cliff at 32 vars, 9× perf drop
+- §22r atomic contention at scale ✅ — N=2 anomaly real at 34× warp-level
+
+The 🟡 set has shrunk from 22 sections to ~4 (multi-GPU + tcgen05.mma direct + tensor unified + methodology notes).
+
+**Final AUDIT-OF-AUDIT verdict:** all 51+ justification records collectively form a STRONG firewall against catalog error propagation. The DENSE doc + REVIEW_CHECKLIST + STATUS_OF_REPLICATION are SAFE to cite. The 6 remaining open checklist items are all genuinely measurement-blocked (TMEM/tcgen05/multi-GPU/DRAM-write-clock-dep) — outside this audit's scope.
