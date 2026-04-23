@@ -747,29 +747,34 @@ The "11 TB/s at 256 MB" was probably L2 partial-hit amortization at the boundary
 
 ## §17. MUFU transcendental throughput — ✅ AUDIT-VERIFIED 2026-04-23 ([17_mufu.md](justifications/17_mufu.md))
 
-Per-warp throughput, 16 independent chains (saturating ILP), `-lgc 1800`:
+**Architectural rate (ncu-verified at oversubscribed full occupancy, pipe_xu pct_of_peak_sustained_active):**
 
-| Op | cy/op @ N=16 | cy/op @ N=8 | Latency (N=1) | Notes |
-|---|--:|--:|--:|---|
-| **ex2.approx.f32** | **4.28** | 4.57 | 18 | ~**2× faster** than other MUFU ops |
-| tanh.approx.f32 | 8.07 | — | — | NATIVE on B300 (no manual synthesis needed) |
-| sin.approx.f32 | 8.56 | 8.74 | 24 | (no measurable conditioning vs cos) |
-| cos.approx.f32 | 8.56 | — | — | |
-| sqrt.approx.f32 | 8.74 | — | — | |
-| rsqrt.approx.f32 | 8.74 | — | — | |
-| lg2.approx.f32 | 8.74 | — | — | |
-| **rcp.approx.f32** | **9.09** | 9.75 | 44 | slowest |
+| Op | inst/SM/cy (ncu) | % of pipe_xu peak | cy/op/warp (ideal) | Single-warp measured¹ |
+|---|--:|--:|--:|--:|
+| **ex2.approx.f32** | **0.99** | **100%** | **4.0** | 4.28 (94%) |
+| tanh.approx.f32 | 0.50 | 50% | 8.0 | 8.07 |
+| sin.approx.f32 | 0.50 | 50% | 8.0 | 8.56 |
+| cos.approx.f32 | 0.50 | 50% | 8.0 | 8.56 |
+| sqrt/rsqrt/lg2 | 0.50 | 50% | 8.0 | 8.74 |
+| **rcp.approx.f32** | **0.47** | **47%** | **8.5** | 9.09 |
+| **ex2.approx.ftz.bf16x2** | **0.50** | **50%** | 8.0 inst (= **4.0 cy/op** since 2 ops/inst) | bf16x2 packs 2 EX2 results per instruction; SAME ops throughput as f32 EX2 at HALF dispatch pressure (only EX2 has bf16x2 variant) |
 
-⚠ **PRIOR DENSE table (10.5/13.9/15.5 cy) was at lower ILP** (~N=2 chains); saturated values are ~2× faster. SASS confirmed (MUFU.EX2/RSQ/RCP/SIN/COS/LG2/TANH).
+¹ Single-warp/SMSP measurement underrepresents because 1 warp can't perfectly fill the per-SMSP MUFU sub-pipeline.
 
-⚠ **Catalog L383 (§2.10) labels rate as "ops/SMSP/cy"** — likely unit confusion (rate is per-SM, not per-SMSP — pipe is shared across 4 SMSPs). And catalog hides EX2's 2× advantage by labeling all ops as "0.5". See REVIEW_CHECKLIST E3a.
+**EX2 is exactly 2× faster than other MUFU ops** — and runs at the FULL pipe_xu cap. SIN/COS/TANH/SQRT/RSQ/LG2 take 2 cycles per dispatch (compound). RCP is slightly more (2.13 cy compound).
 
-**Practical guidance** (still valid):
+**Latency** (low-ILP, N_CHAINS=1): RCP=44 cy, SIN=24 cy, EX2=18 cy. Need ILP ≥ ~5 (EX2) or ~10 (SIN) per warp to saturate.
+
+⚠ **Catalog §4 L504 "MUFU = ~16 SASS/SM/cy" is WRONG by 16×.** True architectural rate is 1.0/SM/cy for EX2, 0.5 for others. See REVIEW_CHECKLIST E3a + new entry below.
+
+⚠ **Catalog §2.10 L383 "0.5 ops/SMSP/cy uniform"** — wrong unit AND misses EX2's 2× advantage. True is per-SM, and EX2 is uniquely fast.
+
+**Practical guidance:**
 - Softmax: prefer `ex2` over `exp` (which is `ex2 × ln(2)`)
 - Normalization: use `rsqrt × x` instead of `sqrt → rcp`
-- Activations: `tanh.approx` is now **8 cy native** (cheaper than manual `(ex2(2x)-1)/(ex2(2x)+1)` ~22 cy synthesis)
+- Activations: `tanh.approx` is **8 cy native** (cheaper than manual `(ex2(2x)-1)/(ex2(2x)+1)` ~22 cy synthesis)
 - For division: `__fdividef(a, b)` (= `div.approx`, 5.5 cy) is **3× FASTER than rcp(b) × a**
-- Need ILP ≥ 8 chains to saturate (else latency-bound: RCP=44 cy at N=1)
+- **For single-warp peak**: need ILP ≥ 8 chains; for chip-wide saturation need full 4 warps/SMSP occupancy (not 1)
 
 ---
 
