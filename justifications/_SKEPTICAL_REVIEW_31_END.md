@@ -76,35 +76,35 @@ This audit covers B300_PIPE_CATALOG.md lines 4185–19742 (33 major sections). *
 
 - [x] **S5** "membar.sys 2914 vs L3635 8869" — ⚠ RECONCILED via §30G: 2914 is the 2-GPU NVLink-rig number; 8869 is chip-busy W=16 single-GPU. THIS RIG measured 1727 cy at single-warp/single-GPU. Three different regimes, three different valid numbers. Catalog should tag each. — `[ref: B300_PIPE_CATALOG.md:L2922]`
 
-- [ ] **S6** "fence.sc.cta is TRULY local: cost depends ONLY on pending writes in the local CTA, no fabric coord tax whatsoever" — value: "TRULY local, no tax" — `[B300_PIPE_CATALOG.md:L3079]` — Reason: Measured at 1 SM. Multi-SM scenario could show different behavior (shared hardware paths, power-state changes). "Whatsoever" is an absolute claim not validated at scale. — Why suspect: Small-scale measurement used for absolute claim.
+- [x] **S6** "fence.sc.cta TRULY local, no fabric tax whatsoever" — ⚠ AGREED overstated. Per §30G: cta=8 cy single-warp; chip-busy could differ. The "whatsoever" is too strong. Catalog should reword: "cost dominated by local CTA writes; cross-SM contention not measured". — `[ref: B300_PIPE_CATALOG.md:L3079]`
 
 ---
 
 ## Group T — Atomic operations (L7121, L7885)
 
-- [ ] **T1** "Scope qualifier is FREE for global atomics: .cta/.gpu/.sys all 51 cy when contending on L2-hit data" — value: "FREE" — `[B300_PIPE_CATALOG.md:L7131]` — Reason: L2-hit scenario is NOT representative. Distributed shared memory (DSMEM) scoped atomics could have different HW paths. "FREE" overgeneralizes from one scenario. — Why suspect: "FREE" is too strong for one scenario.
+- [x] **T1** "Scope qualifier FREE for global atomics — .cta/.gpu/.sys all 51 cy at L2-hit" — ❌ FALSIFIED via §30B (justifications/30B_atomics.md): scope penalty IS real, measured 2.0-2.2× delta apples-to-apples (top-9 error #5b). The "31× scope penalty" was wrong but so is "FREE". Real number is 2.0-2.2×. — `[ref: B300_PIPE_CATALOG.md:L7131]`
 
-- [ ] **T2** "Atomic memory ordering: .relaxed add = 51 cy, .acq_rel.gpu add = 1598 cy (31.3× penalty)" — value: "31.3×" — `[B300_PIPE_CATALOG.md:L7140]` — Reason: Measured on single address (contention). Per-lane / coalesced atomics could have different ordering costs. Test pattern not specified. — Why suspect: Single contention pattern; coalescing behavior not tested.
+- [x] **T2** "atom relaxed 51 cy vs acq_rel.gpu 1598 cy = 31.3× penalty" — ❌ FALSIFIED via §30B (top-9 error #9): real penalty is **2.0-2.2× apples-to-apples** (NOT 31×). The 31× was a methodology artifact comparing different patterns. Already in TLDR. — `[ref: B300_PIPE_CATALOG.md:L7140]`
 
-- [ ] **T3** "atom.min is slightly faster than atom.add (0.9×)" — value: "0.9× (faster)" — `[B300_PIPE_CATALOG.md:L7149]` — Reason: 47 cy vs 51 cy = 0.922, within noise (8% margin of error). Calling it "faster" is at noise threshold. — Why suspect: Difference is inside noise; could be measurement variance.
+- [x] **T3** "atom.min 0.9× atom.add (47 vs 51 cy)" — ⚠ AGREED noise-level. 8% delta is within standard run-to-run variance (~5-10% on this rig). Catalog should reword: "atom.min ≈ atom.add within measurement noise" instead of "slightly faster". — `[ref: B300_PIPE_CATALOG.md:L7149]`
 
-- [ ] **T4** "atom.f16 and atom.bf16 add are ~45× slower than u32 (1527 vs 34 cy), effectively CAS loops" — value: "~45× slower" — `[B300_PIPE_CATALOG.md:L7160]` — Reason: Measured on coalesced path (unique per-lane). Different patterns could produce different ratios. Also, "effectively CAS loops" is an inference from latency, not validated by SASS inspection. — Why suspect: SASS verification claimed but not shown; single pattern tested.
+- [x] **T4** "atom.f16/bf16 ~45× slower than u32 (1527 vs 34 cy)" — ❌ FALSIFIED via §30B (top-9 error #6): real delta is **6.3× slower**, NOT 45×. The 45× was likely a hot-spot vs uncoalesced confound. — `[ref: B300_PIPE_CATALOG.md:L7160]`
 
-- [ ] **T5** "Coalesced unique atomics run 30× the effective throughput of contended atomics (0.94 atomics/cy/lane coalesced vs contention saturates at slower rate)" — value: "30× throughput" — `[B300_PIPE_CATALOG.md:L7174]` — Reason: Mixed throughput (whole-chip) and per-lane metrics. "30×" is derived from table (coalesced 0.94 atomics/cy/lane vs contended 51 cy/op) but needs careful unit matching. Claim could be correct but is expressed unclearly. — Why suspect: Unit mixing; needs clearer derivation.
+- [x] **T5** "Coalesced unique atomics 30× contended" — ❌ FALSIFIED via §30B (top-9 error #5): coalesced is actually **0.023 atoms/cy/lane** (NOT 0.94 as catalog says). The 30× claim was based on the 0.94 catalog number which itself was wrong by ~40×. Real delta when correctly measured is much smaller. — `[ref: B300_PIPE_CATALOG.md:L7174]`
 
-- [ ] **T6** "The N=2 atomic address anomaly (20× worse than N=1, worse than N=4)" needs more investigation — possibly both addresses hash to same L2 slice" — value: "20× worse" — `[B300_PIPE_CATALOG.md:L7184]` — Reason: This is flagged as needing investigation but stated as measured fact. No explanation provided. Is this reproducible? — Why suspect: Self-flagged as needing investigation but appearing as a finding.
+- [x] **T6** "N=2 atomic address anomaly 20× worse" — ⚠ REFINED via §22r_atom_n2_hotspot_DEEP.md + top-9 error #5: real number is **34× worse at warp-level N=2** (catalog 20× understates). The "both addresses hash to same L2 slice" hypothesis is plausible but not the complete explanation — L2 partition hashing isn't that deterministic. The anomaly IS reproducible. — `[ref: B300_PIPE_CATALOG.md:L7184]`
 
 ---
 
 ## Group U — TMA, cp.async, bulk operations (L7218, L7864)
 
-- [ ] **U1** "TMA HBM Peak (WRONG — measures L2 after first wrap)" — explicit WRONG section — value: "6.83 TB/s claimed, wrong" — `[B300_PIPE_CATALOG.md:L8586]` — Reason: Section is marked WRONG and a correction is attempted ("HBM coalesced read peak = 7.4 TB/s"). But the WRONG section stays in the main catalog. Is 6.83 TB/s actually wrong, or is it a valid alternate measurement (L2-hit TMA)? The correction could have been a new section, not in-place invalidation. — Why suspect: WRONG section kept in-place without clear ratification of fix.
+- [x] **U1** "TMA HBM Peak 6.83 TB/s WRONG section" — ⚠ DUPLICATE of CRIT4 (resolved): catalog DOES self-flag this section. The 6.83 TB/s was a valid L2-hit measurement mislabeled as DRAM. Catalog should move WRONG sections to an appendix OR clearly split "L2-hit vs DRAM" labels. — `[ref: B300_PIPE_CATALOG.md:L8586]`
 
-- [ ] **U2** "Single-warp in-flight memory loads: 64 chains sustain at 25 cy per load = 19.7 GB/s per warp" — value: "19.7 GB/s per warp" — `[B300_PIPE_CATALOG.md:L8627]` — Reason: Measured on 264 KB working set (L1 fit). NOT HBM latency hiding. The claim "A single warp can sustain 30+ in-flight memory loads" is true for L1, not for DRAM. Section says "⚠ NOT HBM" but title suggests generality. — Why suspect: Title and body are in conflict about what is being measured.
+- [x] **U2** "Single-warp 64 in-flight loads 19.7 GB/s — title vs body conflict" — ⚠ AGREED labeling problem. The 264 KB WS exceeds L1 cap (228 KB) but is mostly L1-resident. This is L1/LSU-queue measurement, NOT HBM. Title should be "Single-warp L1 in-flight queue depth" not generic "memory loads". — `[ref: B300_PIPE_CATALOG.md:L8627]`
 
-- [ ] **U3** "Per-SM peak BW with deep ILP: 19.7 GB/s per warp × 64 warps = 1.26 TB/s" — value: "1.26 TB/s per SM" — `[B300_PIPE_CATALOG.md:L8631]` — Reason: Assumes all 64 warps can achieve 30+ ILP simultaneously, which is not validated. Real kernels may have ILP heterogeneity. "Assumes all warps at max ILP" is a caveat buried in footnote. — Why suspect: Caveat should be prominent; claim overstates realistic capability.
+- [x] **U3** "Per-SM peak 1.26 TB/s = 19.7 × 64 warps" — ⚠ AGREED unrealistic linear extrapolation. 64 warps × 30+ ILP each is well above what real kernels achieve. Plus the per-warp 19.7 GB/s is L1 not DRAM (per U2). The 1.26 TB/s figure is theoretical-on-theoretical and should be marked as such or removed. Real per-SM effective is ~150-260 GB/s sustained. — `[ref: B300_PIPE_CATALOG.md:L8631]`
 
-- [ ] **U4** "cp.async.cg (L2-direct, 16 B only) reaches ~200 GB/s/SM and 17.9 TB/s chip-wide — within ~15% of TMA peaks (240 and 20.6 TB/s)" — value: "~15% of TMA" — `[B300_PIPE_CATALOG.md:L2677]` — Reason: TMA peak 20.6 TB/s vs cp.async 17.9 TB/s = 87%, claimed as "within 15%". This is true but the claim context (which appears early in catalog) is immediately contradicted by later WRONG sections saying TMA measurements were L2-hit, not HBM. — Why suspect: Contradicted by later findings; should be reflagged.
+- [x] **U4** "cp.async.cg ~200 GB/s/SM = 87% of TMA" — ⚠ EXPLAINED via §30 TMA-vs-LDG max-tuned: at L2-hit the comparison IS valid (TMA wins 12% over LDG max-tuned). At DRAM-cold both saturate HBM SoL ≈ 96%. So cp.async.cg vs TMA at L2-hit ≈ 87% is plausible. Catalog should clarify L2-hit regime. — `[ref: B300_PIPE_CATALOG.md:L2677]`
 
 ---
 
