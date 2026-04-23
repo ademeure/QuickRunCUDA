@@ -482,6 +482,43 @@ The "11 TB/s at 256 MB" was probably L2 partial-hit amortization at the boundary
 
 ---
 
+## §14. Tensor cores (mma.sync legacy path) — REPLICATED 2026-04-23 (justifications/22_tensor_mma_sync.md)
+
+| Path | Catalog claim | This rig | Verdict |
+|---|--:|--:|---|
+| `mma.sync.m16n8k16` BF16/FP16 | 569-578 TFLOPS | **571 TFLOPS wall, 570 ncu** (99.5% pipe_tensor) | ✅ within 1% |
+| `mma.sync.m16n8k8` TF32 | 288 TFLOPS | **285.7 TFLOPS** | ✅ within 1% |
+| `mma.sync.m16n8k32` FP8 e4m3 (emulated) | **276 TFLOPS** | **309 TFLOPS** | ⚠ **catalog 12% LOW** — should be **~308** |
+| `mma.sync.m16n8k32` INT8 IMMA | 142 TOPS | **142.4 TOPS** | ✅ exact match |
+
+### ⚠ MAJOR FINDING — FP8 mma.sync FADD artifact actually reproduces
+
+The catalog's warning at L27 ("earlier 2336/2247 numbers were FADD artifacts; compiler DCE'd 99.99% of mma chain") is REAL. The naïve `bench_mma_all_precisions.cu` OP=3 collapses to:
+- SASS: **2 HMMA + 1056 FADD** in inner loop
+- Reports falsely high 2163 TFLOPS (counts FADD as if they were FP8 ops)
+
+Anti-DCE test (`tests/bench_fp8_mma_peak_antidce.cu` — new) with chain-dependent inputs:
+- SASS: **512 HMMA + 2052 F2FP** per inner iter (NOT QMMA)
+- Confirms emulation via F2FP + HMMA path
+- Measures **309 TFLOPS**
+
+**Recommendation: bump catalog L27 from 276 → 308 TFLOPS for FP8 e4m3 emulated mma.sync.**
+
+### Confirmation: B300 mma.sync FP8 is EMULATED (no native QMMA)
+
+SASS dump confirms catalog's claim that FP8 via mma.sync is emulated. There is NO `QMMA` opcode in the output — only `HMMA` (FP16) preceded by `F2FP` (FP8→FP16 conversion). For native FP8, use **tcgen05.mma** (which emits `UTCQMMA` per project memory).
+
+### Clock state during runs
+
+All 4 tests at **1942 MHz sustained** (matches FFMA peak finding). No lock; pure DVFS settling point under tensor load.
+
+### Notes
+
+- `pipe_tensor` ncu metric is the right counter for mma.sync (HMMA family). It does NOT measure tcgen05.mma (UTC*MMA family) per project memory.
+- INT8 IMMA pipe_tensor is only 12.3% because IMMA is ~8× slower per inst than HMMA at K=32 — IMMA is genuinely throttled on B300.
+
+---
+
 ## §13a. TMA cp.async.bulk — REPLICATED 2026-04-23 (justifications/30_tma_sizes.md)
 
 ### Issue rate "48 cy floor" — half-right (catalog conflates 2 measurements)

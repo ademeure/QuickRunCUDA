@@ -63,10 +63,10 @@
 
 ## Group D — Tensor cores
 
-- [ ] **D1** "FP16/BF16 mma.sync m16n8k16 = 577 TFLOPS, 4-chain 574 / 8-chain 577 = 101% of 569 SOL estimate" — 101% of estimate suggests SoL estimate is wrong; needs first-principles bound — `[ref: B300_PIPE_CATALOG.md:25]` — `[formula]`
-- [ ] **D2** "TF32 mma.sync m16n8k8 = 288 TFLOPS, 'catalog previously wrongly listed 141'" — earlier catalog version had 141, now claims 288. Suggests methodology is volatile — `[ref: B300_PIPE_CATALOG.md:26]` — `[superseded-suspect]`
-- [ ] **D3** "FP8 mma.sync = 276 TFLOPS emulated via F2FP+HMMA" — earlier 2336/2247 numbers were FADD artifacts (DCE'd 99.99% of mma chain). Needs current-test SASS verification — `[ref: B300_PIPE_CATALOG.md:27]` — `[DCE-suspect]`
-- [ ] **D4** "INT8 mma.sync IMMA = 142 TOPS, 45× slower than FP8" — needs verification; B300 deliberately deprecates INT8 per claim — `[ref: B300_PIPE_CATALOG.md:28,88]` — `[unverified]`
+- [x] **D1** "FP16/BF16 mma.sync m16n8k16 = 577 TFLOPS" — **RESOLVED 2026-04-23 (justifications/22_tensor_mma_sync.md)**: measured 571 TFLOPS wall, 570 ncu (99.5% pipe_tensor) — within 1% of catalog. ✅ — `[ref: B300_PIPE_CATALOG.md:25]`
+- [x] **D2** "TF32 mma.sync m16n8k8 = 288 TFLOPS" — **RESOLVED 2026-04-23**: measured 285.7 TFLOPS — within 1%. Confirms TF32 is genuinely half of FP16 (K=8 vs K=16); the "previously wrongly 141" footnote was a 2× counting error. ✅ — `[ref: B300_PIPE_CATALOG.md:26]`
+- [x] **D3** "FP8 mma.sync = 276 TFLOPS emulated" — **REVISED 2026-04-23**: catalog 276 is **12% LOW**. Measured **309 TFLOPS** via anti-DCE test (`tests/bench_fp8_mma_peak_antidce.cu`). The FADD-artifact warning catalog gives is REAL — naive test collapses to 2 HMMA + 1056 FADD. Anti-DCE SASS shows 512 HMMA + 2052 F2FP, no native QMMA. **Recommend bumping catalog L27 to 308 TFLOPS.** — `[ref: B300_PIPE_CATALOG.md:27]`
+- [x] **D4** "INT8 mma.sync IMMA = 142 TOPS" — **RESOLVED 2026-04-23**: measured 142.4 TOPS exact match. SASS shows 256 IMMA + 8 FADD; pipe_tensor 12.3% (low because IMMA is ~8× slower per inst than HMMA at K=32). ✅ — `[ref: B300_PIPE_CATALOG.md:28]`
 - [ ] **D5** "tcgen05.mma all formats = 128 cy at M=128 N=256" — clean claim but needs replication for ≥3 formats (FP16, FP8, FP4) — `[ref: B300_PIPE_CATALOG.md:120-130]` — `[unverified]`
 - [ ] **D6** "FP4 NVFP4 K=64 = 9856 TFLOPS chip TFLOPS" — needs verification; the K=96 ULTRA path that gives 1.5× is mentioned elsewhere as inaccessible in public libs — `[ref: B300_PIPE_CATALOG.md:128]` — `[regime-narrow]`
 - [ ] **D7** "P2P GEMM remote weights via NVLink: zero penalty" — based on cuBLAS L2-tiling; needs confirmation that "tiles fit in L2" explanation is what's actually happening (vs bandwidth-bound) — `[ref: B300_PIPE_CATALOG.md:178-183]` — `[regime-narrow]`
