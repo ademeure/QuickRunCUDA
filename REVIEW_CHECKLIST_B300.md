@@ -92,8 +92,8 @@
 
 ## Group G — TMA / mbarrier / cluster
 
-- [ ] **G1** "TMA cp.async.bulk issue rate = 48 cy/inst floor (size-independent)" — needs replication; the size-independence is critical claim — `[ref: B300_PIPE_CATALOG.md:58]` — `[unverified]`
-- [ ] **G2** "TMA chip-wide realistic = 29.2 TB/s, but ncu confirms only 12.6 GB/s actual DRAM (so this is L2→smem, not DRAM)" — important caveat; verify ncu dram__bytes_read numbers separate from "TMA pipe BW" — `[ref: B300_PIPE_CATALOG.md:61]` — `[unit-confusion]`
+- [x] **G1** "TMA cp.async.bulk issue rate = 48 cy/inst floor (size-independent)" — **RESOLVED 2026-04-23 (justifications/30_tma_sizes.md)**: 48 cy is the AMORTIZED rate (N TMAs batched onto 1 mbarrier), NOT pure single-issue. Pure single-issue is ~65 cy. Both are "size-independent" for 16B-8KB. Catalog conflates the two. — `[ref: B300_PIPE_CATALOG.md:58]`
+- [x] **G2** "TMA chip-wide 29.2 TB/s" claim — **PARTIALLY RESOLVED 2026-04-23**: chip-wide measurement caps at **6.4 TB/s HBM-bound** (132 CTAs × 4KB × NT=24). The 21.9 TB/s (and 29.2 TB/s) require L2 hits (small reused dataset) — catalog wording fails to flag this. ⚠ Chip-wide TMA GB/s claim only valid for L2-resident sources, NOT as DRAM peak. — `[ref: B300_PIPE_CATALOG.md:61]`
 - [ ] **G3** "TMA bytes per instruction not specified" — user [!fail]: "this section does not tell me what the number of bytes per TMA instruction is, so this is not very informative" — need explicit bytes/inst breakdown for each TMA test — `[ref: reviewed_errors L1008]` — `[unit-confusion]`
 - [ ] **G4** "Multicast cannot be pipelined" claim — user: "this doesn't mean it cannot be pipelined - just that we are hitting maximum throughput with the amount of latency tolerance we already have" — `[ref: reviewed_errors L1029]` — `[regime-narrow]`
 - [ ] **G5** "fence.proxy.async.shared::cta lowers to MEMBAR.ALL.CTA + FENCE.VIEW.ASYNC.S" — needs SASS verification — `[ref: B300_PIPE_CATALOG.md:81]` — `[unverified]`

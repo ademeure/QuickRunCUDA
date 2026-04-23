@@ -482,6 +482,49 @@ The "11 TB/s at 256 MB" was probably L2 partial-hit amortization at the boundary
 
 ---
 
+## §13a. TMA cp.async.bulk — REPLICATED 2026-04-23 (justifications/30_tma_sizes.md)
+
+### Issue rate "48 cy floor" — half-right (catalog conflates 2 measurements)
+
+| Measurement | cy/TMA | What it really is |
+|---|--:|---|
+| Pure single-issue | **~65 cy** (size-independent 16 B-8 KB) | one TMA, wait for completion, repeat |
+| Amortized in N-batch (1 mbarrier × N TMAs) | **48-50 cy** (matches catalog 30.4b3 within 3 cy) | batching saves the per-TMA wait overhead |
+
+⚠ Catalog's "48 cy size-independent issue floor" is the AMORTIZED rate, not the pure issue cost. Both are real but measure different things. Use 65 cy for single-issue cost; use 48-50 cy for batched.
+
+### "Sharp 8 KiB crossover" — VERIFIED (in user-facing GB/s metric, NOT in cy/TMA)
+
+| TMA size | cy/TMA | GB/s/SM (D=2) |
+|---:|--:|--:|
+| 16 B - 4 KB | 48-52 | 20-150 (still issue-bound) |
+| **8 KB** | **65** | **255 ← sharp knee** |
+| 16 KB | ~80 | ~240 (engine-bound) |
+| 64 KB | — | 252 |
+
+The `cy/TMA` curve looks gradual (48→52→65). But `GB/s/SM` jumps 20→40→79→150→**241** — sharp knee at 8 KiB where engine ceiling kicks in. Skeptical-review L4 was right about cy/TMA being gradual but wrong to conclude no sharp crossover.
+
+### Per-SM peak verified at ~240-260 GB/s/SM
+
+3 different configs all converge:
+- 64 KB × DEPTH=3: 252 GB/s/SM @ 2.032 GHz (≈240 @ 1.92)
+- 32 KB × DEPTH=4: 248 GB/s/SM
+- 8 KB × NT=12 × DEPTH=2: 255 GB/s/SM
+
+Engine-bound regardless of L2 vs HBM source (ncu confirms HBM-cold path also at 250 GB/s).
+
+### ⚠ Chip-wide 21.9 TB/s claim is SUSPECT
+
+Catalog says 21.9 TB/s chip-wide via 4 KiB batched. Naive math: 158 GB/s/SM × 148 SM = 23 TB/s — but **HBM3E spec is ~7 TB/s, so 23 TB/s exceeds DRAM by 3×**.
+
+Replication: chip-scale `bench_tma_throughput.cu` at 132 CTAs × 4 KiB × NT=24 caps at **6.4 TB/s (HBM-bound)**. Catalog's 21.9 TB/s requires L2 hits (small reused dataset). **The catalog wording fails to flag this.** ⚠ Add to footgun list.
+
+### Bonus finding — silent zero-corruption bug
+
+`tests/bench_tma_acquire_v2.cu` silently zero-corrupts C[0] when `data_xor == seed`. Always pass `-1 12345` to avoid the collision.
+
+---
+
 ## §13. Atomics — REPLICATED 2026-04-23 (justifications/30B_atomics.md)
 
 7 catalog inconsistencies resolved. Single-thread atom.global.add chain = **45 cy/op** (matches LDS chain at 45 cy — the "33 cy LDS" was throughput-derived, "24 cy" was constraint-folded loop; same hardware, different methodology — K6 is a labeling issue not a real inconsistency).
