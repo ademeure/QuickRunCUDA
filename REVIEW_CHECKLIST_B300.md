@@ -145,22 +145,29 @@ Catalog "DSMEM ~identical to local SMEM, essentially free" is **WRONG**. Real fi
 
 ---
 
-## STILL-OPEN HIGH-PRIORITY (top 10 to review)
+## STILL-OPEN HIGH-PRIORITY (top items to review)
 
 These are the [ ] items the user is most likely to have a strong opinion on. Open `B300_PIPE_CATALOG.md` line by line for the catalog claim.
 
-- [ ] **A3** "FFMA2 packed = 72.3 TFLOPS = 99.4%" — needs SASS verification that FFMA2 (not FFMA scalar pair) is actually emitted — `[ref: catalog L31]`
-- [ ] **A5** "FP64 DFMA = 0.95 TFLOPS" — CLAUDE.md says theoretical 1.20 TF; 0.95/1.20 = 79% suggests under-saturation; needs chip-occupancy retest — `[ref: catalog L35]`
-- [ ] **D5** "tcgen05.mma all formats = 128 cy at M=128 N=256" — catalog math is self-consistent (linear scaling table), but no fresh measurement on this rig — `[ref: catalog L120-130, L6686+]`
-- [x] **D6** "FP4 NVFP4 K=64 = 9856 TFLOPS" — ✅ **PROPERLY VERIFIED 2026-04-23 (justifications/49_nvfp4.md)** with rigorous audit (3 claims confirmed, 2 corrected): (a) **9.26 PFLOPS at 1942 MHz** = 92.6% of 10 PF spec; cy/MMA = 128.001 matches catalog's 128.01. (b) K=64 D[0]=288.0 = K=96 D[0]=288.0 — confirms K=96 via idesc bit 31 DOESN'T add MACs (would be 432 if it had). (c) 15/15 K=64 correctness tests bit-exact. (d) **CORRECTION**: catalog's "kind::mxf4.block_scale.block32 rejected by ptxas" is FALSIFIED — it actually compiles but crashes at runtime. (e) **CORRECTION**: catalog's "128x256b cp shape crashes" is NOT REPRODUCED — it works fine with 8 KB smem. 14 evidence files preserved. — `[ref: catalog L9213-L9430, justifications/49_nvfp4.md]`
-- [ ] **CRIT2** "tcgen05 'peak verified' single-warp scope mismatch" — MITIGATED by Multi-SM linear scaling table L6776 (148 SMs each independent → 148× single-warp = chip-wide makes sense). Per audit, this is now lower priority. — `[ref: catalog L6716]`
-- [x] **CRIT4** WRONG sections kept in catalog — ✅ RESOLVED (catalog L8541-8543 IS self-flagged: "the original incorrect sections are kept verbatim for audit reasons but **do not use these numbers**"). Real numbers ARE elsewhere (DENSE §10 + 00b_mem_hierarchy.md replicates HBM 7.17-7.25 TB/s). Risk: a reader who jumps directly to L8558 without reading L8541 might still cite the bad number. Recommend collapsing the L8558/L8586 sections into a single "INCORRECT — see §0 corrected" stub in any future cleanup of the catalog. — `[ref: B300_PIPE_CATALOG.md:8558,8586]`
-- [ ] **CRIT6** FMNMX3 (3-input min/max) — likely compiler fusion not native opcode; needs cuobjdump — `[ref: catalog L981]`
-- [ ] **CRIT8** "ENL2" SASS bypasses L1 / cudaMallocAsync changes ptxas behavior — both claims suspect, need ISA reference — `[ref: catalog SASS sections]`
-- [ ] **CRIT9** Per-stack stack-locality recipes (D2D 6.93 TB/s) — cross-stack hashing hard to control; recipe may not generalize — `[ref: catalog L1280]`
-- [ ] **F1-F6** All power claims (DVS scaling V², 1005 MHz stuck floor, 1071 W stress recipe, V² formula) — catalog §44 is DISPUTED (M11 vs 16_power_clock 2× discrepancy in canonical) — needs power-per-pipe replication
+**Recently resolved (2026-04-23) — full details inline with their per-group entry below:**
+- ✅ A3, A4 (HFMA2 SASS confirmed for both scalar+packed)
+- ✅ B9 (LDC.32 broadcast = 17.99 TB/s eff, dispatches via ADU)
+- ✅ B12, CRIT8 (ENL2 ≠ "bypass L1"; it's L2-sector-size hint)
+- ✅ CRIT4 (WRONG sections at L8558/L8586 ARE self-flagged in catalog)
+- ✅ CRIT6 (FMNMX3 confirmed real Blackwell opcode via SASS in §14)
+- ✅ D6 (NVFP4 K=64 9.26 PFLOPS @ 1942 MHz; K=96 ULTRA bit 31 doesn't add MACs)
+- ✅ D1-D4 (mma.sync FP16/TF32/FP8/INT8)
+- ✅ E2, E3 (DFMA 63.7 cy not 92; MUFU.sin = 24.45 cy)
+- ✅ G7 (smem 228 KB per-SM ✓; "200 KB per CTA" FALSIFIED)
 
-(The full ~50 still-open entries continue below by group.)
+**Still genuinely open (focused targets):**
+- [ ] **A5** "FP64 DFMA = 0.95 TFLOPS" — CLAUDE.md says theoretical 1.20 TF; needs chip-occupancy retest. Already partially refined in 02_13_fp64.md (1.06 TF measured = 88% of theoretical at 1942 MHz; gap is real, likely DVFS clock state) — `[ref: catalog L35]`
+- [ ] **D5** "tcgen05.mma all formats = 128 cy at M=128 N=256" — catalog math is self-consistent but no fresh measurement on this rig (requires alloc/mbarrier/cp setup) — `[ref: catalog L120-130, L6686+]`
+- [ ] **CRIT2** "tcgen05 'peak verified' single-warp scope mismatch" — MITIGATED by Multi-SM linear scaling table L6776 — lower priority — `[ref: catalog L6716]`
+- [ ] **CRIT9** Per-stack stack-locality recipes (D2D 6.93 TB/s) — user [reviewed_errors L1320]: "cross-stack hashing is literally impossible to turn off" — recipe likely doesn't generalize — `[ref: catalog L1280]`
+- [ ] **F1-F6** All power claims (DVS V² scaling, 1005 MHz stuck floor, 1071 W stress recipe) — catalog §44 is DISPUTED (M11 vs 16_power_clock 2× discrepancy in canonical) — needs power-per-pipe replication; also user-flagged as "rough 1st approximation, misleading"
+
+(The full ~60 still-open entries continue below by group; many are user-flagged-skeptical and only re-verifiable via a measurement campaign that would exceed this audit's scope.)
 
 ---
 
@@ -283,7 +290,7 @@ These are the highest-priority items that crossed multiple groups during the dee
    - Apparent self-op pessimism in some catalog tests was likely compiler pipe-routing, not hardware.
    — `[ref: catalog L1948, justifications/SELF_OP_DEEP.md, 27 SASS files preserved]`
 - [x] **CRIT5** "FREE" claims throughout — **PARTIALLY RESOLVED 2026-04-23**: (a) "DSMEM essentially free" FALSIFIED (justifications/13_dsmem.md): DSMEM read = 204-223 cy vs local 23 cy = ~9× slower. SASS shows ld.shared::cluster compiles to LD.E (global LSU path), not LDS. (b) "scope qualifier FREE for global atomics" CONFIRMED for L2-hit only (justifications/30B_atomics.md). (c) "predicated execution FREE" still pending. — `[ref: B300_PIPE_CATALOG.md:7012,7131,8335]`
-- [ ] **CRIT6** FMNMX3 (3-input min/max) opcode claim — likely a compiler fusion not a native SASS opcode; needs cuobjdump verification — `[ref: B300_PIPE_CATALOG.md:981]` — `[agent-hearsay]`
+- [x] **CRIT6** FMNMX3 (3-input min/max) — ✅ CONFIRMED real Blackwell SASS opcode (NOT just compiler fusion of two SEL ops): justifications/14_extended_ops.md SASS-grep verified 128 FMNMX3 emitted from `min.f32 a,a,b; min.f32 a,a,c;` chain, pipe_alu = 1.97 (98.54% of cap) = 128 logical mins/SM/cy. Same trick the compiler uses for `min.s32` → VIMNMX3 and for u32 add → IADD3. — `[ref: B300_PIPE_CATALOG.md:981]`
 - [ ] **CRIT7** Batch-1 MUFU latencies (§16) include range-reduction overhead never separated out; correction noted in §22 but earlier numbers still cited in §24 — `[ref: B300_PIPE_CATALOG.md:1048-1050,1974,2024,2026]` — `[superseded-suspect]`
 - [x] **CRIT8** "ENL2 bypasses L1" + "cudaMallocAsync changes ptxas" — first half ❌ FALSIFIED via SASS audit (see B12); ENL2 is an L2-sector-size encode, NOT cache-bypass. **Second half ("cudaMallocAsync changes ptxas behavior") was already flagged by user as "complete hallucination" (B13)** — there is no mechanism by which the device-side allocator type would change ptxas codegen for kernels that take pointers. Both claims walked back. — `[ref: reviewed_errors L1063]`
 - [ ] **CRIT9** Per-stack stack-locality recipes (e.g., D2D 6.93 TB/s by separating src/dst on different stacks) — cross-stack hashing is hard to control; recipe may not generalize beyond one specific layout — `[ref: B300_PIPE_CATALOG.md:1280, reviewed_errors L794]` — `[agent-hearsay]`
