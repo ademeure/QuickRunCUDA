@@ -445,14 +445,56 @@ Key headlines (suspect):
 
 ---
 
-## §12. Memory fence costs (pending §30.G replication)
+## §12. Memory fence costs — RESOLVED 2026-04-23 (justifications/30G_fence.md)
 
-Catalog has multiple inconsistent values for the same operation. Wave-7 V54 settled at:
-- `__threadfence_block` (cta) = 8 cy / 3.9 ns
-- `__threadfence` (gl) = 267 cy / 131.5 ns (+280 cy first-fence-after-write L2 drain)
-- `__threadfence_system` (sys) = 2806 cy / 1381 ns
+Catalog had inconsistent values across L114-L3635 (40× spread for cta, 6× for gl, 3× for sys). Single-GPU B300 SXM6 AC authoritative ladder:
 
-DENSE recommendation: USE V54 numbers; ignore catalog's L2889/L2922/L3068/L3193/L3632/L3635 spread until reconciled.
+| Fence | cy/op | ns @ 2032 | Notes |
+|---|--:|--:|---|
+| `__threadfence_block` (cta) | **8.00 ✅** | 3.9 | zero variance across 5 runs; matches V54 exactly |
+| `__threadfence` (gl) | **267.2 ✅** | 131.5 | R² = 1.0 across 5 runs; matches V54 exactly |
+| `__threadfence_system` (sys) | **1727 ✅** | 850 | single-GPU rig — ⚠ V54's 2806 was 2-GPU NVLink rig; single-GPU is 1.62× lower (one fewer NVLink coherence round-trip) |
+
+### NEW finding — first-fence-after-write tax is FIXED, NOT linear
+
+Catalog L3084 said gl fence cost is "+150 for 1st write, +60/write after" — implying linear scaling.
+
+**Replication shows it's a one-time fixed L2-drain overhead, NOT linear:**
+- 1 fence + 0 writes: 265 cy
+- 1 fence + 1 write: 400-750 cy (variable run-to-run)
+- 1 fence + N writes (N=2..128): FLAT — same as N=1
+
+Mechanism: the first store after a fence triggers L2 drain; subsequent stores ride the open drain pipeline. The "+60 cy/write after" claim was an N-issue artifact in the original V54 test (which varied N inside the timed loop without isolating writes from fences).
+
+### Catalog reconciliation table
+
+| Catalog citation | Claimed cy | Measured cy | Verdict |
+|---|--:|--:|---|
+| L114 cta=8.6 | 8.6 | 8.0 | ✅ within noise |
+| L116 gl=274 | 274 | 267 | ✅ within noise |
+| L2889 cta=29 | 29 | 8 | ❌ 3.6× high — wrong |
+| L2889 gl=282 | 282 | 267 | ✅ within noise |
+| L2890 sys=2890 | 2890 | 1727 | ❌ 1.67× high (multi-GPU artifact) |
+| L2914 sys=2914 | 2914 | 1727 | ❌ same |
+| L3068 "8 parallel sys channels" | claim | n/a | unverified — needs separate test |
+| L3083 cta=14 | 14 | 8 | ❌ 1.75× high |
+| L3084 gl=271 +60/write | 271 + linear | 267 + fixed | ✅ base ❌ scaling |
+| L3085 sys=2882 | 2882 | 1727 | ❌ 1.67× high |
+| L3193 acq_rel.sys 17-37% > sc.sys | claim | unverified | needs sweep |
+| L3632 cta=337 (full chip W=16) | 337 | n/a | DIFFERENT scenario (multi-SM busy chip pre-load) — keep separate |
+| L3632 gl=1679 (full chip W=16) | 1679 | n/a | same — different scenario |
+| L3635 sys=8869 (full chip W=16) | 8869 | n/a | same — different scenario |
+
+### DENSE recommendation
+
+For single-CTA / single-warp / no-busy-chip context (the most common audit context), USE:
+- cta = 8 cy / 3.9 ns
+- gl = 267 cy / 131.5 ns (+~280 cy if there's a pending write to drain)
+- sys = 1727 cy / 850 ns (single-GPU) **or** 2806 cy (NVLink-attached multi-GPU)
+
+For full-chip busy-load context (W=16+ pending writes, all SMs active), use the L3625-L3635 numbers — but treat them as a DIFFERENT measurement that should not be reconciled with the single-warp numbers.
+
+⚠ The "+60 cy/write" linear scaling claim from catalog L3084 is RETRACTED — it's a fixed one-time L2-drain.
 
 ---
 

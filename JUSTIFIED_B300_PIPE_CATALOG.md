@@ -73,7 +73,7 @@
 | §29 Warp-reduce reality | L2186 | 🔍 not yet | [29_warp_reduce.md](justifications/29_warp_reduce.md) |
 | §30 TMA + mbarrier | L2218 | 🔍 not yet | [30_tma_mbarrier.md](justifications/30_tma_mbarrier.md) |
 | §30.B Atomic latency (1-thread chain) | L2679 | 🔍 not yet | [30B_atom_latency.md](justifications/30B_atom_latency.md) |
-| §30.G Memory fence costs | L2883 | 🔍 not yet | [30G_fence.md](justifications/30G_fence.md) |
+| §30.G Memory fence costs | L2883 | ✅ replicated | [30G_fence.md](justifications/30G_fence.md) — cta=8/gl=267/sys=1727 single-GPU; V54's 2806 sys was 2-GPU rig; "+60 cy/write" claim RETRACTED |
 | §30.L ALU latency + throughput | L2750 | 🔍 not yet | [30L_alu.md](justifications/30L_alu.md) |
 | §30.M Cache control (CCTL) | L2728 | 🔍 not yet | [30M_cctl.md](justifications/30M_cctl.md) |
 | §31 Methodological notes | L4185 | 🔍 not yet | [31_methodology.md](justifications/31_methodology.md) |
