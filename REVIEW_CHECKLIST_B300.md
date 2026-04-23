@@ -111,6 +111,27 @@
 
 ---
 
+---
+
+## Critical follow-up (top 10 from extended skeptical review)
+
+These are the highest-priority items that crossed multiple groups during the deeper §10–end skeptical pass. Full lists in:
+- [`justifications/_SKEPTICAL_REVIEW_10_30.md`](justifications/_SKEPTICAL_REVIEW_10_30.md) — 50 entries (Groups I-R)
+- [`justifications/_SKEPTICAL_REVIEW_31_END.md`](justifications/_SKEPTICAL_REVIEW_31_END.md) — 74 entries (Groups P-X)
+
+- [ ] **CRIT1** Fence costs span **29 / 282 / 337 / 1679 / 2914 / 8869 cy** across the SAME operation in different sections — `[ref: B300_PIPE_CATALOG.md:2889,3068,3193,3635]` — V54 settled at cta=8 / gl=267 / sys=2806; catalog needs reconciliation pass — `[inconsistent]`
+- [ ] **CRIT2** "tcgen05.mma 'peak verified' 2.33 PFLOPS = 93% of 2.5 PF spec" — but measured at **single warp per SM** not chip-wide. If only 1 warp per 148 SMs, that's 1/148× peak — `[ref: B300_PIPE_CATALOG.md:6716]` — `[regime-narrow]`
+- [ ] **CRIT3** Catalog top admits "1800/1920/2032 MHz mixed" — pipe topology agent confirmed ncu clamps to 1.91-1.92 GHz, **even with -rgc**. So ALL ncu-measured throughput numbers may be 6% under boost. — `[ref: B300_PIPE_CATALOG.md:14, justifications/01_pipe_topology.md]` — `[clock-mismatch]`
+- [ ] **CRIT4** WRONG sections (HBM3e Peak L8558, TMA HBM Peak L8586) are kept in catalog without retroactive correction — readers may cite the wrong number — `[ref: B300_PIPE_CATALOG.md:8558,8586]` — `[superseded-suspect]`
+- [ ] **CRIT5** "FREE" claims throughout are unquantified: "DSMEM essentially free" (23 cy is NOT free), "scope qualifier FREE for global atomics" (only L2-hit), "predicated execution FREE" (no data shown). — `[ref: B300_PIPE_CATALOG.md:7012,7131,8335]` — `[agent-hearsay]`
+- [ ] **CRIT6** FMNMX3 (3-input min/max) opcode claim — likely a compiler fusion not a native SASS opcode; needs cuobjdump verification — `[ref: B300_PIPE_CATALOG.md:981]` — `[agent-hearsay]`
+- [ ] **CRIT7** Batch-1 MUFU latencies (§16) include range-reduction overhead never separated out; correction noted in §22 but earlier numbers still cited in §24 — `[ref: B300_PIPE_CATALOG.md:1048-1050,1974,2024,2026]` — `[superseded-suspect]`
+- [ ] **CRIT8** "ENL2" SASS encoding interpretation — claimed to mean "bypass L1" and to be controlled by cudaMalloc vs cudaMallocAsync. Both claims are skeptical — needs ISA reference verification — `[ref: B300_PIPE_CATALOG.md (SASS analysis sections), reviewed_errors L1063]` — `[agent-hearsay]`
+- [ ] **CRIT9** Per-stack stack-locality recipes (e.g., D2D 6.93 TB/s by separating src/dst on different stacks) — cross-stack hashing is hard to control; recipe may not generalize beyond one specific layout — `[ref: B300_PIPE_CATALOG.md:1280, reviewed_errors L794]` — `[agent-hearsay]`
+- [ ] **CRIT10** L2 cap claims: catalog L45 says "20 TB/s at 256 MB" but cudaDeviceProp.l2CacheSize = 126 MB, so 256 MB is DRAM-bound; 20 TB/s contradicts HBM 7.18 ceiling — `[ref: B300_PIPE_CATALOG.md:45,1931]` — `[inconsistent]`
+
+---
+
 ## Summary by uncertainty type (for quick scan)
 
 | Uncertainty type | Count | Most-affected groups |
