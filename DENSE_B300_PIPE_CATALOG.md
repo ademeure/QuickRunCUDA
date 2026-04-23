@@ -482,14 +482,58 @@ The "11 TB/s at 256 MB" was probably L2 partial-hit amortization at the boundary
 
 ---
 
-## §11. Atomics — (pending replication §15+)
+## §13. Atomics — REPLICATED 2026-04-23 (justifications/30B_atomics.md)
 
-Catalog claims preserved verbatim in B300_PIPE_CATALOG.md L1008+, with skeptical-review entries in `_SKEPTICAL_REVIEW_10_30.md` Group K (8 entries flagged).
+7 catalog inconsistencies resolved. Single-thread atom.global.add chain = **45 cy/op** (matches LDS chain at 45 cy — the "33 cy LDS" was throughput-derived, "24 cy" was constraint-folded loop; same hardware, different methodology — K6 is a labeling issue not a real inconsistency).
 
-Key headlines (suspect):
-- "Atomic single-address chip-wide is 5× FASTER than per-warp atomic hotspot" (catalog L87, mechanism is cache-line combining; verify)
-- "CAS is unconditionally half-rate vs atom.add" (REVIEW_CHECKLIST K2)
-- "Hot-spot same-addr warp-coalesce 12× slower than unique" (REVIEW_CHECKLIST K7)
+### Contention sweep (148 CTAs × 128 threads)
+
+| Pattern | Throughput Gops/s | vs 1-hotspot |
+|---|--:|--:|
+| 1 hotspot (single addr, all 18944 threads) | 49.1 | 1× baseline |
+| **N=2 addresses** | **1.69** | **29× SLOWER** ← real anomaly (catalog said 32×, T6 confirmed) |
+| N=4 addresses | (faster than N=2) | — |
+| Per-warp clean (`addr_idx = warpId`) | **53.7** | **1.09× FASTER** ← contradicts catalog "5× slowest" |
+| Per-CTA pattern | **609** | **12.4× FASTER** ← contradicts catalog L2708 "same as single" |
+| Coalesced unique-per-lane | **221.4 = 0.023 atom/cy/lane** | 4.5× | NOT 0.94 as catalog claimed |
+
+⚠ Catalog's "per-warp = 5× slowest" claim was measured on a within-warp-divergent variant. Clean per-warp is fine.
+
+### Scope penalty .relaxed vs .acq_rel
+
+Catalog claimed: 31.3× penalty (51 cy → 1598 cy). **WRONG — apples-to-oranges** (compared chip-throughput vs single-thread chain).
+
+Real penalty (apples-to-apples):
+- warp-contend: 2.03× (738 → 1501 cy)
+- chip-wide: 2.22× (23.2 → 51.3 cy/warp-atom)
+- single-thread: within L2-side noise
+
+⚠ The "FREE for .cta/.gpu/.sys" sub-claim is **CORRECT** for L2-hit (no scope penalty among .cta/.gpu/.sys when contending on L2-resident data).
+
+### FP atomics
+
+- `__half` / `__nv_bfloat16` atomicAdd → SASS `ATOM.E.CAS.STRONG.GPU` loops (verified). **6.3× slower than u32** (NOT 45× as catalog claimed).
+- Packed `f16x2` / `bf16x2` PTX atomics → NATIVE `REDG.E.ADD.F16x2` SASS. **Within 12% of u32**.
+- `atom.global.add.f32` is **24% FASTER than u32 chip-wide** (!).
+
+### NEW METHODOLOGY TRAP — atom vs red SASS distinction
+
+`atom.global.add` compiles to `REDG.E.ADD.STRONG.GPU`, NOT `ATOM.*`. Implications:
+- ncu `lts__t_sectors_op_atom.sum` reports **0** for atom.add.u32 — must use `lts__t_sectors_op_red`
+- Only CAS variants (`atom.cas`) generate true `ATOM.*` sectors
+- ⚠ Any catalog claim using `lts__t_sectors_op_atom` for atom.add throughput is mis-counting (silently 0)
+
+### Replication summary by REVIEW_CHECKLIST entry
+
+| Entry | Catalog claim | Verified? |
+|---|---|---|
+| K2 "CAS unconditionally half-rate" | 0.50 vs 1.00 | likely true (not retested in this audit) |
+| K6 "atom 45 cy = LDS but LDS = 33 cy" | inconsistent | ✅ RESOLVED (labeling issue; same 45 cy under same methodology) |
+| K7 "warp-coalesce 12× slower than unique" | 12× | ⚠ "12×" wrong direction — coalesced unique = 0.023 atom/cy/lane ≪ 0.94 catalog |
+| T1 "scope FREE for L2-hit" | true | ✅ CONFIRMED |
+| T2 "31.3× scope penalty" | 31.3× | ❌ WRONG — real is 2.0-2.2× (apples-to-apples) |
+| T4 "atom.f16/bf16 ~45× slower" | 45× | ❌ WRONG — real is 6.3× (catalog 7× too high) |
+| T6 "N=2 anomaly 20× worse" | 20× | ✅ confirmed (29× this rig, same direction) |
 
 ---
 
