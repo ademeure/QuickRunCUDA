@@ -53,10 +53,12 @@
 > - Always inspect SASS to see what pipe ptxas chose
 > - For IADD-style ops, prefer 3-source (`add.u32 v, v, k` with k constant) to keep ptxas on IADD3 pipe
 >
-> **What is NOT audit-verified yet** (still 🟡 CATALOG-PRESERVED):
-> §17 MUFU throughput, §18 branch divergence, §19 INT8 dp4a numbers, §20 FMIN penalty, §21 tcgen05 throttling cliff, §22c CTA capacity formula, §22d cluster launch overhead, §22f L1/L2 stride probe, §22g tcgen05 SASS encoding (UTC* opcodes confirmed in SASS but exact-cycle claims not retested), §22i per-GPC L2 variation (DSMEM exhaustive partially corroborates), §22j smem bank conflict sweep, §22k PTX special registers (only `%nsmid`/`%clock64` informally checked), §22l grid sync 2.2 µs, §22m kernel launch 5.7 µs, §22n CTA scheduler placement (DSMEM exhaustive partially corroborates), §22o NVFP4 (agent IN FLIGHT — preliminary evidence supports catalog), §22p power efficiency, §22q register spilling, §22r atomic contention at scale.
+> **What is NOT audit-verified yet** (final state, only 4 sections still 🟡 CATALOG-PRESERVED):
+> §18 branch divergence, §20 FMIN penalty, §21 tcgen05 throttling cliff, §22p power efficiency (deferred to F-group power campaign).
 >
-> **Status:** Iteration in progress. This is a pruned, dense version of `B300_PIPE_CATALOG.md` that removes content known to be wrong, outdated, or low-value. Every numerical claim that survives has either a JUSTIFIED entry or a REVIEW_CHECKLIST flag.
+> Everything else from §17 through §22r has been ✅ verified, ⚠ refined, or ❌ FALSIFIED in this audit's session — see DENSE sections below + JUSTIFIED's full per-section table for verdicts.
+>
+> **Status:** Audit complete (2026-04-23). This is a pruned, dense version of `B300_PIPE_CATALOG.md` that removes content known to be wrong, outdated, or low-value. Every numerical claim that survives has either a JUSTIFIED entry or a REVIEW_CHECKLIST flag with verdict.
 >
 > **Source:** `B300_PIPE_CATALOG.md` (19,742 lines).
 > **Audit input:** `reviewed_errors_b300.md` (user's [!fail] / [!todo] callouts on related canonical doc).
