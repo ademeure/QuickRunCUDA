@@ -29,6 +29,17 @@
 >
 > All have `justifications/<id>.md` records with full evidence (CLAIM/TEST/BUILD/RUN/STDOUT/SASS/COUNT/NCU/CLOCK/VERDICT/DELTA per the audit-of-the-audit rubric).
 >
+> **⚠ CATALOG SELF-ADMISSION TO BE AWARE OF:** catalog L1948 admits "Absolute numbers from self-op chains (`fma %0,%0,%0,%0` etc.) are ~2× inflated from register read-port pressure (a single register fills all 3-4 operand slots). The **ratios** to FFMA are the reliable information."
+>
+> Implication: any catalog cy/op claim measured via single-thread self-op chain is potentially ~2× higher than the architectural latency. Specifically suspect:
+> - The `bench_latency.cu`-style entries (LDS=33, L1=43, L2=300, FFMA=4 etc.) measured via self-op chain MAY be inflated
+> - Self-op chains (e.g. `fma a,a,a,a`) saturate register-file ports because all operands collide on one register
+> - Multi-chain measurements (4 independent registers) avoid this
+>
+> This audit's §0.FFMA used 8 INDEPENDENT chains (verified in SASS) so the 71.82 TFLOPS result is NOT subject to this. But §24 latency table entries (some via self-op chain) may be 2× too high. JUSTIFIED §24 noted "FFMA cy/op = 4.2-4.4 cy match catalog" — if that's the inflated number, the architectural FFMA latency might actually be ~2 cy (consistent with NVIDIA pipeline depth).
+>
+> **Going forward**: DENSE / JUSTIFIED should specify chain methodology (self-op vs distinct-chain) for any latency claim, and prefer distinct-chain (or report both).
+>
 > **What is NOT audit-verified yet** (still 🟡 CATALOG-PRESERVED):
 > §17 MUFU throughput, §18 branch divergence, §19 INT8 dp4a numbers, §20 FMIN penalty, §21 tcgen05 throttling cliff, §22c CTA capacity formula, §22d cluster launch overhead, §22f L1/L2 stride probe, §22g tcgen05 SASS encoding (UTC* opcodes confirmed in SASS but exact-cycle claims not retested), §22i per-GPC L2 variation (DSMEM exhaustive partially corroborates), §22j smem bank conflict sweep, §22k PTX special registers (only `%nsmid`/`%clock64` informally checked), §22l grid sync 2.2 µs, §22m kernel launch 5.7 µs, §22n CTA scheduler placement (DSMEM exhaustive partially corroborates), §22o NVFP4 (agent IN FLIGHT — preliminary evidence supports catalog), §22p power efficiency, §22q register spilling, §22r atomic contention at scale.
 >
