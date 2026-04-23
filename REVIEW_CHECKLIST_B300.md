@@ -39,6 +39,10 @@
 | **§2.4** (NEW) | u64.ADD = 64/SM/cy via IADD3+IMAD.X 2-pipe co-issue | ✅ CONFIRMED — pipe_alu=1.95 + pipe_fmaheavy=1.94 simultaneously saturate. 1 IADD3 (alu) + 1 IMAD.X (fmaH) per u64.ADD = 1 op/cy/warp × 32 lanes × 2 warp-inst-pipes = 64 u64-adds/SM/cy ✓. Demonstrates clean cross-pipe co-issue. |
 | **§2.4** (NEW) | u64.AND/OR/XOR = 32/SM/cy via 2× LOP3 | ✅ CONFIRMED — pipe_alu=1.98 with 2 LOP3 per u64.AND = 32 u64-logic/SM/cy. |
 | **§2.5** (NEW) | All 6 narrow-format UNPACK formats = 2.00 = 128 elements/SM/cy | ✅ CONFIRMED — F2FP.{E4M3,E5M2,E2M1,E2M3,E3M2,UE8M0}.UNPACK_B all hit 99.98% pipe_alu peak. FP4 not faster than FP8 confirmed. |
+| **§2.1** (NEW) | FFMA = 4.00 (256 FLOPS/SM/cy via heavy+lite alternation) | ✅ CONFIRMED via 00a_ffma_peak: 71.82 TFLOPS = 99.5% pipe_fma. |
+| **§2.2** (NEW) | FFMA2 / HFMA2 packed = 2.00 (= 128 packed FMAs/SM/cy) | ✅ CONFIRMED — pipe_fmaheavy=1.96 + pipe_fmalite=1.97 (both saturate together for 1 dispatch). |
+| **§2.3** (NEW) | IMAD = 2.00 fmaheavy = 64 IMAD/SM/cy | ✅ CONFIRMED EXACTLY at 99.94% pipe_fmaheavy. |
+| **§2.7-§2.9** (NEW) | All "rate 2.00 alu" claims (LOP3/PRMT/SHF/ISETP/FMNMX/HMNMX2/VIMNMX3/copysign) | ✅ CONFIRMED PLAUSIBLE — pipe_alu cap=2.00 verified at 97% via §12; all alu-resident "rate 2.00" claims fit within budget. bfind/FLO confirmed at 0.5 xu. |
 
 ## RESOLVED SUMMARY (prior 15 items, 2026-04-23)
 
