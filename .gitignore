@@ -15,3 +15,7 @@ sweep_results.txt
 int_csv
 raw
 float_csv
+
+# Audit deep-dive workdirs (build artifacts; per-section justifications/ has the keepers)
+22l_workdir/
+reviewed_errors_b300.md
