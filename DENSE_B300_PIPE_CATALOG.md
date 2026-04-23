@@ -1143,9 +1143,11 @@ Pays for cluster/async safety even when not needed. The MEMBAR.ALL.GPU alone is 
 
 ### WHY ninja_F3 wins (decomposition at 1800 MHz locked, with SASS mechanism)
 
+⚠ The "25 cy fence.acquire.gpu" cost was measured in a multi-thread context with surrounding work; the LONE CCTL.IVALL on a properly-drained L1 is essentially free (**~2 cy noise floor** per `justifications/22l_cctl_ivall_DEEP.md` MAJOR CORRECTION 2026-04-23). The 25 cy reflects in-flight-load drain wait + scaffolding cost, not invalidation cost. The earlier "~2 cy per L1 line" claim is RETRACTED — CCTL is constant cost regardless of L1 contents (when properly drained).
+
 | Component | cy | SASS emitted | Mechanism |
 |---|--:|---|---|
-| `fence.acquire.gpu` | **25** | **`CCTL.IVALL` only** (no MEMBAR) | L1 invalidate; L2 is GPU-scope coherence point so cheap |
+| `fence.acquire.gpu` (in-context) | **25** | **`CCTL.IVALL` only** (no MEMBAR) | L1 invalidate; L2 is GPU-scope coherence point so cheap. Lone-CCTL-after-drain is ~2 cy. |
 | `fence.release.gpu` | 456 | `MEMBAR.ALL.GPU` only | Drain write buffer to L2 (the coherence point) |
 | `fence.acq_rel.gpu` | 575 | `MEMBAR.ALL.GPU` + `CCTL.IVALL` | Both, asymmetrically expensive |
 | `atom.relaxed` (no return) | 123 | `REDG.E.ADD.STRONG.GPU` | L2 atomic unit; no MEMBAR; no MOV-back |

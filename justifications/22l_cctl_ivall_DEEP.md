@@ -1,5 +1,43 @@
 # §22l ADDENDUM — CCTL.IVALL characterization (DEEP)
 
+## ⚠⚠ MAJOR CORRECTION 2026-04-23 — earlier "2 cy/line" claim is WRONG
+
+User skepticism (2026-04-23): "Are you 100% confident about 2 cycle per cache line? Did you try the 'max L1, minimum shmem' with fully loading the L1 (try both read and write), nanosleep for many cycles, then try it - and do this at different L1 vs shmem configs which sets how much L1 there can be"
+
+**The user was right.** The earlier measurement methodology (load → immediately CCTL → measure) was NOT measuring CCTL invalidation cost — it was measuring **in-flight cached-load drain wait**. The CCTL.IVALL itself is essentially free regardless of L1 contents.
+
+**New rigorous test (`tests/bench_cctl_rigor.cu`)** adds `nanosleep.u32 10000;` between fill and timed CCTL, which forces all loads to complete before timing starts.
+
+| Test | Earlier (no drain) | NEW (nanosleep drain) | Verdict |
+|---|--:|--:|---|
+| CCTL on empty L1 | ~3.7 cy (1.7 net) | **2.0 cy noise floor** | matches |
+| CCTL after 4 KB cached loads | 60 cy (claimed ~2 cy/line) | **2.0 cy** | WAS DRAIN WAIT, not invalidation |
+| CCTL after 16 KB cached loads | 312 cy (claimed ~2 cy/line) | **2.0 cy** | WAS DRAIN WAIT, not invalidation |
+| CCTL after 32 KB cached loads | 270 cy | **10 cy** (single outlier) | mostly free, possibly L1 capacity boundary |
+| CCTL after 64-256 KB cached loads | 2.0 cy | **2.0 cy** | both noise floor |
+| Second CCTL after first | 4.0 cy | 2.0 cy | second CCTL has nothing to wait for |
+
+**The "2 cy per cache line" claim is RETRACTED.** CCTL.IVALL on B300 sm_103a is essentially free regardless of L1 fill state. The previous "60-312 cy" measurements reflected the cost of completing in-flight cached LDG operations before the timed window starts, not invalidation cost.
+
+### Corrected understanding
+
+`fence.acquire.gpu` (=CCTL.IVALL) cost depends on:
+- **In-flight load drain** at the moment the fence is encountered (waits for them to complete)
+- NOT on number of L1-resident lines (invalidation itself is fast, possibly hardware-tagged)
+
+For producer-consumer protocols: the consumer's `fence.acquire.gpu` will wait for any of ITS OWN in-flight loads to complete, but does NOT pay per-line invalidation cost.
+
+### Open questions still to investigate
+
+1. **Carveout effect** — QuickRunCUDA doesn't expose `cudaFuncSetAttribute(cudaFuncAttributePreferredSharedMemoryCarveout, ...)`. With the default carveout, the actual L1 size may be smaller than 256 KB. Need to test with explicit max-L1 / min-shmem to confirm "no per-line cost" holds at maximum L1 size.
+2. **Write fill behavior** with proper drain (separate test still needed)
+3. **Why the 32 KB outlier (10 cy)?** — may indicate some capacity-related cost, but tiny.
+
+This is a textbook example of the user's "MECHANISM is a hypothesis to test" rule. The earlier conclusion looked plausible and matched the catalog narrative ("L1 invalidate is per-line"), but a more rigorous test reveals the cost was elsewhere. Lesson reinforced.
+
+---
+
+
 Audit date: 2026-04-23
 Auditor: Claude Opus 4.7 (main session, manual)
 GPU: B300 SXM6 AC, GPU 0
