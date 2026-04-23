@@ -261,6 +261,7 @@ If you don't trust a number: it's probably already on `REVIEW_CHECKLIST_B300.md`
 17. **u64.ADD demonstrates clean alu+fmaheavy co-issue**: pipe_alu (IADD3) + pipe_fmaheavy (IMAD.X) saturate together → 64 u64-adds/SM/cy. Per `02_4_u64_integer.md`.
 18. **`.L2::256B` cache hint gives 40% DRAM BW boost** for sparse-but-spatially-local LDG patterns: stride-256B 4B-load reaches **7.06 TB/s = 92% of HBM SoL** (vs 5.07 TB/s baseline). Compiler emits `LDG.E.LTC256B`. Use whenever consecutive threads in a warp span a full 256B+ DRAM sector. Per `16_L2_256B_modifier.md`.
 19. **`.ca` beats `.cg` by 1.88×** (NOT 1.25× as catalog L1571 claims) for L1-fitting workloads. **.ca delivers 13.13 TB/s L1TEX** (catalog 13.1 ✓), **.cg delivers only 6.97 TB/s** (catalog claimed 10.5). The L1+L2 path is twice as wide as the L2-bypass path on the L1TEX unit. Always prefer `.ca` over `.cg` when working set fits in L1 (≤228 KB). Per `16_ca_vs_cg_hot.md`.
+20. **Constant-memory broadcast (`ld.const.u32` → LDC.32) saturates the ADU pipe at 17.99 TB/s effective (98% of ADU SoL)**, NOT the LSU pipe. ADU peak = 0.5 inst/SM/cy. Use BS=512 to actually hit the cap (BS=256 only reaches 90%). The 31.7× broadcast amplification (vs per-lane LDC) confirmed via MODE=1 sweep. Useful for LUTs/shared constants accessed uniformly across a warp. Per `02_12b_const_mem_broadcast.md`.
 
 ### Catalog corrections (added 2026-04-23, see REVIEW_CHECKLIST)
 
