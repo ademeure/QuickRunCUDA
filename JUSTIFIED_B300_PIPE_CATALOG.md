@@ -16,6 +16,24 @@
 - "Catalog L446 wrong by 2.2×" overstated; real 12% gap from clock+rate differences (refined in §2.13)
 - syncthreads formula `12+2W` is wrong in 3 catalog locations; real `22+2W` triple-confirmed
 - `MATCH.ANY 20× slower` understates; real **62× slower** at chip saturation (E16 in §16)
+- L2 latency = 301 cy is rock-solid; L1 latency claim is methodology-dependent (catalog 39 cy, my pointer-chase 56.9 cy at 4 KB)
+- Pointer-chase methodology can't reach DRAM latency due to locality (cache stays hot at small visited-set count, even at 65 MB WS)
+
+**This audit's self-corrections** (caught and walked back during the audit):
+1. FP64 catalog "off by 2.2×" → actually 12% off (wording confusion not numerical error)
+2. SMEM 32-bit bank conflicts "absent on B300" → REAL at 9.6× when properly tested
+3. SHFL broadcast "1.9 cy essentially free" → 7.46 cy in general case; uniform path only triggers in narrow uniform-value cases
+
+**Open multi-GPU items (deferred this session, GPU 0 only):**
+- All-reduce 21 µs floor (custom) / 10 µs (NCCL)
+- P2P GEMM zero-penalty 1.00-1.01× remote
+- release.sys NVLink visibility ~1663 cy
+- Cross-GPU atomics
+
+**Open tcgen05 items** (require involved alloc/mbarrier setup, not re-run):
+- tcgen05.mma cy/MMA = max(44, N/2) for M=128
+- tcgen05.mma format-agnostic claim (all f8f6f4 = 128 cy)
+- tcgen05.mma smem-layout-insensitive
 
 **For top errors and new architectural facts, see `REVIEW_CHECKLIST_B300.md` TLDR table.**
 
