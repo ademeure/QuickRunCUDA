@@ -678,10 +678,18 @@ extern "C" __global__ void __launch_bounds__(128, MIN_BLOCKS_PER_SM) kernel(cons
 
     int lo0,hi0,lo1,hi1,lo2,hi2,lo3,hi3;
     unsigned char fp8s0,fp8s1,fp8s2,fp8s3;
+#ifdef INTERLEAVE_GROUPS
+    // Process A, C, B, D — encourages compiler to issue late loads earlier
+    process_group(wa0,wa1,wa2,wa3,wa4,wa5,wa6,wa7, scale, lo0,hi0,fp8s0);
+    process_group(wc0,wc1,wc2,wc3,wc4,wc5,wc6,wc7, scale, lo2,hi2,fp8s2);
+    process_group(wb0,wb1,wb2,wb3,wb4,wb5,wb6,wb7, scale, lo1,hi1,fp8s1);
+    process_group(wd0,wd1,wd2,wd3,wd4,wd5,wd6,wd7, scale, lo3,hi3,fp8s3);
+#else
     process_group(wa0,wa1,wa2,wa3,wa4,wa5,wa6,wa7, scale, lo0,hi0,fp8s0);
     process_group(wb0,wb1,wb2,wb3,wb4,wb5,wb6,wb7, scale, lo1,hi1,fp8s1);
     process_group(wc0,wc1,wc2,wc3,wc4,wc5,wc6,wc7, scale, lo2,hi2,fp8s2);
     process_group(wd0,wd1,wd2,wd3,wd4,wd5,wd6,wd7, scale, lo3,hi3,fp8s3);
+#endif
 
     // Two int4 stores (each covers 2 groups)
     #ifdef GOLDEN
