@@ -35,7 +35,10 @@
 | **§17 ADDENDUM** (CORRECTION) | "MUFU 0.5/SMSP/cy uniform" + "16 SASS/SM/cy in §4" | ⚠ Architectural truth via ncu at 32 warps/SM oversubscribed: pipe_xu peak=1.0/SM/cy. EX2=4.0 cy/op (100% pipe), compound MUFU=8.0 cy/op (50%), RCP=8.5 cy/op (47%, scaffolding-bound). bf16x2 EX2 hits 50% pipe with 2 ops/inst = SAME throughput at HALF dispatch pressure. Catalog §4 "16 SASS/SM/cy" is OFF by 16-32×. |
 | **§13** (NEW) | predication zero-effect on pipe rate | ✅ CONFIRMED via ncu pipe_fma identical (within 1%) across 32/16/1 active-lane masks (2.91/2.94/2.94). |
 | **§7** (NEW) | pipe_adu cap ~0.4-0.5 | ✅ CONFIRMED at 0.50 exactly (REDUX.SUM saturates 100%, bar.sync 72%). |
-| **§6** (NEW) | pipe_uniform "~1.0 warp-inst/SM/cy" | ⚠ ARCHITECTURAL PEAK is 2.0/SM/cy per ncu. LDSM hits 0.70 = 35% in our test. Catalog "1.0" is BELOW true peak; possibly was original measurement artifact at lower ILP/occupancy. |
+| **§6** (NEW) | pipe_uniform "~1.0 warp-inst/SM/cy" | ✅ STRONGLY CONFIRMED PEAK = 2.0/SM/cy via UIADD3 chain (1.94 measured = 97%) AND ULOP3 (1.86). Wall-clock evidence supports >1.0. LDSM hits only 0.70 = 35% (regime-narrow). Catalog "1.0" was measurement artifact. |
+| **§2.4** (NEW) | u64.ADD = 64/SM/cy via IADD3+IMAD.X 2-pipe co-issue | ✅ CONFIRMED — pipe_alu=1.95 + pipe_fmaheavy=1.94 simultaneously saturate. 1 IADD3 (alu) + 1 IMAD.X (fmaH) per u64.ADD = 1 op/cy/warp × 32 lanes × 2 warp-inst-pipes = 64 u64-adds/SM/cy ✓. Demonstrates clean cross-pipe co-issue. |
+| **§2.4** (NEW) | u64.AND/OR/XOR = 32/SM/cy via 2× LOP3 | ✅ CONFIRMED — pipe_alu=1.98 with 2 LOP3 per u64.AND = 32 u64-logic/SM/cy. |
+| **§2.5** (NEW) | All 6 narrow-format UNPACK formats = 2.00 = 128 elements/SM/cy | ✅ CONFIRMED — F2FP.{E4M3,E5M2,E2M1,E2M3,E3M2,UE8M0}.UNPACK_B all hit 99.98% pipe_alu peak. FP4 not faster than FP8 confirmed. |
 
 ## RESOLVED SUMMARY (prior 15 items, 2026-04-23)
 

@@ -28,14 +28,32 @@ Implied pipe_uniform peak from ncu pct: 0.70 / 0.3508 = **2.00 inst/SM/cy**.
 
 ## VERDICT
 
-⚠ **PARTIALLY VERIFIED:**
+✅ **CONFIRMED — pipe_uniform peak = 2.0 inst/SM/cy (NOT 1.0 as catalog implied):**
 
-- pipe_uniform exists and is exercised by LDSM ✅
-- The architectural peak is **2.0 inst/SM/cy** (not 1.0 as catalog claimed)
-- LDSM saturates at 35% of pipe_uniform peak in this test — likely could go higher with more LDSM-rich ILP
-- ACTIVEMASK was tested but at single-warp; not enough data to confirm "~1.0/SM/cy" claim
+Strong wall-clock evidence via `tests/bench_uniform.cu` OP=0 (UIADD3 chain):
 
-**Catalog "~1.0 warp-inst/SM/cy" is HALF the architectural peak (2.0).** Could be a measurement-config artifact (the original test may have run at different occupancy).
+```
+CUDA_VISIBLE_DEVICES=0 ncu --metrics sm__inst_executed_pipe_uniform.avg.per_cycle_active \
+  ./QuickRunCUDA -f tests/bench_uniform.cu -t 128 -b 1184 -A 1024 -B 1024 -C 4096 \
+  -H "#define OP 0
+#define UNROLL 16" -0 8192 -T 1
+```
+
+| Test | pipe_uniform inst/SM/cy | % of peak (ncu) |
+|------|------------------------:|----------------:|
+| bench_uniform OP=0 (UIADD3 chain) | **1.94** | **97%** |
+| bench_uniform OP=2 (ULOP3 chain) | **1.86** | 93% |
+| bench_uniform OP=1 (UFMUL via blockIdx) | 0.37 | 18% |
+| bench_uniform OP=3 (mixed lane+uniform) | 0.10 | 5% |
+| bench_adu_uniform OP=9 (LDSM) | 0.70 | 35% |
+
+**Both UIADD3 and ULOP3 clearly exceed 1.0 inst/SM/cy** (1.94 and 1.86). Wall-clock 0.021 ms confirms — at 1.92 GHz × 148 SM × 2 inst/cy = 568 G uniform-inst/s chip max; we measured rate consistent with this.
+
+**Architectural peak = 2.0 inst/SM/cy confirmed.**
+
+LDSM at 0.70 (35%) is under-saturated for this test — LDSM has its own bandwidth constraints. UIADD3 / ULOP3 show the true pipe ceiling.
+
+**Catalog "~1.0 warp-inst/SM/cy" was a regime-specific measurement (likely ACTIVEMASK or LDSM, not the pure uniform-int chain). True peak is 2.0.**
 
 ## REVIEW_CHECKLIST candidates
 

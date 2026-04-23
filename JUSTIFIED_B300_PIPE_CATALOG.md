@@ -51,10 +51,12 @@
 | §0 All-reduce latency (NV18) | L153 | 🔍 not yet | [00h_allreduce.md](justifications/00h_allreduce.md) |
 | §1 Pipe topology | L187 | 🔍 in-progress | [01_pipe_topology.md](justifications/01_pipe_topology.md) |
 | §2 Complete instruction catalog | L214 | 🔍 not yet | [02_inst_catalog.md](justifications/02_inst_catalog.md) |
+| §2.4 u64 integer | L262 | ✅ replicated | [02_4_u64_integer.md](justifications/02_4_u64_integer.md) — u64.ADD = 64/SM/cy (dual alu+fmaH co-issue); AND/SHL/MIN at alu cap; MUL plausible |
+| §2.5 Narrow-format CVT | L277 | ✅ replicated | [02_5_narrow_cvt.md](justifications/02_5_narrow_cvt.md) — all 6 UNPACK formats hit 2.00 = 99.98% of pipe_alu peak (FP4=FP6=FP8=BF16-UE8M0) |
 | §3 Contention rules | L472 | ⚠ partially verified | [03_contention.md](justifications/03_contention.md) — Rules 1-3 confirmed via prior audits; Rule 4 (HFMA2+FFMA mix) preserved-not-re-tested |
 | §4 Rate cheatsheet | L485 | ⚠ partially verified | [04_rates.md](justifications/04_rates.md) — most rows correct, but **MUFU "16 SASS/SM/cy" is OFF BY 16-32×**; F2I/POPC/BREV/FLO same issue; u32 IADD "128" only via alternation |
 | §5 Narrow-format throughput | L513 | 🔍 not yet | [05_narrow.md](justifications/05_narrow.md) |
-| §6 Uniform datapath | L521 | ⚠ partially verified | [06_uniform.md](justifications/06_uniform.md) — pipe_uniform PEAK is 2.0/SM/cy (not 1.0 as catalog implied); LDSM hits 0.70 = 35% |
+| §6 Uniform datapath | L521 | ✅ replicated | [06_uniform.md](justifications/06_uniform.md) — pipe_uniform PEAK = 2.0/SM/cy CONFIRMED (UIADD3 chain hits 1.94 = 97%, ULOP3 1.86 = 93%, both >1.0). Catalog "~1.0" was regime-narrow LDSM measurement |
 | §7 ADU pipe | L536 | ✅ replicated | [07_adu.md](justifications/07_adu.md) — pipe_adu cap = 0.50/SM/cy confirmed (REDUX.SUM 0.50 = 100%, bar.sync 0.36 = 72%) |
 | §8 SASS opcode → pipe classification | L554 | 🔍 not yet | [08_sass_opcode_pipe.md](justifications/08_sass_opcode_pipe.md) |
 | §9 PTX → SASS mapping | L821 | 🔍 not yet | [09_ptx_sass.md](justifications/09_ptx_sass.md) |
