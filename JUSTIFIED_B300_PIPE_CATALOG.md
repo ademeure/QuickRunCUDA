@@ -26,6 +26,8 @@ The 6 remaining open are all genuinely measurement-blocked (B6 DRAM-write clock-
 - L2 latency = 301 cy is rock-solid; L1 latency claim is methodology-dependent (catalog 39 cy, my pointer-chase 56.9 cy at 4 KB)
 - Pointer-chase methodology can't reach DRAM latency due to locality (cache stays hot at small visited-set count, even at 65 MB WS)
 - **Catalog confuses three different smem caps** (G7): default 48 KB / opt-in 227 KB / per-SM HW 228 KB — calling all three "200 KB" is wrong
+- **Catalog has multiple valid fence-cost numbers but doesn't tag the regime** (S1/S2/S4/S5/Y4): `cta=8/gl=267/sys=1727` (single-warp, single-GPU) vs `cta=337/gl=1679/sys=8869` (chip-busy W=16) vs `sys=2806` (2-GPU NVLink rig) — three different load contexts, all valid in their own regime, but listed without labels. Catalog should explicitly tag every fence row with `[single-warp / chip-busy / multi-GPU]` to avoid apparent contradictions.
+- **`pipe_tensor` ncu counter does NOT measure tcgen05.mma** (H5/Y1) — it only measures legacy mma.sync (HMMA). Catalog L1089 cites pipe_tensor for tcgen05 throughput which is INVALID. Use UTCQMMA/UTCOMMA SASS counts × cy/MMA instead. (Catalog was warned about this footgun and fell into its own trap.)
 
 **This audit's self-corrections** (caught and walked back during the audit):
 1. FP64 catalog "off by 2.2×" → actually 12% off (wording confusion not numerical error)
