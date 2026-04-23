@@ -632,7 +632,7 @@ Per-warp throughput (single warp on 1 SMSP, ILP=16, all OTHER SMSPs idle):
 | `atom.global.*` | ATOMG.* | lsu | bandwidth-bound | |
 | `s2r %clock/%clock_hi` | S2R SR_CLOCKLO/HI | adu | 0.5 | |
 
-### §2.12 Memory
+### §2.12 Memory — ✅ B9 AUDIT-VERIFIED 2026-04-23 ([02_12b_const_mem_broadcast.md](justifications/02_12b_const_mem_broadcast.md))
 
 | PTX | SASS | Pipe | Notes |
 |---|---|---|---|
@@ -640,6 +640,9 @@ Per-warp throughput (single warp on 1 SMSP, ILP=16, all OTHER SMSPs idle):
 | `st.global.u32` | STG.E | lsu | DRAM-bottleneck, not pipe |
 | `ld.shared.u32` | LDS | lsu | ~1.0 issue, bank-conflict-sensitive |
 | `st.shared.u32` | STS | lsu | 1.00 saturating |
+| **`ld.const.u32`** (broadcast) | **LDC.32** | **adu** ✨ | **NOT lsu.** ADU peak = 0.5 inst/SM/cy. At BS=512 (ncu lock 1.92 GHz): **17.99 TB/s effective** / **0.562 TB/s actual cache**, **31.7× broadcast amplification** confirmed via per-lane MODE=1. Catalog 17.8 TB/s ✅ matches within 1.1%. |
+
+**New finding (missing from catalog §1 pipe topology):** LDC dispatches via **ADU**, not LSU. BS=512 is required to hit pipe_adu peak (BS=256 only reaches 90%). Recommend adding an `ld.const → LDC → adu` row to catalog's pipe table.
 
 ### §2.13 FP64 — severely throttled — ✅ AUDIT-VERIFIED 2026-04-23 ([02_13_fp64.md](justifications/02_13_fp64.md))
 

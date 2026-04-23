@@ -41,7 +41,7 @@
 - atom.global.cas SASS: "STRONG.GPU" → actual **STRONG.SYS**
 - ld.shared bank-conflict scoping (TRUE for v2/v4 AND 32-bit, methodology error in our prior claim)
 
-**12 NEW architectural facts** missing from catalog (top-12 in REVIEW_CHECKLIST TLDR):
+**13 NEW architectural facts** missing from catalog (top-13 in REVIEW_CHECKLIST TLDR):
 - F2IP.U8 fast path (4× faster than F2I.S8)
 - POPC.INC trick: `atomicAdd(addr, 1u)` → 2.5× speedup at warp-broadcast
 - Global REDG (no-return) vs ATOMG = 25× speedup
@@ -54,6 +54,7 @@
 - cp.async (LDGSTS) bypasses acquire fence drain unless commit_group
 - **`.L2::256B` cache hint = 92% HBM SoL recipe** (40% boost over baseline)
 - **`.ca` beats `.cg` by 1.88× at L1-fitting WS** (NOT 1.25× as catalog says)
+- **`ld.const` (LDC.32) dispatches via the ADU pipe, not LSU** — catalog §1 PTX→pipe table is missing the LDC row; broadcast achieves 17.99 TB/s eff = 98% of ADU SoL
 
 **4 SELF-CORRECTIONS** caught and walked back during the audit:
 - FP64 catalog "off by 2.2×" → actually 12% off (wording confusion)

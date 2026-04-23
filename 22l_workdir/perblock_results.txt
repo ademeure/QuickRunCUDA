@@ -1,0 +1,65 @@
+=== grid=8 ===
+1800 MHz | # MODE=0 (cg::grid.sync) grid=8 threads=128 iters=200
+# per-block-avg cy: min=2335 (block 0)  mean=2335  max=2335 (block 2)
+# wall_us_per_sync=1.371 wall_ms_total=0.274
+1800 MHz | # MODE=1 (atomic_acqrel) grid=8 threads=128 iters=200
+# per-block-avg cy: min=1361 (block 3)  mean=1361  max=1361 (block 6)
+# wall_us_per_sync=0.828 wall_ms_total=0.166
+1800 MHz | # MODE=2 (ninja_B_relaxed) grid=8 threads=128 iters=200
+# per-block-avg cy: min=1983 (block 2)  mean=1983  max=1983 (block 7)
+# wall_us_per_sync=1.176 wall_ms_total=0.235
+1800 MHz | # MODE=3 (ninja_C_split) grid=8 threads=128 iters=200
+# per-block-avg cy: min=2924 (block 0)  mean=2929  max=2930 (block 7)
+# wall_us_per_sync=1.695 wall_ms_total=0.339
+=== grid=32 ===
+1800 MHz | # MODE=0 (cg::grid.sync) grid=32 threads=128 iters=200
+# per-block-avg cy: min=2318 (block 29)  mean=2319  max=2320 (block 26)
+# wall_us_per_sync=1.357 wall_ms_total=0.271
+1800 MHz | # MODE=1 (atomic_acqrel) grid=32 threads=128 iters=200
+# per-block-avg cy: min=1376 (block 2)  mean=1378  max=1380 (block 11)
+# wall_us_per_sync=0.839 wall_ms_total=0.168
+1800 MHz | # MODE=2 (ninja_B_relaxed) grid=32 threads=128 iters=200
+# per-block-avg cy: min=2019 (block 29)  mean=2024  max=2026 (block 11)
+# wall_us_per_sync=1.195 wall_ms_total=0.239
+1800 MHz | # MODE=3 (ninja_C_split) grid=32 threads=128 iters=200
+# per-block-avg cy: min=3118 (block 0)  mean=3123  max=3124 (block 10)
+# wall_us_per_sync=1.811 wall_ms_total=0.362
+=== grid=64 ===
+1800 MHz | # MODE=0 (cg::grid.sync) grid=64 threads=128 iters=200
+# per-block-avg cy: min=2279 (block 57)  mean=2279  max=2280 (block 48)
+# wall_us_per_sync=1.338 wall_ms_total=0.268
+1800 MHz | # MODE=1 (atomic_acqrel) grid=64 threads=128 iters=200
+# per-block-avg cy: min=1517 (block 3)  mean=1519  max=1520 (block 25)
+# wall_us_per_sync=0.921 wall_ms_total=0.184
+1800 MHz | # MODE=2 (ninja_B_relaxed) grid=64 threads=128 iters=200
+# per-block-avg cy: min=1975 (block 45)  mean=1981  max=1986 (block 23)
+# wall_us_per_sync=1.175 wall_ms_total=0.235
+1800 MHz | # MODE=3 (ninja_C_split) grid=64 threads=128 iters=200
+# per-block-avg cy: min=3030 (block 0)  mean=3037  max=3043 (block 22)
+# wall_us_per_sync=1.767 wall_ms_total=0.353
+=== grid=132 ===
+1800 MHz | # MODE=0 (cg::grid.sync) grid=132 threads=128 iters=200
+# per-block-avg cy: min=2224 (block 82)  mean=2230  max=2235 (block 90)
+# wall_us_per_sync=1.309 wall_ms_total=0.262
+1800 MHz | # MODE=1 (atomic_acqrel) grid=132 threads=128 iters=200
+# per-block-avg cy: min=1577 (block 130)  mean=1578  max=1580 (block 85)
+# wall_us_per_sync=0.947 wall_ms_total=0.189
+1800 MHz | # MODE=2 (ninja_B_relaxed) grid=132 threads=128 iters=200
+# per-block-avg cy: min=2024 (block 115)  mean=2027  max=2029 (block 52)
+# wall_us_per_sync=1.197 wall_ms_total=0.239
+1800 MHz | # MODE=3 (ninja_C_split) grid=132 threads=128 iters=200
+# per-block-avg cy: min=2413 (block 0)  mean=2418  max=2420 (block 42)
+# wall_us_per_sync=1.413 wall_ms_total=0.283
+=== grid=148 ===
+1800 MHz | # MODE=0 (cg::grid.sync) grid=148 threads=128 iters=200
+# per-block-avg cy: min=2330 (block 144)  mean=2337  max=2341 (block 34)
+# wall_us_per_sync=1.370 wall_ms_total=0.274
+1800 MHz | # MODE=1 (atomic_acqrel) grid=148 threads=128 iters=200
+# per-block-avg cy: min=1585 (block 140)  mean=1588  max=1591 (block 96)
+# wall_us_per_sync=0.958 wall_ms_total=0.192
+1800 MHz | # MODE=2 (ninja_B_relaxed) grid=148 threads=128 iters=200
+# per-block-avg cy: min=2036 (block 77)  mean=2043  max=2048 (block 34)
+# wall_us_per_sync=1.206 wall_ms_total=0.241
+1800 MHz | # MODE=3 (ninja_C_split) grid=148 threads=128 iters=200
+# per-block-avg cy: min=3172 (block 0)  mean=3176  max=3178 (block 25)
+# wall_us_per_sync=1.832 wall_ms_total=0.366

@@ -34,6 +34,7 @@
 | J | cp.async (LDGSTS) **bypasses acquire fence drain** unless commit_group is issued first | §22l ADDENDUM 12 |
 | K | **`.L2::256B` cache hint gives 40% DRAM BW boost** (5.07→7.06 TB/s = 92% HBM SoL) for sparse-but-spatially-local access patterns (4B reads at 256B stride between threads). Compiler emits LDG.E.LTC256B. | `16_L2_256B_modifier.md` |
 | L | **.ca beats .cg by 1.88× (NOT 1.25×)** at L1-fitting workloads — catalog L1571 understates the gap by 3.5×. .ca → 13.13 TB/s L1TEX (catalog ✓ exact); .cg → only 6.97 TB/s (catalog claimed 10.5). | `16_ca_vs_cg_hot.md` |
+| M | **`ld.const.u32` (LDC.32) dispatches via the ADU pipe, NOT LSU** — ADU peak 0.5 inst/SM/cy. BS=512 required to saturate (BS=256 only 90%). 17.99 TB/s effective via 31.7× broadcast = catalog ✅ within 1.1%. Catalog §1 / §2.12 PTX→pipe table is missing the LDC row entirely. | `02_12b_const_mem_broadcast.md` |
 
 **Format below:** group by catalog section, single-line yes/no per claim. RESOLVED items have `[x]`; OPEN items have `[ ]` for your review.
 
@@ -181,7 +182,7 @@ These are the [ ] items the user is most likely to have a strong opinion on. Ope
 - [ ] **B6** "DRAM write = 7.09 TB/s" — User flag: "SM→L2 *write* path is limited to 32B/clk, you cannot get peak HBM write at lower clocks; 1920 vs 2032 might affect this" — `[ref: B300_PIPE_CATALOG.md:46, reviewed_errors L1132]` — `[clock-mismatch]`
 - [ ] **B7** "TMEM read 55.92 TB/s, drops to 31 with 4R/iter" — surprisingly high; my back-of-env says theoretical TMEM read is bounded by tcgen05.ld throughput per warp × SMs which gives much less. Methodology + SASS dump needed — `[ref: B300_PIPE_CATALOG.md:50]` — `[unverified]`
 - [ ] **B8** "TMEM write 97.93 → 131 TB/s" — even more suspect; needs first-principles bound check — `[ref: B300_PIPE_CATALOG.md:50]` — `[unverified]`
-- [ ] **B9** "Constant memory broadcast LDC.32 = 17.8 TB/s eff (~0.55 TB/s actual cache traffic)" — broadcast amplification × 32 lanes; verify denominator — `[ref: B300_PIPE_CATALOG.md:47]` — `[unit-confusion]`
+- [x] **B9** "Constant memory broadcast LDC.32 = 17.8 TB/s eff (~0.55 TB/s actual cache traffic)" — broadcast amplification × 32 lanes; verify denominator — `[ref: B300_PIPE_CATALOG.md:47]` — `[unit-confusion]` // ✅ REPLICATED: measured 17.99 TB/s eff / 0.562 TB/s actual at BS=512 (pipe_adu=99.5%); 31.7× broadcast amplification confirmed via MODE=1 non-broadcast 32× slowdown. **NEW**: LDC dispatches on ADU pipe (NOT LSU/uniform). See `justifications/02_12b_const_mem_broadcast.md`.
 - [ ] **B10** "Local (register spill) 1.3 TB/s = 52× slower than smem" — likely correct but needs spill-depth-controlled test (catalog notes spill cliff at 32 vars) — `[ref: B300_PIPE_CATALOG.md:49]` — `[regime-narrow]`
 - [ ] **B11** "256-byte stride v8 .256B L2 cache modifier" test — user remembers achieving HIGHEST DRAM BW % in any microbenchmark with this; catalog has lost track — needs to be re-located in tests/ — `[ref: reviewed_errors L925]` — `[superseded-suspect]`
 - [ ] **B12** "LDG.E.ENL2.256 means bypassing L1" — user is skeptical: "Are you sure ENL2 means what you think it means?" — needs ISA reference check — `[ref: B300_PIPE_CATALOG.md, reviewed_errors L1063]` — `[agent-hearsay]`

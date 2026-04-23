@@ -1,0 +1,10 @@
+# COMP=0 (baseline) grid=148 iters=1000  mean_cy=2.0  min_cy=2  wall_us=0.038
+# COMP=1 (fence.acq) grid=148 iters=1000  mean_cy=25.5  min_cy=2  wall_us=0.062
+# COMP=2 (fence.rel) grid=148 iters=1000  mean_cy=456.3  min_cy=290  wall_us=0.455
+# COMP=3 (fence.acq_rel) grid=148 iters=1000  mean_cy=574.7  min_cy=410  wall_us=0.474
+# COMP=4 (atom.relax) grid=148 iters=1000  mean_cy=123.4  min_cy=66  wall_us=0.125
+# COMP=5 (atom.acqrel) grid=148 iters=1000  mean_cy=1121.5  min_cy=685  wall_us=0.883
+# COMP=6 (ld.acq) grid=148 iters=1000  mean_cy=386.2  min_cy=238  wall_us=0.321
+# COMP=7 (ld.rel) grid=148 iters=1000  mean_cy=385.8  min_cy=235  wall_us=0.320
+# COMP=8 (__syncthreads) grid=148 iters=1000  mean_cy=6.2  min_cy=2  wall_us=0.049
+# COMP=9 (atom+ld(no spin)) grid=148 iters=1000  mean_cy=1742.0  min_cy=914  wall_us=1.240

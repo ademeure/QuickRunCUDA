@@ -38,6 +38,7 @@ This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED
 - cp.async (LDGSTS) bypasses acquire fence drain unless commit_group
 - **`.L2::256B` cache hint = 92% HBM SoL recipe** (40% boost vs baseline at stride-256B 4B reads)
 - **`.ca` beats `.cg` by 1.88× at L1-fitting WS** (NOT 1.25× as catalog L1571 says)
+- **`ld.const` (LDC.32) dispatches via ADU pipe, not LSU** — catalog §1 PTX→pipe table missing this row; broadcast achieves 17.99 TB/s eff at 98% of ADU SoL
 
 **4 self-corrections** caught and walked back during the audit:
 - FP64 catalog "off by 2.2×" → actually 12% off (wording confusion)
@@ -55,6 +56,7 @@ For the full per-section trail with raw output, SASS, and ncu: see `JUSTIFIED_B3
 |---|---|---|---|---|
 | §0.FFMA | FP32 scalar FFMA peak (71.8 TF) | ✅ | **MATCH 100%**: 71.82 TF measured. Clock=**1942 MHz** (not 1920 catalog, not 2032 spec). | `00a_ffma_peak.md` |
 | §0.MEM | smem (35.6) / L2 (22-26) / DRAM (7.18) | ✅⚠ | smem 35.88 ✓; DRAM 7.17-7.25 ✓; L2 20.3 (BELOW catalog upper). NEW FOOTGUN: ncu warp-aggregated metric trap. | `00b_mem_hierarchy.md` |
+| §2.12.B9 | Const mem broadcast LDC.32 = 17.8 TB/s eff / 0.55 TB/s actual | ✅ | **MATCH:** measured 17.99 TB/s eff / 0.562 TB/s actual at BS=512 (pipe_adu=99.5%). 31.7× broadcast amplification confirmed via per-lane MODE=1. **NEW: LDC dispatches via ADU pipe, NOT LSU.** | `02_12b_const_mem_broadcast.md` |
 | §1 | Pipe topology / dispatch ceiling | ✅⚠ | Cap 4.00 ✓; V52 alu+fma=145% ✓; pipe_xu compound 0.5 vs simple 1.0 ✓. **FALSIFIED**: catalog L218 "FFMA → both fma sub-pipes simultaneously" is wrong — FFMA dispatches to ONE sub-pipe per cycle. | `01_pipe_topology.md` |
 | §22 dual-issue | FFMA2 + ALU vs scalar FFMA | ✅ | FFMA2 + LOP3 1:1 saturates ALL 3 pipes (fmaH=98% / fmaL=97% / alu=97%) → 314 useful ops/SM/cy vs scalar+LOP3's 187. **Dual-issue sweet spot.** | `22_dual_issue_ffma2_alu.md` |
 | §22-§25 | Tensor mma.sync (FP16/TF32/FP8/INT8) | ✅⚠ | FP16=571 ✓; TF32=285.7 ✓; INT8 IMMA 142.4 ✓; **FP8 emulated 309 (catalog 276, +12% LOW)**. Confirmed catalog FADD-artifact warning is real. | `22_tensor_mma_sync.md` |

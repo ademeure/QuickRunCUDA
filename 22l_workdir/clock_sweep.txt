@@ -1,0 +1,15 @@
+=== REQ=1500 actual=1500 MHz ===
+  MODE=0 (cg::grid.sync) cy=2099 wall_us=1.489
+  MODE=1 (atomic_acqrel) cy=1488 wall_us=1.090
+  MODE=2 (ninja_B_relaxed) cy=1900 wall_us=1.365
+  MODE=3 (ninja_C_split) cy=2303 wall_us=1.643
+=== REQ=1800 actual=1800 MHz ===
+  MODE=0 (cg::grid.sync) cy=2234 wall_us=1.324
+  MODE=1 (atomic_acqrel) cy=1620 wall_us=0.978
+  MODE=2 (ninja_B_relaxed) cy=2062 wall_us=1.233
+  MODE=3 (ninja_C_split) cy=2400 wall_us=1.417
+=== REQ=1920 actual=1920 MHz ===
+  MODE=0 (cg::grid.sync) cy=2260 wall_us=1.253
+  MODE=1 (atomic_acqrel) cy=1637 wall_us=0.929
+  MODE=2 (ninja_B_relaxed) cy=2078 wall_us=1.169
+  MODE=3 (ninja_C_split) cy=2409 wall_us=1.335
