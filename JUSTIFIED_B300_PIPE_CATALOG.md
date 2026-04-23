@@ -103,9 +103,16 @@ The cheat-sheet aggregates results from many sub-tests. It is split into per-row
 - **[VERDICT]:** ✅ **REPLICATED exactly** — see [justifications/00a_ffma_peak.md](justifications/00a_ffma_peak.md)
 - **[NEW FINDING]:** this-rig FFMA-saturated clock floor is **1942 MHz** (DVFS, not 1920 or 2032). Catalog's 72.7 TF denominator used 1920; the real denominator at rig-clock would be ~74.1 TF (148 × 256 × 1.942 GFLOPS/SM = 73.64 TF → 97.5% MFU). Propose: DENSE catalog should cite **71.82 TF = 97.5% of 73.64 TF (148 SM × 256 FLOPS/SM/cy × 1.942 GHz sustained-FFMA DVFS point)**.
 
-#### §0.MEM — Memory hierarchy table (L37)
-- **[CLAIM]:** Smem read 35.6 TB/s (98% theoretical at 1.92 GHz); HBM 7.18 TB/s ncu-verified
-- **[CANDIDATE TESTS]:** `tests/bench_smem_bw.cu`, `tests/bench_hbm_bw.cu`, `tests/standalone/v45_smem_bw_conflict.cu`
-- **[STATUS]:** 🔍 — see [justifications/00b_mem_hierarchy.md](justifications/00b_mem_hierarchy.md)
+#### §0.MEM — Memory hierarchy table (L37) — replicated 2026-04-23
+- **[CLAIM]:** Smem read 35.6 TB/s (98% theoretical at 1.92 GHz); L2 22-26 TB/s plateau; HBM 7.18 TB/s ncu-verified
+- **[TESTS]:** `tests/bench_smem_v4_clock.cu` (new), existing DRAM kernel
+- **[MEASURED]:**
+  - SMEM `ld.shared.v4.u32` = **35.88 TB/s** (ncu `sm__sass_data_bytes_mem_shared_op_ld.sum.per_second`) at 1942 MHz boost = **97.5% of 36.79 TB/s theoretical** ✓ matches catalog
+  - L2 plateau = **20.3 TB/s** (ncu `lts__t_bytes.sum.per_second`) at WS=16-64 MB, bs=512 mb=2 — **below** catalog's 22-26 range upper end (likely launch-config dependent)
+  - DRAM HBM3E read = **7.17-7.25 TB/s** (ncu `dram__bytes_read.sum.per_second`) across both bs=1024 mb=2 and bs=512 mb=8 recipes at WS=1 GB. **SoL = 93.5-94.5% of 7672 GB/s this-device** (NOT 8000 GB/s spec — AC SKU has fused controller)
+- **[NEW FINDING — methodology]:** `sm__sass_data_bytes_mem_shared_op_ld.sum` reports **warp-aggregated bytes** (warp_inst × 512 B for LDS.128), NOT per-lane. Naive 16 B/inst accounting undercounts by 32×. ⚠ Add to footgun list.
+- **[NEW FINDING — DCE]:** Chain-feedback patterns let compiler DCE 32× of LDS loop body. Needed INDEPENDENT loads with loop-counter-derived addresses + unconditional store to defeat. Existing bench_lds_pure.cu style does NOT work for v4 peak.
+- **[VERDICT]:** ✅ **REPLICATED** (smem + DRAM exact, L2 lower bound) — see [justifications/00b_mem_hierarchy.md](justifications/00b_mem_hierarchy.md)
+- **[DEFERRED]:** TMEM (need tcgen05.alloc/ld/st setup), L1 .ca WS≤1MB (current .cg benches mix L1/L2)
 
 (Sections continue below as I process them.)

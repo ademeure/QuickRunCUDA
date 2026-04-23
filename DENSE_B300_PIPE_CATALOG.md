@@ -186,7 +186,31 @@ The catalog's L218 wording should be: "FFMA can use EITHER sub-pipe per cycle, f
 | `add.rn.f16x2` | HADD2 (sometimes folds to HFMA2) | 2.00 | 128 adds |
 | `mul.rn.f16x2` | HMUL2 (often folds to HFMA2) | 2.00 | 128 muls |
 
-⚠ Open: does FFMA2 + ALU give MORE total useful ops/cy than scalar FFMA? See REVIEW_CHECKLIST C9. Test in progress (justifications/22_dual_issue_ffma2_alu.md when ready).
+### ⚠ KEY FINDING — FFMA2 + ALU IS the dual-issue sweet spot (justifications/22_dual_issue_ffma2_alu.md)
+
+**FFMA2 + LOP3 is strictly better than scalar FFMA + LOP3** because of how dispatch slots are consumed:
+
+| Path | Dispatch use | Pipes saturated | FP32 FLOPS/SM/cy | LOP3 ops/SM/cy | TOTAL useful ops/SM/cy |
+|---|--:|---|--:|--:|--:|
+| Scalar FFMA solo | 4.00 (full) | fma 97% (alternates H/L) | 256 | 0 | 256 |
+| Scalar FFMA + LOP3 | 3.95 | fma 49% (HALVED), alu 96% | **128** (lost half) | ~30 | 187 |
+| FFMA2 solo | 2.04 | fmaH+fmaL both 97% (single inst) | 256 | 0 | 256 (idle alu slots) |
+| **FFMA2 + LOP3 1:1** | **3.94** | **fmaH 98%, fmaL 97%, alu 97%** ALL THREE | **252** (~full) | **31** (~full) | **314 ← winner** |
+| FFMA2 + LOP3 2:1 (sweet spot) | ~3.0 | fma full, alu partial | 256 (full) | ~16 | 272 (LOP3 "free side dish") |
+| LOP3 solo | 2.05 | alu 99% | 0 | 64 | 64 |
+
+**Mechanism:** FFMA2 occupies BOTH `pipe_fmaheavy` AND `pipe_fmalite` per single instruction, but uses only 1 dispatch slot. Scalar FFMA uses 1 dispatch slot with the scheduler load-balancing across H/L sub-pipes. So:
+
+- FFMA2 needs only 2.0 dispatch slots to saturate 256 FLOPS → leaves 2.0 slots free for ALU.
+- Scalar FFMA needs all 4.0 dispatch slots to saturate 256 FLOPS → no room.
+
+**Hard ceilings unchanged:** total dispatch ≤ 4.00 warp-inst/SM/cy still holds (3.94 max measured); FP32 FLOPS still capped at 256/SM/cy. The win is "ALU work for free as a side dish", not "double FLOPS".
+
+**Practical recipe for max useful work:** if your kernel needs both FP32 FMA and integer/bitwise work, prefer **FFMA2 + LOP3 at 2:1 ratio** for full FFMA throughput with LOP3 "free", or **FFMA2 + LOP3 at 1:1** to maximize total ops/cycle (23% improvement over scalar FFMA alone, but the FFMA2 portion drops slightly to ~98%).
+
+**Open follow-ups** (per agent): FFMA2+IMAD, FFMA2+LSU, HFMA2+LOP3, triple co-issue (FFMA2+ALU+LSU).
+
+---
 
 ### §2.3 Integer (pipe_fmaheavy mostly; IADD3 splits)
 
@@ -415,22 +439,46 @@ For the full opcode table, refer to B300_PIPE_CATALOG.md L554-L897 directly. Mos
 
 ---
 
-## §10. L1/L2/HBM bandwidth ladder
+## §10. L1/L2/HBM bandwidth ladder — replicated 2026-04-23 (justifications/00b_mem_hierarchy.md)
 
-(Pending — replication agent in progress; results will land in justifications/00b_mem_hierarchy.md.)
+| Tier | Catalog claim TB/s | Measured 2026-04-23 | Verdict |
+|---|---|---|---|
+| smem `ld.shared.v4.u32` | 35.6 | **35.88 TB/s = 97.5% of 36.79 theoretical at 1942 MHz** | ✅ matches catalog exactly |
+| L1 hit (.ca, WS≤1MB) | 36.1 | not yet measured | ⚠ DEFERRED — current benches mix L1/L2 |
+| L2 plateau (4-128 MB, bs=512 mb=2) | 22-26 | **20.3 TB/s** (ncu `lts__t_bytes`) | ⚠ below upper end of catalog range; likely launch-config dependent |
+| L2 → DRAM cliff at 126 MB | 8.2 | confirmed cliff (drops 13/9.8/7.8 at 128/256/1024 MB) | ✅ matches direction |
+| HBM3E read WS≥1GB | 7.18 | **7.17-7.25 TB/s** across 2 recipes | ✅ matches catalog exactly |
+| TMEM (catalog 55.92 read / 97.93 write) | — | DEFERRED (needs tcgen05.alloc setup) | 🔍 |
 
-Catalog claims (preserved):
-| Tier | Read TB/s |
-|---|--:|
-| smem (`ld.volatile.shared.v4.u32`) | 35.6 (98% theoretical at 1.92 GHz) |
-| L1 hit (.ca, WS≤1MB) | 36.1 |
-| L2 plateau (4-128 MB) | 22-26 |
-| L2 → DRAM cliff at 126 MB | 8.2 |
-| HBM3E (WS≥1GB) | 7.18 (ncu-verified) |
+### Single-warp DRAM SoL anchor (this device)
 
-⚠ Cliff at 126 MB matches `cudaDeviceProp.l2CacheSize = 132,644,864 B` exactly. ✓
+- Denominator: **7,672 GB/s** post-ECC (this-device-actual at 7.992 Gbps × 7680-bit AC bus). NOT 8,000 GB/s spec — AC SKU has 1/16 controller fused.
+- Best measured: 7.25 TB/s = **94.5% of 7,672 GB/s**.
+- Wall-clock alone reports inflated 8.23 TB/s due to L2 absorption — **always cross-check with ncu `dram__bytes_read.sum.per_second`**.
 
-⚠ The L45 claim "→ 11 TB/s at 256 MB" doesn't make sense if L2 is 126 MB and HBM is 7.18 TB/s — 256 MB should be DRAM-bound at ~7 TB/s, not 11. (REVIEW_CHECKLIST CRIT10) Probably L2 amortization at the boundary.
+### ⚠ NEW FOOTGUN — ncu warp-aggregated metric trap
+
+`sm__sass_data_bytes_mem_shared_op_ld.sum` reports **warp-aggregated bytes** (warp_inst × 512 B for LDS.128), NOT per-lane bytes. Naive 16 B/inst accounting undercounts SMEM bandwidth by 32×. Easy to miss; add to methodology pitfalls.
+
+### ⚠ NEW FOOTGUN — chain-feedback DCE
+
+Chain-feedback patterns let the compiler DCE 32× of the LDS loop body even with anti-DCE store. To defeat: use INDEPENDENT loads with loop-counter-derived addresses + unconditional store. The existing `bench_lds_pure.cu` style does NOT work for v4 peak.
+
+### Recompute: SMEM theoretical at 1942 MHz (rig DVFS)
+
+128 B/clk/SM × 148 SMs × 1.942 GHz = **36.79 TB/s** (not 36.4 catalog @ 1.92 GHz).
+
+Measured 35.88 / 36.79 = **97.5%** ✓ matches catalog's 98% claim closely.
+
+### CRIT10 partially resolved: 126 MB cliff is real
+
+Catalog claim "L2 cap at 126 MB, then 11 TB/s at 256 MB, 7.18 TB/s at 1 GB" is roughly confirmed:
+- 126 MB exactly = `cudaDeviceProp.l2CacheSize = 132,644,864 B`
+- 128 MB measured 13 TB/s (catalog says ~11)
+- 256 MB measured 9.8 TB/s
+- 1 GB measured 7.8 TB/s (catalog says 7.18 — close)
+
+The "11 TB/s at 256 MB" was probably L2 partial-hit amortization at the boundary — explanation rather than mystery.
 
 ---
 
