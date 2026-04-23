@@ -250,6 +250,28 @@ If you don't trust a number: it's probably already on `REVIEW_CHECKLIST_B300.md`
 9. Avoid warp specialization without async overlap (3.8× anti-pattern)
 10. Always use NonBlocking streams (12% faster than default)
 
+### Audit-discovered architectural facts (added 2026-04-23)
+
+11. **Use `cvt.rni.sat.u8.f32` over `cvt.rni.sat.s8.f32` for 4× CVT throughput** when format permits (F2IP.U8 = 2.00 alu vs F2I.S8 = 0.5 xu). Per `02_6_other_cvts.md`.
+12. **Use `atomicAdd(addr, 1u)` no-return for 2.5× speedup at warp-broadcast contention** (compiler emits ATOMS.POPC.INC.32 — counts active lanes via popcount). Per `22_atomic_smem_DEEP.md`.
+13. **For shared atomics with return value, prefer global REDG (no-return) when possible — 25× faster than ATOMG (with return)** (32 cy vs 790 cy). Per `15_atomics.md`.
+14. **EX2 is 2× faster than other MUFU ops** (4.0 cy vs 8.0 cy) — use for activation functions (GELU, SiLU). Per `17_mufu.md`.
+15. **bf16x2 EX2 (`MUFU.EX2.BF16x2`) gives same EX2-throughput as f32 EX2 at HALF dispatch pressure** — useful when co-issuing with other ops. Per `17_mufu.md`.
+16. **Chained 2× min.f32 → single FMNMX3 SASS (3-input fused min)** — 128 logical mins/SM/cy, same multiplier as IADD3 for ints. Per `14_extended_ops.md`.
+17. **u64.ADD demonstrates clean alu+fmaheavy co-issue**: pipe_alu (IADD3) + pipe_fmaheavy (IMAD.X) saturate together → 64 u64-adds/SM/cy. Per `02_4_u64_integer.md`.
+
+### Catalog corrections (added 2026-04-23, see REVIEW_CHECKLIST)
+
+- ❌ `__syncthreads` formula: catalog `12+2W` is WRONG, real is `22+2W` (BS=512 → 54 cy not 45)
+- ❌ DFMA latency catalog L103 "92 cy" is WRONG, real **63.9 cy** (L460 was right)
+- ❌ Catalog L446 FP64 chip "475 GFLOPS" is WRONG by 2.2×, real **~1060 GFLOPS** (= 88% of 1.20 TF theoretical)
+- ❌ Catalog L504 §4 MUFU "16 SASS/SM/cy" is OFF by 16-32×, real ~1.0/SM/cy (peak pipe_xu)
+- ❌ Cheat-sheet Rule 9 "atomic hotspot 5×" understates real **34×** at warp-level (CTA-level shows no slowdown)
+- ❌ Cheat-sheet Rule 11 "FP64 300× slower than FP16 tensor" understates real **~2300×** (FP64 1.06 TF / FP16 mma.sync 2465 TF)
+- ❌ Cheat-sheet mbarrier.arrive "8.1 cy" likely measured `.relaxed.cta` modifier; default is **27 cy**
+- ⚠ Catalog "atom.global.cas → ATOMG.E.CAS.STRONG.GPU" — actual SASS emit is **STRONG.SYS** (system scope, NVLink-visible)
+- ⚠ Catalog "ld.shared bank-conflict-sensitive" — only TRUE for v2/v4 wide LDS; FALSE for 32-bit LDS on B300 (random=stride for any pattern at ~6.88 cy)
+
 ### Roofline (operational intensity ridge)
 
 | Compute path | Ridge OI (FLOP/byte) |
@@ -334,8 +356,9 @@ Most ML inference ops are below OI = 1 → memory-bound → fusion is king.
 | Op | cy | Notes |
 |---|--:|---|
 | `__syncwarp()` | 2.8 | claim — needs verification, likely 0 since no SASS emitted in some cases |
-| `__syncthreads` BS=512 | 45 | catalog claims, inconsistent with formula `12+2W` from same doc (would be 44). |
-| `mbarrier.arrive` | 8.1 | claim |
+| `__syncthreads` BS=512 | **54 (corrected)** | ❌ catalog 45 wrong; real formula is **`22+2W`** (per §24 audit, E5 RESOLVED). At BS=512 (W=16): 22+32 = 54. |
+| `__syncthreads` BS=1024 | **86 (corrected)** | ❌ catalog 89 wrong; formula 22+2W at W=32 = 86. |
+| `mbarrier.arrive` | **27 cy (default `.shared.b64`)** / 8.1 cy (likely `.relaxed.cta`) | ⚠ catalog "8.1" likely measured the lighter `arrive.relaxed.cta` modifier; default emits 27 cy per `bench_mbarrier_costs.cu` |
 | `__threadfence_block` | 8 | wave-7 V54 confirmed at 8 cy ✓ |
 | `__threadfence` (gpu) | **267 cy** sustained + 280 cy first-fence-after-write | wave-7 V54 settled. CATALOG L115 still says 274 — close but should be updated. ⚠ DENSE recommends V54 numbers. |
 | `__threadfence_system` | **2806 cy = 1381 ns @ 2032** | wave-7 V54 settled. Catalog had 1750/2870/3042 spread (1.74×). ⚠ Use V54. |
@@ -559,7 +582,7 @@ PACK (wide → narrow): rates drop because of LOP3/PRMT tax. See catalog §2.5 f
 | `abs.s32` / `neg.s32` / `abs.f32` | folds to IADD3/FADD/LOP3 | 2.00+ |
 | `copysign.f32` | LOP3.LUT | 2.00 |
 
-⚠ The "FMNMX3" 3-input fused min in catalog L981 may be compiler fusion not a native opcode. See REVIEW_CHECKLIST CRIT6.
+✅ **FMNMX3 confirmed as REAL Blackwell 3-input fused FP min/max** (per `14_extended_ops.md`): 2× chained `min.f32` → 1 FMNMX3 SASS. ncu pipe_alu = 1.97 (98.54% of cap). Effective 128 logical FP min ops/SM/cy (64 FMNMX3 × 2 mins each — same trick as IADD3 for ints).
 
 ### §2.10 Transcendentals (pipe_xu) — ✅ AUDIT-VERIFIED 2026-04-23 ([17_mufu.md](justifications/17_mufu.md))
 
