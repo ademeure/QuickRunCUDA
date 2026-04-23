@@ -76,3 +76,34 @@ The 375 cy/op latency claim probably stands (SHFL is 24 cy → 24 × ~16 ≈ 380
 ### REVIEW_CHECKLIST update
 
 - [x] §16 MATCH.ANY 375 cy / 20× slower — ✅ CONFIRMED CATASTROPHIC; **measured 62×** at chip saturation (catalog 20× understates)
+
+---
+
+## Block-sync at BS=512: catalog L1378 vs E5 RESOLVED
+
+Catalog L1378 claims `bar.sync 0 / __syncthreads / barrier.sync 0` all = 45.1 cy at BS=512.
+
+### Fresh measurement (this iteration)
+
+```cuda
+__global__ __launch_bounds__(512, 1) void kernel(...) {
+    for (int i = 0; i < 1024; i++) __syncthreads();
+}
+```
+
+Total: 55,316 cy / 1024 iters = **54.02 cy/__syncthreads at BS=512**.
+
+### Verdict
+
+**Catalog L1378 "45.1 cy" is WRONG by ~20%.** My §24 formula `22+2W` (W=BS/32=16) gives **22+32=54 cy** — matches measurement exactly.
+
+This is the third confirmation of E5 (the "syncthreads = 12+2W → 22+2W" correction):
+1. §24 (24_latency_table.md) — original audit
+2. §0 cheatsheet (00cdf) — propagated correction
+3. §16 (this iteration) — fresh re-measurement
+
+Catalog's L1378 "45.1" appears to be the same wrong-formula propagation. Should be corrected to 54 cy in the catalog.
+
+### REVIEW_CHECKLIST update
+
+- [x] §16 L1378 "bar.sync = 45.1 cy at BS=512" → real **54 cy** (E5 formula 22+2W; catalog's 45.1 is from wrong 12+2W formula)
