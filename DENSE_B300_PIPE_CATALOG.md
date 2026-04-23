@@ -516,9 +516,9 @@ The catalog's L218 wording should be: "FFMA can use EITHER sub-pipe per cycle, f
 | `shl/shr.b64/.u64` | 3 SASS | alu | ~16 |
 | `min/max.u64` | ISETP×2 + SEL×2 | alu | ~16 |
 
-### §2.5 Narrow-format CVT (F2FP family, pipe_alu)
+### §2.5 Narrow-format CVT (F2FP family, pipe_alu) — ✅ AUDIT-VERIFIED 2026-04-23 ([02_5_narrow_cvt.md](justifications/02_5_narrow_cvt.md))
 
-UNPACK (narrow → f16x2/bf16x2): all variants identical.
+UNPACK (narrow → f16x2/bf16x2): all variants identical at **2.00 = 99.98%+ of pipe_alu cap** (full-occupancy ncu).
 
 | Narrow type | SASS | r | elements/SM/cy |
 |---|---|--:|--:|
@@ -533,7 +533,7 @@ UNPACK (narrow → f16x2/bf16x2): all variants identical.
 
 PACK (wide → narrow): rates drop because of LOP3/PRMT tax. See catalog §2.5 for full table.
 
-### §2.6 Other CVTs
+### §2.6 Other CVTs — ✅ AUDIT-VERIFIED 2026-04-23 ([02_6_other_cvts.md](justifications/02_6_other_cvts.md))
 
 | PTX | SASS | Pipe | r |
 |---|---|---|--:|
@@ -547,7 +547,7 @@ PACK (wide → narrow): rates drop because of LOP3/PRMT tax. See catalog §2.5 f
 | `cvt.rni.sat.s8.f32` | F2I.S8.NTZ | xu | 0.5 |
 | `cvt.sat.u8.s32` | I2I.U8.S32.SAT | alu | 2.00 |
 
-### §2.7 Bitwise / shift / permute (pipe_alu)
+### §2.7 Bitwise / shift / permute (pipe_alu) — ✅ AUDIT-VERIFIED 2026-04-23 ([02_7_8_9_alu_ops.md](justifications/02_7_8_9_alu_ops.md))
 
 | PTX | SASS | r |
 |---|---|--:|
@@ -609,7 +609,7 @@ Per-warp throughput (single warp on 1 SMSP, ILP=16, all OTHER SMSPs idle):
 
 **Practical recipe**: prefer EX2-based activation functions (GELU/SiLU = 2× cheaper than alternatives); use single MUFU.TANH instead of manual `(ex2(2x)-1)/(ex2(2x)+1)` (~22 cy → 8 cy).
 
-### §2.11 Warp / sync / barrier ops (key entries)
+### §2.11 Warp / sync / barrier ops (key entries) — ✅ AUDIT-VERIFIED 2026-04-23 ([02_11_warp_sync.md](justifications/02_11_warp_sync.md))
 
 | PTX | SASS | Pipe | r | Notes |
 |---|---|---|--:|---|
@@ -2260,6 +2260,30 @@ Cross-referenced against per-op audits. Most rows confirmed; two outliers flagge
 | All threads aligned arrival | 47 | ✅ matches `bench_adu_uniform.cu` (bar.sync at 0.36 inst/cy → 125 cy at BS=512; 47 cy at warp-aligned per-warp-amortized) |
 | 1-thread stagger 200 FMAs | 1455 (**31× penalty**) | ✅ plausible — pending FMAs gate the late warp, all others wait |
 | `__syncwarp` only | 8 | ✅ consistent with §0 latency table (~3 cy intrinsic + 5 cy issue) |
+
+---
+
+## Predication / divergence (catalog §13) — ✅ VERIFIED 2026-04-23 (justifications/13_predication.md)
+
+Catalog claim L957-971: "Per-thread predication has zero effect on pipe rate. Hardware issues the warp-instruction regardless of how many lanes are live."
+
+ncu measurement on `tests/bench_predication.cu`, full occupancy:
+
+| Active lanes | inst/cy/SM | % of pipe_fma peak |
+|-------------:|-----------:|-------------------:|
+| 32 of 32 (mask = 0xFFFFFFFF) | 2.91 | 72.64% |
+| 16 of 32 (mask = 0x0000FFFF) | 2.94 | 73.43% |
+| **1 of 32 (mask = 0x00000001)** | **2.94** | **73.46%** |
+
+✅ **Pipe rate is independent of active-lane count within 1%.** Predication does NOT save throughput.
+
+### Implications
+
+- You CANNOT save pipe throughput by divergence or partial predication.
+- **Warp specialization** (`elect.sync` → 1 lane does work) does NOT free pipe slots for the rest. The warp-inst still consumes its cycle.
+- What predication DOES save: register-read traffic, write-back to masked-off lanes, semantic correctness — not throughput.
+
+(The 73% vs theoretical 100% is the `if (active)` branch overhead in the test — the branch ITSELF takes pipe slots; the rate constancy across masks is the load-bearing finding.)
 
 ---
 
