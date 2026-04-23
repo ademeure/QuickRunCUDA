@@ -1,5 +1,7 @@
 # B300 Catalog — Review Checklist (one-line yes/no per claim)
 
+> **What this is:** My OWN skeptical review of `B300_PIPE_CATALOG.md` claims, sectioned for fast yes/no scanning. The user's `reviewed_errors_b300.md` notes were on a DIFFERENT (lower-quality) doc — I use them as INSPIRATION for the kinds of issues to look for here (clock-state assumptions, formula-as-measurement, DCE, denominator mixing, agent-hallucinations of names/mechanisms, etc.), but the claims listed below are the catalog's own.
+>
 > **Instructions for user:** Each row is a single claim I am NOT 100% certain of. Mark with `[x]` for "yes, this is correct", `[ ]` for "no, wrong", and add a `// short note` after the line if you want to leave a comment. The structure is grouped by catalog section so you can stop after any group without losing context.
 >
 > **Format:**
@@ -11,11 +13,13 @@
 > - `clock-mismatch`: number was at a different clock than headline implies
 > - `formula`: claim looks like it's computed from spec, not measured
 > - `DCE-suspect`: pattern looks vulnerable to compiler eliminating the loop
-> - `agent-hearsay`: number came from an LLM swarm without independent re-verify
-> - `inconsistent`: same topic reported with different number elsewhere
+> - `agent-hearsay`: number came from an LLM swarm without independent re-verify, or names a mechanism (SASS opcode, memory path) that I haven't seen documentation for
+> - `inconsistent`: same topic reported with different number elsewhere in the catalog
 > - `regime-narrow`: holds only under one combination of (warps, BS, working set) and may not generalize
-> - `unit-confusion`: GB vs GiB or wire-rate vs effective ambiguity
+> - `unit-confusion`: GB vs GiB, wire-rate vs effective, packed-element-count vs SASS-inst-count
 > - `superseded-suspect`: I think a later test contradicted this but haven't traced
+>
+> **Note on cross-references:** Where an entry says `[ref: reviewed_errors L###]`, that's because the user raised an ANALOGOUS skepticism point on the canonical doc — used here as the inspiration for flagging the catalog's similar claim. The catalog claim itself is the load-bearing thing being reviewed.
 
 ---
 
@@ -48,7 +52,8 @@
 
 ## Group C — Pipe topology / dispatch ceiling
 
-- [ ] **C1** "Dispatch ceiling = 4.00 warp-inst/SM/cy" — V52 shows pipes overlap freely (alu+fma=147%), so the "hard cap" framing is misleading. Per-SMSP dispatch cap of 1 is the real story — `[ref: B300_PIPE_CATALOG.md:189,210,480]` — `[regime-narrow]`
+- [ ] **C1** "Dispatch ceiling = 4.00 warp-inst/SM/cy" — V52 shows pipes overlap freely (alu+fma=147%), so the "hard cap" framing is misleading. Per-SMSP dispatch cap of 1 is the real story — `[ref: B300_PIPE_CATALOG.md:189,210,480]` — `[regime-narrow]` — **2026-04-23 update:** ncu re-confirmed (justifications/01_pipe_topology.md): pure FFMA hits 3.88, dual hits 3.95; alu+fma sum = 145%. Cap IS a hard 4.00 in strict-total sense; "free overlap" claim was always about cross-pipe sums, not within-pipe. Catalog framing OK; only L218 wording needs fix (see new C8 below).
+- [ ] **C8** "FFMA → uniquely uses BOTH fma sub-pipes simultaneously" — **FALSIFIED 2026-04-23.** ncu shows in dual mode pipe_fmalite=93% but pipe_fmaheavy=4.5% — FFMA dispatches to ONE sub-pipe per cycle, scheduler-chosen, not both. — `[ref: B300_PIPE_CATALOG.md:218]` — `[agent-hearsay]` — Catalog wording needs to change to "FFMA can use EITHER sub-pipe per cycle, alternating freely". Doesn't change the 256 FLOPS/SM/cy peak (4 SMSPs × 1 dispatch × 32 lanes × 2 FLOPS = 256), but the mechanism story is wrong.
 - [ ] **C2** "pipe_alu cap 2.00" — needs ncu verification of `sm__inst_executed_pipe_alu` for pure-LOP3 test; only V52 explicitly tested this — `[ref: B300_PIPE_CATALOG.md:196]` — `[unverified]`
 - [ ] **C3** "pipe_xu cap 0.50 compound, 1.00 simple" — the compound vs simple distinction needs explicit test (MUFU.SIN vs MUFU.EX2) — `[ref: B300_PIPE_CATALOG.md:200]` — `[unverified]`
 - [ ] **C4** "pipe_uniform handles ACTIVEMASK and LDSM" — partial verification; the full Blackwell uniform datapath claims (UFFMA, UFADD, etc.) are inferred from NVIDIA docs not measured here — `[ref: B300_PIPE_CATALOG.md:530]` — `[unverified]`
