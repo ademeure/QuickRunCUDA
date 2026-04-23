@@ -482,6 +482,68 @@ The "11 TB/s at 256 MB" was probably L2 partial-hit amortization at the boundary
 
 ---
 
+## §15. DSMEM (cluster shared memory) — REPLICATED 2026-04-23 (justifications/13_dsmem.md)
+
+### ⚠ MAJOR FALSIFICATION — DSMEM is NOT "essentially free"
+
+Catalog L7029-7031 / L7012 claim:
+> "DSMEM is ~identical latency to local smem — the cluster interconnect on B300 is essentially free."
+> "23 cy remote vs 25 cy local"
+
+**This is FALSE.** Measured on this rig:
+- DSMEM read latency: **204-223 cy**
+- Local SMEM read latency: **23 cy**
+- Ratio: **~9× slower**, NOT "essentially free"
+
+This exactly reproduces catalog L2861-2864's own internal correction that was **never propagated forward**.
+
+### SASS reveals the mechanism
+
+`ld.shared::cluster.u32` compiles to **`LD.E`** (global load through cluster window), NOT `LDS`. This makes the 9× latency penalty mechanically obvious — DSMEM reads go through the global LSU path, not the SMEM bank-conflict-free path.
+
+⚠ Update catalog §1 / §2.12: `ld.shared::cluster` SHOULD be in the LSU global-load category, not the LDS shared category. Many other DSMEM "claims" depend on this distinction.
+
+### Write throughput — V53 CONFIRMED, V21 is misleading
+
+| Test | This rig | V53 settled | V21 (older) | Verdict |
+|---|--:|--:|--:|---|
+| Sustained 18-cluster aggregate | **1.56 TB/s** | 1.47 TB/s | — | ✅ V53 within 6% |
+| Per-cluster sustained | **87 GB/s** | 82 GB/s | — | ✅ V53 within 6% |
+| 5-burst issue rate, NO fence | 427 GB/s/cluster | — | 560 | ⚠ V21 reproduces but is INFLATED — burst rate without completion fence |
+| Same as above, WITH fence | **110 GB/s/cluster** | — | — | ⚠ 3.9× drop when properly fenced |
+
+⚠ V21's 560 GB/s is the burst issue rate before completion. V53's 82 GB/s is the sustained completion rate after fence. Use V53 numbers in any practical context.
+
+### L2 traversal — V53 CONFIRMED + NEW FINDING
+
+| Path | ncu lts__t_bytes / data volume | Verdict |
+|---|--:|---|
+| DSMEM writes | 991 KB / 2.36 GB = **0.04%** | ✅ V53 confirmed: writes do NOT traverse L2 |
+| Control GMEM writes | 2.55 GB / 2.55 GB = 100% | (control matches volume) |
+| **DSMEM reads** | 1.05 MB / 2.36 GB = **0.04%** | **NEW FINDING**: reads ALSO don't traverse L2 (correcting V53 §6 footnote and older DSMEM_REFERENCE.md) |
+
+So both DSMEM directions bypass L2. Mechanism: cluster-local interconnect (separate from L2 fabric). This is consistent with the SASS revelation — `ld.shared::cluster` is on the LSU but takes a separate physical path from regular global loads.
+
+### "DSMEM BW = 99% of local SMEM" claim — FALSE
+
+Catalog L7836-7860 says DSMEM aggregate BW is 99% of local SMEM. **DSMEM is 5-43% of local SMEM** depending on aggregation level. Recommend deleting the section, or rewriting with the actual numbers.
+
+### Catalog inconsistency: 3 DSMEM sections, all different
+
+- §13 (L7022+): "essentially free" — WRONG
+- §30.H (corrected): partially right
+- §13 (L7836+): "99% of local SMEM" — WRONG
+
+Recommend consolidation. justifications/13_dsmem.md proposes the consolidated section.
+
+### REVIEW_CHECKLIST entries resolved
+
+- R1, R2 (skeptical review): "essentially free" claim → FALSIFIED
+- §13 catalog claim 23 cy: → 204-223 cy
+- V53 settlement: → CONFIRMED (and extended)
+
+---
+
 ## §14. Tensor cores (mma.sync legacy path) — REPLICATED 2026-04-23 (justifications/22_tensor_mma_sync.md)
 
 | Path | Catalog claim | This rig | Verdict |
