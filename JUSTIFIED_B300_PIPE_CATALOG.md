@@ -45,7 +45,7 @@
 | §0 Memory hierarchy ladder | L37 | 🔍 in-progress | [00b_mem_hierarchy.md](justifications/00b_mem_hierarchy.md) |
 | §0 TMA cheatsheet | L54 | 🔍 not yet | [00c_tma.md](justifications/00c_tma.md) |
 | §0 mbarrier/sync table | L65 | 🔍 not yet | [00d_mbarrier.md](justifications/00d_mbarrier.md) |
-| §0 Quick reference: latency/throughput | L97 | 🔍 not yet | [00e_latency_table.md](justifications/00e_latency_table.md) |
+| §0 Quick reference: latency/throughput | L97 | ⚠ partially verified | [00e_latency_table.md](justifications/00e_latency_table.md) — 11 confirmed (FFMA=4, MUFU.sin=24 exact, fences); 2 KNOWN WRONG (DFMA 92 should be 63.9; syncthreads 12+2W should be 22+2W); 3 plausible-not-re-tested |
 | §0 Tensor unified 128 cy/MMA | L120 | 🔍 not yet | [00f_tensor_unified.md](justifications/00f_tensor_unified.md) |
 | §0 tcgen05.mma shape scaling | L132 | 🔍 not yet | [00g_tcgen05_shape.md](justifications/00g_tcgen05_shape.md) |
 | §0 All-reduce latency (NV18) | L153 | 🔍 not yet | [00h_allreduce.md](justifications/00h_allreduce.md) |
@@ -56,6 +56,7 @@
 | §2.5 Narrow-format CVT | L277 | ✅ replicated | [02_5_narrow_cvt.md](justifications/02_5_narrow_cvt.md) — all 6 UNPACK formats hit 2.00 = 99.98% of pipe_alu peak (FP4=FP6=FP8=BF16-UE8M0) |
 | §2.6 Other CVTs | L314 | ✅ replicated | [02_6_other_cvts.md](justifications/02_6_other_cvts.md) — HADD2.F32=1.97 fmaH ✓, F2I=0.50 xu ✓, F2IP.U8=1.97 alu ✓ (4× faster than s8 sat), I2FP.F32=1.98 alu ✓; I2F.S64 too slow to measure |
 | §2.7/8/9 Bitwise/Compares/MIN-MAX | L334-383 | ✅ replicated | [02_7_8_9_alu_ops.md](justifications/02_7_8_9_alu_ops.md) — all "rate 2.00 alu" plausible (§12 verified pipe_alu cap); BFE/POPC/BREV/FLO=0.5 xu confirmed via bfind |
+| §2.12 Memory ops (LDG/STG/LDS/STS/atom) | L432-444 | ✅ replicated | [02_12_memory.md](justifications/02_12_memory.md) — pipe assignments confirmed via cross-refs; "ld.shared bank-conflict-sensitive" needs scoping (TRUE for v2/v4, FALSE for u32 on B300); atom "not measured" RESOLVED |
 | §2.13 FP64 (DFMA/DADD/DMUL) | L444-472 | ✅ replicated | [02_13_fp64.md](justifications/02_13_fp64.md) — 0.06 warp-inst/SM/cy = 99.95% pipe_fp64 peak (catalog 0.05 was approx); wall-clock = 1.06 TFLOPS (88% of 1.20 theoretical); catalog L446 "475 GFLOPS" needs correction |
 | §3 Contention rules | L472 | ⚠ partially verified | [03_contention.md](justifications/03_contention.md) — Rules 1-3 confirmed via prior audits; Rule 4 (HFMA2+FFMA mix) preserved-not-re-tested |
 | §4 Rate cheatsheet | L485 | ⚠ partially verified | [04_rates.md](justifications/04_rates.md) — most rows correct, but **MUFU "16 SASS/SM/cy" is OFF BY 16-32×**; F2I/POPC/BREV/FLO same issue; u32 IADD "128" only via alternation |
