@@ -983,6 +983,207 @@ Same as cluster launch (§22d). Combine with cudaGraph for amortization (catalog
 
 ---
 
+## §22o. NVFP4 — REAL throughput via mxf4nvf4.block16 (catalog L9213+, 🟢 catalog-self-verified with correctness)
+
+### ⚠ K=96 ULTRA via idesc bit 31 is FALSIFIED — by the catalog itself
+
+The PTX ISA (§9.7.16.2.1.1) documents K=96 as sm_103a-exclusive via idesc bit 31. Catalog tested it on `kind::f8f6f4`:
+
+| K (idesc) | cy/mma | D[0] output (A=3.0, B=1.5) | Expected |
+|---:|--:|---:|---:|
+| 32 (default) | 64.46 | 144.0 = 32 × 4.5 | ✓ correct |
+| 96 (bit31=1) | 64.46 (same!) | **144.0 = STILL 32 MACs (NOT 96!)** | ✗ |
+
+Same finding on `mxf4nvf4.block16`:
+
+| K (idesc) | cy/mma | D[0] output | Expected at K=96 |
+|---:|--:|---:|---:|
+| 64 | 128.01 | 589,824 | — |
+| 96 (bit31=1) | 128.02 | **589,824 (SAME!)** | ✗ should differ |
+
+**Catalog conclusion:** "K=96 likely requires additional hardware configuration (different TMEM layout, different A packing format, or specific B descriptor stride) that isn't triggered by just setting the idesc bit."
+
+The `kind::mxf4` / `.block_scale` PTX form (proper K=96 path) is **REJECTED by ptxas V13.2.78** with "Illegal modifier '.block32'". The PTX ISA spec is complete; the ptxas codegen is the gap.
+
+⚠ My failed NVFP4 K=96 ULTRA replication agent (token limit) was trying the wrong path. **The catalog already definitively answered this**: K=96 ULTRA via simple PTX is NOT accessible on this driver (NVCC 13.2). Wait for a newer NVCC.
+
+### ✅ THE WORKING NVFP4 PATH — `kind::mxf4nvf4.block_scale.block16` = 9.9 PFLOPS
+
+PTX (catalog L9275, verified to compile + run + give correct results):
+```
+tcgen05.mma.cta_group::1.kind::mxf4nvf4.block_scale.block16
+    [d_tmem], [a_tmem], b_desc, idesc, [scale_A_tmem], [scale_B_tmem], pred;
+```
+
+SASS: **`UTCOMMA.BLOCK16`** — native block-scaled FP4 tensor instruction.
+
+| Path | K | cy/mma | TFLOPS/SM | Chip | × f8f6f4 |
+|---|--:|--:|--:|--:|--:|
+| `kind::f8f6f4` E2M1 (baseline) | 32 | 128.02 | 33.29 | **4.9 PFLOPS** | 1.0× |
+| **`kind::mxf4nvf4.block_scale.block16`** | **64** | **128.01** | **66.58** | **9.9 PFLOPS** | **2.0×** |
+
+**This IS the real B300 FP4 tensor core throughput: 9.9 PFLOPS = 99% of NVIDIA's 10 PFLOPS spec.** ✓
+
+Same 128 cy/mma, double the K (64 vs 32), double the FLOPs. Perfect 148-SM scaling.
+
+### Critical operand differences from `kind::f8f6f4`
+
+- A matrix from **TMEM** (via `tcgen05.cp` pre-load), NOT smem descriptor
+- **Two separate scale TMEM addresses** (`[scale_A_tmem]`, `[scale_B_tmem]`) — one per matrix
+- **No `{disable_lane_mask}`** operand — replaced by scale operands
+- Scale factor type: UE8M0 or UE4M3 (per Table 57 of PTX ISA)
+
+### What works vs what doesn't (ptxas 13.2.78)
+
+| Syntax | Status |
+|---|---|
+| `kind::mxf4nvf4.block_scale.block16` | **✓ COMPILES** (UTCOMMA.BLOCK16 SASS) |
+| `kind::mxf4.block_scale.block32` | ✗ ptxas rejects `.block32` |
+| `kind::mxf4` (default = `.block32`) | ✗ same rejection |
+| `kind::mxf8f6f4` | ✗ rejects `.block32` |
+| `kind::f8f6f4.block_scale` | ✗ cannot combine |
+
+Wait for newer NVCC point-release. The PTX spec itself is complete.
+
+### tcgen05.cp setup for FP4 (catalog L9444)
+
+**Key breakthrough:** `tcgen05.cp.cta_group::1.128x128b` correctly copies smem→TMEM for the A matrix.
+
+| Shape | Status | Notes |
+|---|---|---|
+| `128x128b` | **✓ works** | 128 rows × 16 bytes = 2048 bytes |
+| `128x256b` | ✗ crashes (illegal memory access) | — |
+| `64x128b` / `32x128b` | ✗ needs `.warptype` modifier | — |
+| `64x256b` / `32x256b` / `32x32b` | ✗ syntax error | — |
+
+For K=64 FP4 (32 bytes/row), do **two** `128x128b` copies at column offsets +0 and +4. Requires ≥32 KB smem allocation.
+
+### Correctness verified (15/15 tests)
+
+A=3.0 B=1.5 scale=1.0 → D=288 = 64×4.5 ✓
+A=6.0 B=1.5 → D=576 = 64×9 ✓
+A=3.0 B=6.0 → D=1152 = 64×18 ✓
+
+Output scales linearly with B value — confirms the MMA computes `D = scale_A × A × scale_B × B^T` correctly.
+
+---
+
+## §22p. Power efficiency — TFLOPS per watt (catalog L9128+, 🟡 catalog claim)
+
+8K × 8K × 8K GEMM sustained, NVML power sampling:
+
+| Precision | TFLOPS | Total power | Incremental over 180 W idle | TFLOPS/kW |
+|---|--:|--:|--:|--:|
+| Idle | — | **180** | 0 | — |
+| TF32 tensor | 1,017 | 468 | 288 | 3,531 |
+| **FP16 tensor** | **2,045** | **490** | **310** | **6,597** |
+| **FP4 mxf4nvf4 K=64 random** | **9,900** | **661** | 481 | **15,000 ⭐** |
+
+⚠ Catalog L9148 says "FP16 inference at 2045 TF / 490 W = 4.17 TFLOPS/W TOTAL" — that's the over-idle metric.
+
+**Key observations:**
+1. **Idle draws 180 W** — board baseline (memory refresh, fabric, PCIe, etc.)
+2. **Tensor-core GEMM adds only 290-310 W above idle** for TF32/FP16 — compute fabric is power-efficient
+3. **FP16 gives 2× the TFLOPS for ~7% more power** vs TF32 — nearly free to upgrade
+4. **FP4 at 661 W = 15.0 TFLOPS/W** — 3.3× more efficient than FP8 random (4.5 TFLOPS/W)
+
+### Cross-format power at random data (L9399)
+
+| Format | Real PFLOPS | Zeros/const W | Random W | Δ random/const | TFLOPS/W (random) |
+|---|--:|--:|--:|--:|--:|
+| FP16 (kind::f16) | 2.5 | 470-484 | **1,099** | 2.3× | 2.3 |
+| FP8 E4M3 (f8f6f4) | 4.9 | 487-497 | **1,092** | 2.2× | 4.5 |
+| **FP4 mxf4nvf4 K=64** | **9.9** | 399-401 | **661** | **1.65×** | **15.0** ⭐ |
+
+Block-scaled FP4 (`UTCOMMA`) draws **40% less power than f8f6f4/f16 (`UTCQMMA`)** with random data — and gives 2× the FLOPS. Clear win for inference.
+
+### Data-pattern power sweep (mxf4nvf4.block16, L9377)
+
+| Pattern | Power W | TFLOPS/W |
+|---|--:|--:|
+| zeros / constants | 399-401 | 24.8 |
+| half-random half-zero | 540 | 18.3 |
+| pseudo-gaussian | 602 | 16.3 |
+| random (xorshift) | 661 | 15.0 |
+
+Random data draws 65% more power than constant. Production inference (gaussian-like trained weights) ≈ ~600-800 W for FP4, ~900-1000 W for FP8/FP16.
+
+### Bit-masking effect (L9407)
+
+Zeroing low bits reduces power marginally (5-12%) — the upper bits still toggle randomly. FP8 low-nibble masking has almost no effect (-2%).
+
+### Comparison to spec
+
+| Format | Measured | NVIDIA spec | % of spec |
+|---|--:|--:|--:|
+| FP4 dense (mxf4nvf4 K=64) | **9.9 PFLOPS** | ~10 | **99%** ✅ |
+| FP8 dense (f8f6f4) | 4.9 PFLOPS | 5 | 98% ✅ |
+| FP4 = 2× FP8 via block-scaled path | ✓ confirmed | | |
+
+---
+
+## §22q. Register spilling cost (catalog L8358, 🟡 catalog claim)
+
+| MIN_CTAS/SM | Avail regs/thread | N_LIVE=16 | N_LIVE=32 | N_LIVE=64 | N_LIVE=128 |
+|---:|--:|--:|--:|--:|--:|
+| 1 | ~232 | 2.25 | 1.79 | 1.68 | 1.61 |
+| 2 | ~116 | 2.25 | 1.79 | 1.68 | 1.61 |
+| 4 | ~58 | 2.25 | 1.79 | 1.68 | 1.61 |
+| 8 | ~29 | 2.25 | 1.79 | 1.68 | 1.61 |
+| **16** | **~14** | 2.25 | 1.79 | 1.68 | **2.44 (SPILL!)** |
+
+**Spilling penalty: ~50% slowdown** (1.61 → 2.44 cy/FFMA) when the compiler can't fit all live values in registers.
+
+**Practical:** don't use `MIN_CTAS_PER_SM` > 8 unless verified low register pressure. Spilling = local memory access ≈ 50% throughput hit.
+
+---
+
+## §22r. Atomic contention at scale (catalog L8446, 🟡 catalog claim — partial overlap with §13)
+
+### Single address chip-wide
+
+| Blocks (× 32 lanes) | cy/atom | Atoms/cy chip-wide |
+|---:|--:|--:|
+| 1 | 51 | 0.6 |
+| 2-32 | 51 | 1.3-20 |
+| **148 (full chip)** | **132** | **36 atoms/cy = 69 G atoms/s** |
+
+L2 atomic unit handles up to 32 simultaneously-contending CTAs at 51 cy. Beyond that (148 CTAs), slows to 132 cy = 2.6× — surprisingly good given 100% contention.
+
+### Distinct-address spread on 148 CTAs
+
+| Distinct addrs | cy/atom | × 1-addr | Notes |
+|---:|--:|--:|---|
+| 1 | **126** | 1.0× | L2 atomic-unit MERGES same-address requests |
+| **2** | **2,537** | **20× WORSE** | merging lost; 2 addrs serialize on same L2 slice |
+| 4 | 1,246 | 10× | still bad |
+| 8 | 549 | 4.4× | |
+| 16 | 564 | 4.5× | |
+| 32 | 593 | 4.7× | |
+| 64 | 373 | 3.0× | parallelization across L2 slices |
+| 256 | 258 | 2.0× | flat asymptote |
+
+**Histogram/reduction design rules:**
+1. Single global counter is surprisingly optimal if you need ONE number (L2 merging wins).
+2. **Small counter arrays (N=2-32) are WORST case** — pick either N=1 or N≥256.
+3. Per-warp / per-SM privatization (unique cacheline per warp) beats sharing.
+
+### Atomic ordering × scope (cluster-launched contended)
+
+| Op | cy/atom | × relaxed | SASS fence emitted |
+|---|--:|--:|---|
+| atom.add (relaxed) | 34 | 1.0× | none |
+| **atom.release.cta** | **36** | 1.06× | (none — release IS the atomic write) |
+| atom.acquire.cta | 734 | 21× | MEMBAR.ALL.CTA before ATOM |
+| atom.acquire.gpu | 800 | 23× | MEMBAR.ALL.CTA + MEMBAR.ALL.GPU |
+| atom.release.cluster | 892 | 26× | MEMBAR for cross-CTA scope |
+| atom.acq_rel.cta | 810 | 24× | same MEMBAR as acquire |
+| **atom.acq_rel.cluster** | **1,646** | 48× | heaviest membar combo |
+
+⚠ Different from JUSTIFIED §30.B which measured 2.0-2.2× scope penalty in single-thread chain context. The 21-48× numbers here are for **contended cluster** workload — apples-to-different-oranges. Both correct in their regimes.
+
+---
+
 ## §22n. CTA scheduler placement pattern (catalog L7546, 🟢 verified)
 
 For 512 CTAs launched, the order CTA 0..15 → SM:

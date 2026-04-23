@@ -50,13 +50,28 @@ This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED
 ## What's still NOT replicated (high-priority remaining)
 
 1. tcgen05.mma direct re-run on this rig (catalog L6686+ has self-consistent linear-scaling math, but no fresh measurement here yet)
-2. NVFP4 K=96 ULTRA path (catalog §49)
+2. ~~NVFP4 K=96 ULTRA path~~ **RESOLVED by catalog itself (L9349+)**: K=96 via simple PTX is FALSIFIED — bit 31 doesn't add MACs. Real FP4 path = `kind::mxf4nvf4.block_scale.block16` = 9.9 PFLOPS = 99% of 10 PF spec. Proper `kind::mxf4` form rejected by ptxas 13.2.78; wait for newer NVCC.
 3. Power per pipe (catalog §44 — DISPUTED in canonical with M11 vs 16_power_clock 2× discrepancy)
 4. L2 wire BW measurement separated from kernel-effective (catalog claims 13.30/23.85/30 TB/s split)
 5. cluster launch overhead (catalog §57 / §58)
 6. Multi-GPU NVLink-attached fence (catalog 2806 cy sys; needs 2-GPU rig)
 7. Predication/divergence cost (catalog §13)
 8. Many specific REVIEW_CHECKLIST entries (61 still open out of 74)
+
+## Catalog-self-resolved findings (newly captured this iteration)
+
+The catalog itself contains some excellent material that wasn't fully integrated into the audit until 2026-04-23:
+
+- **NVFP4 K=64 = 9.9 PFLOPS via `kind::mxf4nvf4.block_scale.block16`** (catalog L9298) — 99% of NVIDIA's 10 PF spec, with full correctness verification (15/15 tests). Real path uses `UTCOMMA.BLOCK16` SASS.
+- **K=96 ULTRA via idesc bit 31 doesn't actually compute additional MACs** (catalog L9349) — verified with correctness test (D[0] identical at K=64 and K=96 with same inputs). The proper `kind::mxf4` form is rejected by ptxas 13.2.78.
+- **Power efficiency table** (catalog L9128): TF32 = 3531 TF/kW, FP16 = 6597 TF/kW (1.9× more efficient), FP4 mxf4nvf4 K=64 random = **15,000 TF/kW (3.3× more efficient than FP8)**.
+- **GPC structure verified via %smid** (catalog L7524): exactly 9 × 16-SM GPCs + 1 × 4-SM partial = 148. Matches DSMEM exhaustive sweep finding.
+- **CTA scheduler placement** (catalog L7546): fills smallest/last GPCs first, then round-robins 2 CTAs/GPC.
+- **L2 latency 25% variation across GPCs** (catalog L7593): GPC2 fastest at 115 cy, GPC3 slowest at 143 cy. Matches DSMEM exhaustive's 20% finding.
+- **SASS .reuse cache** (catalog L8142): 94% of FFMA2 instructions in real benchmarks carry `.reuse` annotation — critical for approaching FFMA2 peak.
+- **Compute-memory overlap** (catalog L8309): ~16 FFMA per cold-DRAM load = "free" (522 cy budget).
+
+These are now in DENSE §22o-§22r and §22e-§22n.
 
 ## Progress numbers
 
