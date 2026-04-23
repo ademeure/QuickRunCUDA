@@ -1664,12 +1664,23 @@ Real penalty (apples-to-apples):
 - Packed `f16x2` / `bf16x2` PTX atomics → NATIVE `REDG.E.ADD.F16x2` SASS. **Within 12% of u32**.
 - `atom.global.add.f32` is **24% FASTER than u32 chip-wide** (!).
 
-### NEW METHODOLOGY TRAP — atom vs red SASS distinction
+### NEW METHODOLOGY TRAP — atom vs red SASS distinction (NUANCED, see followup)
 
-`atom.global.add` compiles to `REDG.E.ADD.STRONG.GPU`, NOT `ATOM.*`. Implications:
-- ncu `lts__t_sectors_op_atom.sum` reports **0** for atom.add.u32 — must use `lts__t_sectors_op_red`
-- Only CAS variants (`atom.cas`) generate true `ATOM.*` sectors
-- ⚠ Any catalog claim using `lts__t_sectors_op_atom` for atom.add throughput is mis-counting (silently 0)
+Original §30B claim was "`atom.global.add` always compiles to `REDG.E.ADD.STRONG.GPU`, NOT `ATOM.*`". This is **PARTIALLY WRONG** per `justifications/30B_atomics_FOLLOWUP.md`.
+
+Direct SASS grep across all preserved kernels shows ALL THREE opcodes are emitted by the compiler depending on context:
+- **`REDG.E.ADD`** — when atomic return value is DISCARDED (semantically `red.add`)
+- **`ATOMG.E.ADD`** — when return value is USED with default scope
+- **`ATOM.E.ADD`** — for some scoped variants (esp. with `STRONG.GPU` scope and certain address patterns)
+
+The §30B chip-wide throughput numbers (49.1 / 53.7 / 609 / 221 Gops/s) were measured against `bench_atom_chip_scope` which emits **ATOM.E.ADD.STRONG.GPU**, not REDG. The throughput numbers are valid; the SASS-name attribution was wrong.
+
+ncu metric implications:
+- If your kernel emits REDG → use `lts__t_sectors_op_red`
+- If your kernel emits ATOMG.E or ATOM.E → use `lts__t_sectors_op_atom`
+- **Best practice: capture BOTH counters and add them** (covers all variants)
+
+⚠ Confirmed correct: `atom.f16/bf16 atomicAdd` does emit `ATOM.E.CAS.STRONG.GPU` loops (CAS-emulation). Packed `f16x2/bf16x2` PTX emits `REDG.E.ADD.F16x2` natively.
 
 ### Replication summary by REVIEW_CHECKLIST entry
 
