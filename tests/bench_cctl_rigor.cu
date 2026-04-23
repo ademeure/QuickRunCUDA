@@ -79,6 +79,16 @@ void kernel(float* A, float* B, float* C, int seed, int u1, int u2) {
         asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
         total_dt += (long long)(t1 - t0);
 
+#elif MODE == 5  // WRITES with drain (st.global.wb after nanosleep)
+        for (int j = 0; j < WS_INTS; j += 32) {
+            int rval = v + j;
+            asm volatile("st.global.wb.u32 [%0], %1;" :: "l"(workspace + j), "r"(rval) : "memory");
+        }
+        asm volatile("nanosleep.u32 %0;" :: "r"((unsigned)SLEEP_NS));
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
+        asm volatile("fence.acquire.gpu;" ::: "memory");
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
+        total_dt += (long long)(t1 - t0);
 #elif MODE == 4
         // Same as MODE 3 but timed measurement is the SECOND CCTL (L1 already empty)
         int fill_v = v;

@@ -29,9 +29,32 @@ For producer-consumer protocols: the consumer's `fence.acquire.gpu` will wait fo
 
 ### Open questions still to investigate
 
-1. **Carveout effect** — QuickRunCUDA doesn't expose `cudaFuncSetAttribute(cudaFuncAttributePreferredSharedMemoryCarveout, ...)`. With the default carveout, the actual L1 size may be smaller than 256 KB. Need to test with explicit max-L1 / min-shmem to confirm "no per-line cost" holds at maximum L1 size.
-2. **Write fill behavior** with proper drain (separate test still needed)
-3. **Why the 32 KB outlier (10 cy)?** — may indicate some capacity-related cost, but tiny.
+1. **Carveout effect** — QuickRunCUDA doesn't expose `cudaFuncSetAttribute(cudaFuncAttributePreferredSharedMemoryCarveout, ...)`. With the default carveout, the actual L1 size may be smaller than 256 KB. Worth testing with explicit max-L1 / min-shmem, but given CCTL is constant ~2 cy across all current fills, unlikely to change qualitative result.
+2. ~~**Write fill behavior** with proper drain~~ — **DONE**, see addendum below
+3. **Why the 32 KB outlier (10 cy)?** — non-monotonic at 32/36/40 KB shows 10 cy, while 24/28/30/31/33/34/48 KB show 2 cy. Even with 50 µs sleep the 32 KB still shows 10 cy. Not drain-wait. Suspect SASS-emission boundary at specific unroll levels — but only an 8 cy difference. Negligible.
+
+### MODE 5 verification — CCTL after WRITES with drain = 2 cy ALL sizes
+
+| Fill KB | cy with drain |
+|---:|--:|
+| 4 | 2.00 |
+| 16 | 2.00 |
+| 32 | 2.00 (no outlier here, unlike loads!) |
+| 64 | 2.00 |
+| 128 | 2.00 |
+| 256 | 2.00 |
+
+The earlier "59 cy after writes" was ALSO drain wait — same root cause as the load case. With proper nanosleep, writes + CCTL is the same noise floor as loads + CCTL.
+
+### FINAL CORRECTED CCTL.IVALL MODEL
+
+**CCTL.IVALL on B300 sm_103a is essentially FREE (~2 cy)** under ALL tested conditions when prior memory ops have drained. The earlier non-zero costs were ALL drain wait.
+
+`fence.acquire.gpu` cost = drain time for in-flight memory ops at the moment of execution. Once drained, the CCTL itself is essentially instantaneous.
+
+This is hardware-tagged invalidation (probably a single-cycle "bump valid bit" operation across all L1 lines) rather than per-line work. Makes sense architecturally — it's exactly what you'd want for an acquire fence to be cheap.
+
+
 
 This is a textbook example of the user's "MECHANISM is a hypothesis to test" rule. The earlier conclusion looked plausible and matched the catalog narrative ("L1 invalidate is per-line"), but a more rigorous test reveals the cost was elsewhere. Lesson reinforced.
 
