@@ -35,16 +35,19 @@ The 6 remaining open are all genuinely measurement-blocked (B6 DRAM-write clock-
 3. SHFL broadcast "1.9 cy essentially free" → 7.46 cy in general case; uniform path only triggers in narrow uniform-value cases
 4. `.ca` vs `.cg` "no gap at 4 MB WS" → was a test-config issue (4 MB WS exceeds L1 cap = 228 KB); the real 1.88× gap shows up at L1-fitting WS (16-196 KB) per `16_ca_vs_cg_hot.md`
 
-**Open multi-GPU items (deferred this session, GPU 0 only):**
-- All-reduce 21 µs floor (custom) / 10 µs (NCCL)
-- P2P GEMM zero-penalty 1.00-1.01× remote
-- release.sys NVLink visibility ~1663 cy
+**Open multi-GPU items (deferred this session, GPU 0 only — D7/E7 in REVIEW_CHECKLIST):**
+- All-reduce 21 µs floor (custom) / 10 µs (NCCL) — preserved per `project_b300_multigpu` memory (built MGFenceBench, key numbers documented there)
+- P2P GEMM zero-penalty 1.00-1.01× remote — preserved per `project_b300_multigpu`
+- release.sys NVLink visibility ~1663 cy — preserved (V54 measurement; sys=2806 cy in 2-GPU rig vs my single-GPU 1727 cy = +1.6× extra coherence round-trip)
 - Cross-GPU atomics
 
-**Open tcgen05 items** (require involved alloc/mbarrier setup, not re-run):
-- tcgen05.mma cy/MMA = max(44, N/2) for M=128
-- tcgen05.mma format-agnostic claim (all f8f6f4 = 128 cy)
-- tcgen05.mma smem-layout-insensitive
+**Open tcgen05 items** (require involved alloc/mbarrier setup, deferred — D5 in REVIEW_CHECKLIST):
+- tcgen05.mma cy/MMA = max(44, N/2) for M=128 — catalog math is self-consistent (linear scaling table L6776)
+- tcgen05.mma format-agnostic claim (all f8f6f4 = 128 cy) — preserved
+- tcgen05.mma smem-layout-insensitive — preserved
+- Note: tcgen05 SASS opcodes (UTCQMMA/UTCOMMA) ARE confirmed via §22g; throughput preservation per CRIT2 mitigation (single-warp × 148 SMs = chip-wide via independent datapath)
+
+**Open TMEM items** (B7/B8 in REVIEW_CHECKLIST): catalog 55-131 TB/s claims need first-principles bound check; almost certainly include broadcast-amplification artifact similar to LDC.32. Real per-warp tcgen05.ld throughput much lower.
 
 **For top errors and new architectural facts, see `REVIEW_CHECKLIST_B300.md` TLDR table.**
 
