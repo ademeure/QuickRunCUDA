@@ -112,21 +112,51 @@ Update the table to:
 
 ---
 
-### EDIT NEW-I: §28 compiler-reachable uniform ops list INCOMPLETE
+### EDIT NEW-J: §22l grid sync overhead 4245 cy is 2× too pessimistic
+
+**Lines:** L7635-L7648
+
+**Wrong text:**
+> "Grid sync cost is ~constant at ~4200 cy = 2.2 μs, regardless of grid size. The cost is dominated by atomic acq_rel (1598 cy) + spin loop on phase var."
+
+**Correct (per `justifications/22l_grid_sync_DEEP.md` rigorous DEEP investigation @1800 MHz locked):**
+
+> "Grid sync overhead by implementation, all at full chip (148 SMs, 1800 MHz locked):
+>
+> | Implementation | cy/sync | µs |
+> |---|--:|--:|
+> | NVIDIA `cg::grid_group::sync()` | 2234 | 1.29 |
+> | catalog's atomicAdd-with-return | 4245 | 2.21 (catalog claim) |
+> | atomicAdd no-return (ptxas → REDG) | 1620 | 0.96 |
+> | **Ninja: 32-bit `red.relaxed.gpu` + relaxed spin (sense-reversing)** | **1552** | **0.81** ⭐ best |
+>
+> Catalog's 4245 cy uses atomicAdd WITH return value, which forces ptxas to emit `ATOM.E.ADD.STRONG.GPU` (1122 cy) + MEMBAR.ALL.GPU (575 cy). Discarding the return value drops to REDG (123 cy) and removes MEMBAR.
+>
+> NVIDIA's cg::sync conservatively emits MEMBAR.ALL.GPU + ERRBAR + CGAERRBAR + ATOM.E.ADD + LD.E.STRONG.GPU + CCTL.IVALL + YIELD + WARPSYNC.ALL + 3× BAR.SYNC for cluster/async safety. The ninja recipe drops these for basic grid-sync semantics. Ninja correctness verified via ping-pong reduction at grid sizes {8,32,64,132,148}.
+>
+> **Caveat:** ninja recipe assumes data dependencies are bounded by the atomic counter itself. For arbitrary store-before-sync patterns, use `red.release.gpu` + `ld.acquire.gpu` (~1.34 µs, ~cg::sync speed but explicit).
+>
+> Note: cy NOT exactly clock-invariant — grows 6-7% from 1500→1920 MHz (L2 atomic unit in separate clock domain)."
+
+This is a major architectural finding for grid-sync optimization. The 2.7× speedup over catalog is ninja-meaningful for grid-sync-heavy workloads.
+
+---
+
+### EDIT NEW-I: §28 compiler-reachable uniform ops — minor addition (UPRMT)
 
 **Line:** L2164
 
-**Wrong/incomplete text:**
+**Original text:**
 > "Compiler-reachable uniform ops (verified with CUDA 13.2): UIADD3, UIMAD, UMOV, UISETP, ULOP3.LUT. UFFMA/UFADD/UFMUL still not emitted in CUDA 13.2 either."
 
-**Correct text (per `justifications/28_compiler_gaps.md` direct SASS opcode count across 20K+ preserved kernels):**
+**Recommendation (per `justifications/28_compiler_gaps.md` direct SASS audit across 20K+ kernels):**
 
-> "Compiler-reachable uniform ops in CUDA 13.2 (per direct SASS audit across 20K+ kernels):
-> - **High-volume**: UMOV (42K), UIADD3 (15K), UISETP (23K), UIMAD (2K), ULOP3.LUT (per catalog)
-> - **NEW (found by audit, not in catalog)**: **UFU (91,950 instances — likely uniform function unit / transcendental)**, USHF (8K), ULEA (9K), UFLO (902), UPRMT (887), UNC (4K), ULT (11K)
-> - **Confirmed NOT emitted (0 instances)**: UFFMA, UFADD, UFMUL — uniform FP datapath exists in ISA but unreachable from nvcc 13.2 codegen"
+Add **UPRMT** to the compiler-reachable list. Verified 887 instances of `UPRMT` opcode in real kernel SASS via word-boundary grep.
 
-UFU is particularly notable — second-most-common uniform op after placeholder URZ/UPT, and not mentioned anywhere in the catalog. Worth follow-up to identify what it does.
+**Corrected text:**
+> "Compiler-reachable uniform ops (verified with CUDA 13.2 across 20K+ preserved SASS files): UMOV, UIADD3, UIMAD, UISETP, ULOP3.LUT, **UPRMT**. UFFMA/UFADD/UFMUL still not emitted in CUDA 13.2 either (0 instances confirmed)."
+
+⚠ **Self-correction note:** an earlier draft of this edit claimed several other uniform ops (UFU, USHF, ULEA, UFLO, ULT, UNC) were also compiler-reachable. That was a REGEX ERROR — `grep -hoE "U[A-Z][A-Z0-9]*[A-Z]\b"` matches substrings inside longer opcodes (e.g., `UFU` inside `MUFU.EX2`). Word-boundary verification with `(^|[^A-Z])${op}\b` shows those are 0. Only UPRMT is real.
 
 ---
 

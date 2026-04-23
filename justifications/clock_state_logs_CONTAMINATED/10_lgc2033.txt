@@ -1,0 +1,69 @@
+=== 10_lgc2033 ===
+Lock cmd: nvidia-smi -lgc 2033
+All done.
+GPU clocks set to "(gpuClkMin 2033, gpuClkMax 2033)" for GPU 00000000:04:00.0
+
+Warning: persistence mode is disabled on device 00000000:04:00.0. See the Known Issues section of the nvidia-smi(1) man page for more information. Run with [--help | -h] switch to get more information on how to enable persistence mode.
+All done.
+--- pre
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1920 MHz, 3996 MHz, 214.65 W, 46, P0
+--- 3x runs
+RUN 1: Using persistent blocks (148 = 1 per SM)
+
+1.36299 ms
+RUN 2: Using persistent blocks (148 = 1 per SM)
+
+1.36416 ms
+RUN 3: Using persistent blocks (148 = 1 per SM)
+
+1.36259 ms
+--- post
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1920 MHz, 3996 MHz, 212.08 W, 46, P0
+--- sampled during runs (clocks.gr,power,temp)
+1920, 214.69, 46
+1920, 214.93, 46
+1920, 212.39, 46
+1920, 214.71, 46
+1920, 214.76, 46
+1920, 212.28, 46
+1920, 212.40, 46
+1920, 212.32, 46
+1920, 212.04, 46
+1920, 212.08, 46
+1920, 212.20, 46
+1920, 212.05, 46
+--- ncu pass
+==PROF== Connected to process 3825676 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0: 0%....50%....100% - 1 pass
+==PROF== Profiling "kernel" - 1: 0%....50%....100% - 1 pass
+Using persistent blocks (148 = 1 per SM)
+
+175.87738 ms
+
+==PROF== Disconnected from process 3825676
+[3825676] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+=== END 10_lgc2033 ===

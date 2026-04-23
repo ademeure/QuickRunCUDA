@@ -1,0 +1,46 @@
+=== 12_lgc1800_1800 ===
+Lock cmd: nvidia-smi -lgc 1800,1800
+All done.
+GPU clocks set to "(gpuClkMin 1800, gpuClkMax 1800)" for GPU 00000000:04:00.0
+All done.
+--- pre-run nvidia-smi
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1800 MHz, 3996 MHz, 185.06 W, 42, P0
+--- 3x runs (event-timed)
+RUN 1: 
+RUN 2: 
+RUN 3: 
+--- post-run nvidia-smi
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1800 MHz, 3996 MHz, 187.66 W, 41, P0
+--- sampled during runs (clocks.gr,clocks.mem,power,temp)
+1800, 3996, 185.02, 42
+1800, 3996, 185.17, 41
+1800, 3996, 184.99, 41
+1800, 3996, 184.98, 41
+1800, 3996, 184.98, 41
+1800, 3996, 185.02, 41
+1800, 3996, 184.98, 41
+1800, 3996, 184.95, 41
+1800, 3996, 185.25, 41
+1800, 3996, 185.14, 41
+1800, 3996, 185.18, 41
+1800, 3996, 185.02, 41
+1800, 3996, 187.35, 41
+1800, 3996, 185.21, 41
+1800, 3996, 184.91, 41
+1800, 3996, 184.91, 41
+1800, 3996, 184.99, 41
+1800, 3996, 185.10, 41
+1800, 3996, 185.17, 41
+1800, 3996, 184.95, 41
+1800, 3996, 184.98, 41
+1800, 3996, 184.95, 41
+1800, 3996, 185.10, 41
+1800, 3996, 185.10, 41
+1800, 3996, 184.98, 41
+--- ncu pass for ground-truth gpc__cycles_elapsed
+==PROF== Connected to process 3855299 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==ERROR== The application returned an error code (9).
+=== END 12_lgc1800_1800 ===
+

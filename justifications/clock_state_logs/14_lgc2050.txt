@@ -1,0 +1,45 @@
+=== 14_lgc2050 ===
+Lock cmd: nvidia-smi -lgc 2050
+All done.
+GPU clocks set to "(gpuClkMin 2050, gpuClkMax 2050)" for GPU 00000000:04:00.0
+All done.
+--- pre-run nvidia-smi
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1800 MHz, 3996 MHz, 189.95 W, 41, P0
+--- 3x runs (event-timed)
+RUN 1: 0.46729 ms
+RUN 2: 0.48663 ms
+RUN 3: 
+--- post-run nvidia-smi
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1800 MHz, 3996 MHz, 184.75 W, 41, P0
+--- sampled during runs (clocks.gr,clocks.mem,power,temp)
+1800, 3996, 188.05, 41
+1800, 3996, 186.75, 41
+1800, 3996, 187.15, 41
+1800, 3996, 187.00, 41
+1800, 3996, 184.87, 41
+1800, 3996, 184.83, 41
+1800, 3996, 184.75, 41
+1800, 3996, 185.02, 41
+1800, 3996, 185.02, 41
+1800, 3996, 184.71, 41
+1800, 3996, 185.14, 41
+1800, 3996, 184.95, 41
+1800, 3996, 185.07, 41
+1800, 3996, 184.72, 41
+1800, 3996, 184.79, 41
+1800, 3996, 184.91, 41
+1800, 3996, 187.16, 41
+1800, 3996, 184.91, 41
+1800, 3996, 184.64, 41
+1800, 3996, 184.87, 41
+1800, 3996, 184.91, 41
+1800, 3996, 185.02, 41
+1800, 3996, 184.98, 41
+1800, 3996, 184.71, 41
+1800, 3996, 184.83, 41
+--- ncu pass for ground-truth gpc__cycles_elapsed
+==ERROR== The application returned an error code (9).
+=== END 14_lgc2050 ===
+

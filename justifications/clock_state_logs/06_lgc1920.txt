@@ -1,0 +1,75 @@
+=== 06_lgc1920 ===
+Lock cmd: nvidia-smi -lgc 1920
+All done.
+GPU clocks set to "(gpuClkMin 1920, gpuClkMax 1920)" for GPU 00000000:04:00.0
+All done.
+--- pre-run nvidia-smi
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1920 MHz, 3996 MHz, 202.06 W, 45, P0
+--- 3x runs (event-timed)
+RUN 1: 0.43831 ms
+RUN 2: 0.43811 ms
+RUN 3: 0.43865 ms
+--- post-run nvidia-smi
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1800 MHz, 3996 MHz, 186.82 W, 44, P0
+--- sampled during runs (clocks.gr,clocks.mem,power,temp)
+1920, 3996, 201.75, 45
+1920, 3996, 203.87, 45
+1920, 3996, 201.71, 45
+1920, 3996, 204.41, 45
+1920, 3996, 202.18, 46
+1920, 3996, 201.13, 45
+1920, 3996, 200.79, 45
+1800, 3996, 201.92, 45
+1800, 3996, 186.78, 44
+1800, 3996, 186.89, 44
+1800, 3996, 186.78, 44
+1800, 3996, 186.85, 44
+1800, 3996, 187.09, 44
+1800, 3996, 186.89, 44
+1800, 3996, 187.09, 44
+1800, 3996, 186.78, 44
+1800, 3996, 186.78, 44
+1800, 3996, 186.85, 44
+1800, 3996, 186.85, 44
+1800, 3996, 186.89, 44
+1800, 3996, 186.82, 44
+1800, 3996, 189.01, 44
+1800, 3996, 186.85, 44
+1800, 3996, 186.67, 44
+1800, 3996, 186.62, 44
+--- ncu pass for ground-truth gpc__cycles_elapsed
+==PROF== Connected to process 3845138 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0: 0%....50%....100% - 1 pass
+==PROF== Profiling "kernel" - 1: 0%....50%....100% - 1 pass
+Using persistent blocks (148 = 1 per SM)
+
+118.05485 ms
+
+==PROF== Disconnected from process 3845138
+[3845138] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    -------------------------------------------------- ----------- ------------
+    Metric Name                                        Metric Unit Metric Value
+    -------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                         Ghz         1.92
+    gpc__cycles_elapsed.max                                  cycle       846866
+    sm__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                   inst    486941312
+    -------------------------------------------------- ----------- ------------
+
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    -------------------------------------------------- ----------- ------------
+    Metric Name                                        Metric Unit Metric Value
+    -------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                         Ghz         1.92
+    gpc__cycles_elapsed.max                                  cycle       843276
+    sm__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                   inst    486941312
+    -------------------------------------------------- ----------- ------------
+
+=== END 06_lgc1920 ===
+

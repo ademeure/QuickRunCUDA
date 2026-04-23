@@ -94,20 +94,51 @@ Counting opcode appearances across all preserved SASS:
 | UFLO (uniform find-leading-one?) | 902 | not in catalog |
 | UPRMT (uniform permute) | 887 | not in catalog |
 
-## ⚠ NEW FINDING — UFU (uniform function unit?)
+## ⚠ MAJOR SELF-CORRECTION (2026-04-23 — same day audit caught its own error)
 
-Catalog's compiler-reachable list (L2164): "UIADD3, UIMAD, UMOV, UISETP, ULOP3.LUT".
+**Initial claim of "UFU appearing 91,950 times" was WRONG — it was a regex artifact.**
 
-Direct SASS count finds **UFU appearing 91,950 times** across preserved kernels — second only to placeholder URZ/UPT. The "UFU" prefix suggests a uniform-pipe transcendental or function-unit op (analog of MUFU on the per-lane side).
+The grep pattern `U[A-Z][A-Z0-9]*[A-Z]\b` matched the `UFU` SUBSTRING inside `MUFU.EX2`, `MUFU.RSQ`, etc. Total MUFU.* instances = 91,980 — perfectly accounting for the bogus 91,950 "UFU" count.
 
-This is a SIGNIFICANT addition to catalog's compiler-reachable uniform op list. UFU might be:
-- "Uniform MUFU" — uniform-pipe transcendental (rcp/rsqrt/sin/cos/etc.)
-- "Uniform Function Unit" — generic uniform compute
-- Some other uniform op
+**Real verification** (with proper word-boundary):
+```bash
+$ grep -chE '(^|[^A-Z])UFU\b' /root/github/QuickRunCUDA/sass/*.sass ... | awk '{s+=$1}END{print s}'
+0
+```
 
-Catalog should be updated to include UFU in the compiler-reachable list.
+**ZERO real `UFU` opcodes exist on this GPU.**
 
-Also missing from catalog: ULT, ULEA, USHF, UNC, UFLO, UPRMT — all appear in real SASS but not mentioned in §28's compiler-reachable list.
+Similar regex errors in my earlier "newly-discovered" list:
+
+| "Newly-found" op | Bogus regex count | Real word-boundary count | Actual source of bogus matches |
+|---|--:|--:|---|
+| UFU | 91,950 | **0** | substring inside `MUFU.*` |
+| ULT | 10,514 | **0** | substring of "DEFAULT", "RESULT", "MULT" |
+| ULEA | 8,591 | **0** | substring of something |
+| USHF | 8,404 | **0** | substring of something |
+| UFLO | 902 | **0** | substring of something |
+| UNC | 4,044 | **0** | substring of "RUNC.", "RUNC" SASS opcodes |
+| **UPRMT** | **887** | **887** ✅ | REAL — actual UPRMT opcode |
+
+## ✅ CORRECTED NEW FINDING — UPRMT only
+
+The ONLY genuine new uniform op observed (not in catalog L2164) is:
+- **UPRMT** (uniform permute): **887 instances** ✅ word-boundary-verified
+
+Catalog L2164 lists compiler-reachable uniform ops as: UIADD3, UIMAD, UMOV, UISETP, ULOP3.LUT.
+Audit-verified addition: **UPRMT (887 instances)**.
+
+Catalog L530 (in the §6 uniform datapath full opcode list) DOES include UPRMT as a hosted SASS opcode, but doesn't say it's compiler-reachable. This audit confirms it IS.
+
+## METHODOLOGY LESSON (what went wrong)
+
+I used `grep -hoE "U[A-Z][A-Z0-9]*[A-Z]\b"` which matches "U + at least 1 letter + ending letter at word boundary". This regex matches SUBSTRINGS of longer opcodes, not whole opcodes.
+
+**Correct approach** (now used): `grep -chE '(^|[^A-Z])${op}\b'` — requires non-letter character (or start-of-line) BEFORE the opcode, plus word-boundary AFTER.
+
+This is exactly the kind of methodology error the user warned about — propagating a claim without verifying with a second method. Caught here within the same audit iteration; lesson recorded.
+
+**Going forward:** when grepping for SASS opcode counts, ALWAYS use the `(^|[^A-Z])` lead pattern to avoid substring matches. Same for register names (UR4 vs PUR4, etc.).
 
 ## VERDICT
 

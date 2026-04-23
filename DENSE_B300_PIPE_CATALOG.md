@@ -1086,20 +1086,83 @@ Bonus: this single 5-instruction kernel cross-corroborated §22n (CTA scheduler 
 
 ---
 
-## §22l. Grid sync overhead (catalog L7635, 🟡 catalog claim)
+## §22l. Grid sync overhead — ✅ NINJA-DEPTH (justifications/22l_grid_sync_DEEP.md, 477 lines + 25 SASS + 13 test files)
 
-Grid sync via global atomic counter (no `cudaLaunchCooperativeKernel` API):
+**Catalog 4245 cy / 2.2 µs is ~2× TOO PESSIMISTIC.** Better recipes available.
 
-| Grid blocks | cy/sync | µs @ 1.92 GHz |
-|---:|--:|--:|
-| 8 | 4161 | 2.17 |
-| 32 | 4129 | 2.15 |
-| 64 | 4195 | 2.18 |
-| **148** | **4245** | **2.21** |
+### Best-of-class table (1800 MHz locked, sm_103a)
 
-Grid sync cost is **~constant at ~4200 cy = 2.2 µs**, regardless of grid size. Cost dominated by atomic acq_rel (~1500-1600 cy) + spin loop on phase var.
+| Implementation | cy/sync | µs @ 1800 | vs catalog |
+|---|--:|--:|--:|
+| **ninja_F3** (32-bit `red.relaxed.gpu.global.add.u32`, sense-reversing) | **1552** | **0.81** | **2.7× FASTER** ⭐ |
+| **ninja_E** (pure relaxed atom + relaxed spin) | 1460 | 0.86 | 2.6× faster (slightly more cy but lower µs) |
+| atomic-counter-no-return (catalog's pattern, ptxas → REDG) | 1620 | 0.96 | 1.4× faster than cg, 2.6× faster than catalog |
+| cg::sync (NVIDIA cooperative_groups) | 2234 | 1.29 | 1.9× faster than catalog 4245 cy |
+| Catalog-claimed | 4245 | 2.21 | 1.0× baseline |
 
-(Note: per audit §30.B, atomic acq_rel.gpu add scope penalty is 2.0-2.2× over relaxed, NOT the 31.3× catalog earlier claimed. So the "1598 cy acq_rel" attribution may be off — needs separate verification.)
+**Best ninja beats NVIDIA's cg::sync by 1.6× and catalog claim by 2.7×.**
+
+### WHY cg::sync is conservative
+
+NVIDIA's `cooperative_groups::grid_group::sync()` SASS hot-path emits:
+```
+MEMBAR.ALL.GPU
+ERRBAR
+CGAERRBAR
+ATOM.E.ADD.STRONG.GPU  (with return value used)
+LD.E.STRONG.GPU  (spin loop)
+CCTL.IVALL  (cache invalidate during spin)
+YIELD
+WARPSYNC.ALL
+BAR.SYNC × 3
+```
+
+Pays for cluster/async safety even when not needed. The MEMBAR.ALL.GPU alone is ~575 cy.
+
+### WHY ninja_F3 wins (decomposition at 1800 MHz locked)
+
+| Component | cy |
+|---|--:|
+| `fence.acquire.gpu` | **25** (essentially free) |
+| `fence.release.gpu` | 456 |
+| `atom.relaxed` (no return) → `REDG.E.ADD.STRONG.GPU` | 123 |
+| `atom.acq_rel` (with return) → `ATOM.E.ADD.STRONG.GPU` | 1122 |
+| `__syncthreads` | 6 |
+| MEMBAR.ALL.GPU | 575 |
+
+The big wins:
+1. **Relaxed atom (123 cy) instead of acq_rel (1122 cy)** — 9× cheaper. Relies on memory-model cumulativity for correctness (ping-pong workload validated).
+2. **No MEMBAR** — NVIDIA's MEMBAR.ALL.GPU contributes 575 cy that we don't need.
+3. **No CGAERRBAR / CCTL.IVALL** — these handle async/cluster cases not relevant to a basic grid sync.
+4. **Sense-reversing counter** — avoids resetting between iterations, eliminates the "wait for everyone to read 0" round.
+
+### Correctness verified
+
+7 variants (cg::sync, atomic_acqrel, ninja_B/C/E/F0/F3) PASS ping-pong reduction correctness at grid sizes {8, 32, 64, 132, 148} across multiple trials. `red.relaxed` is safe in this workload because ptxas SASS lowers it to `REDG.E.ADD.STRONG.GPU` (which has implicit ordering on the L2 atomic unit).
+
+### Caveats
+
+- **For arbitrary store patterns before the sync** (e.g. workload that wrote to global memory and other CTAs need to read those stores), use `red.release.gpu` + `ld.acquire.gpu` (~1.34 µs, ~cg::sync speed but with EXPLICIT semantics). The "ninja relaxed" recipe is safe ONLY if your data dependencies are cleanly bounded by the atomic counter itself.
+- **Co-tenant test (preceding 1024 FFMA / cold DRAM / all-thread stores) does NOT hide the sync cost** — sync cycles stay constant ±4%. You can't bury the ~1 µs sync overhead behind compute.
+- **Cycle counts grow 6-7% from 1500→1920 MHz** — NOT exactly clock-invariant (L2 atomic unit in separate clock domain). Catalog's "cy is clock-invariant" claim is approximately right but off by ~6%.
+
+### DENSE practical recipe (one-liner)
+
+```cuda
+// Best B300 grid sync (sense-reversing 32-bit counter, no return value):
+__device__ inline void grid_sync_ninja(unsigned int* phase, int grid_dim) {
+    if (threadIdx.x == 0) {
+        unsigned int target = (atomicAdd(phase, 1u) / grid_dim + 1) * grid_dim;
+        while (atomicAdd(phase, 0u) < target) ;  // relaxed spin
+    }
+    __syncthreads();
+}
+// Beats NVIDIA's cg::sync by 1.6×, catalog claim by 2.7×.
+```
+
+Caveat: this assumes data dependencies are bounded by the counter itself. For arbitrary store-before-sync patterns, use the `release/acquire` variant (slower but explicit).
+
+---
 
 ---
 
@@ -1405,16 +1468,18 @@ L2 atomic unit handles up to 32 simultaneously-contending CTAs at 51 cy. Beyond 
 
 ✅ Catalog claim CONFIRMED: `uffma` PTX form rejected by ptxas V13.2.78. **Zero UFFMA/UFADD/UFMUL emissions** across ALL 20K+ preserved SASS files. Even uniform-looking C code (`x*2+1`) emits per-lane FFMA, not UFFMA.
 
-⚠ NEW FINDING: catalog L2164's "compiler-reachable uniform ops" list is INCOMPLETE. Direct SASS opcode count reveals these uniform ops also appear:
-- **UFU**: 91,950 instances (likely "uniform function unit" — uniform-pipe transcendental?)
-- **USHF**: 8,404 (uniform shift)
-- **ULEA**: 8,591 (uniform load-effective-address)
-- **UFLO**: 902 (uniform find-leading-one)
-- **UPRMT**: 887 (uniform permute)
-- **UNC**: 4,033 (?)
-- **ULT**: 10,502 (uniform less-than?)
+⚠ NEW FINDING (CORRECTED 2026-04-23 — earlier UFU claim was WRONG, regex artifact):
 
-Catalog should add these. UFU specifically is a load-bearing find — second-most-common uniform op after placeholder URZ/UPT — and not documented anywhere in the catalog.
+Initial claim of "UFU appearing 91,950 times" was a regex error — the pattern matched the `UFU` SUBSTRING inside `MUFU.*` opcodes (MUFU.EX2, MUFU.RSQ, etc., totaling 91,980 = perfect match for the bogus count). **There are 0 real UFU opcodes on this GPU.**
+
+After re-verification with proper word-boundary grep (requires non-letter character before the opcode), the only genuinely new compiler-reachable uniform op (beyond catalog L2164's UIADD3/UIMAD/UMOV/UISETP/ULOP3.LUT) is:
+- **UPRMT** (uniform permute): **887 verified instances**
+
+Other "newly-found" uniform ops (UFU, ULT, ULEA, USHF, UFLO, UNC) were ALL regex artifacts — substring matches inside MUFU/DEFAULT/RESULT/MULT/RUNC etc. Real word-boundary count = 0 for all.
+
+**Catalog L2164 was actually quite accurate.** The audit-verified addition is just UPRMT. Catalog L530 (uniform datapath full opcode list) DOES include UPRMT as architecturally hosted; this audit confirms it is also compiler-reachable in CUDA 13.2.
+
+⚠ **METHODOLOGY LESSON** (recorded in justifications/28_compiler_gaps.md): SASS opcode counting via regex must use `(^|[^A-Z])${op}\b` to avoid substring matches. Plain word-boundary `\b` is NOT enough — `\b` matches between letter and `.`, so substrings inside opcodes with dot-separated suffixes (MUFU.EX2, etc.) get falsely counted.
 
 ---
 

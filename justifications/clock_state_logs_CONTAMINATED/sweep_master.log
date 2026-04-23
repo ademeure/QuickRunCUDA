@@ -1,0 +1,771 @@
+TOTAL_FLOPS per launch = 31037849600
+=== 01_unlocked ===
+Lock cmd: 
+--- pre
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+2032 MHz, 3996 MHz, 205.05 W, 41, P0
+--- 3x runs
+RUN 1: Using persistent blocks (148 = 1 per SM)
+
+0.81317 ms
+RUN 2: Using persistent blocks (148 = 1 per SM)
+
+0.81299 ms
+RUN 3: Using persistent blocks (148 = 1 per SM)
+
+0.81309 ms
+--- post
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+2032 MHz, 3996 MHz, 204.08 W, 41, P0
+--- sampled during runs (clocks.gr,power,temp)
+2032, 204.76, 41
+2032, 206.16, 41
+2032, 206.40, 41
+2032, 204.12, 41
+2032, 206.43, 41
+2032, 204.00, 41
+2032, 204.07, 41
+2032, 206.42, 41
+2032, 204.19, 41
+2032, 204.12, 41
+2032, 204.08, 41
+2032, 204.11, 41
+--- ncu pass
+==PROF== Connected to process 3820920 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0: 0%....50%....100% - 1 pass
+==PROF== Profiling "kernel" - 1: 0%....50%....100% - 1 pass
+Using persistent blocks (148 = 1 per SM)
+
+154.06035 ms
+
+==PROF== Disconnected from process 3820920
+[3820920] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         2.03
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         2.03
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+=== END 01_unlocked ===
+=== 02_lgc510 ===
+Lock cmd: nvidia-smi -lgc 510
+--- pre
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+510 MHz, 3996 MHz, 146.09 W, 40, P0
+--- 3x runs
+RUN 1: Using persistent blocks (148 = 1 per SM)
+
+3.91585 ms
+RUN 2: Using persistent blocks (148 = 1 per SM)
+
+3.91414 ms
+RUN 3: Using persistent blocks (148 = 1 per SM)
+
+3.82142 ms
+--- post
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+510 MHz, 3996 MHz, 146.78 W, 41, P0
+--- sampled during runs (clocks.gr,power,temp)
+510, 146.09, 40
+510, 147.80, 40
+510, 146.24, 40
+510, 147.76, 40
+510, 146.24, 40
+510, 147.11, 41
+510, 146.13, 41
+510, 146.21, 41
+510, 146.21, 41
+510, 146.17, 41
+510, 146.32, 41
+510, 146.24, 41
+--- ncu pass
+==PROF== Connected to process 3821441 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0: 0%....50%....100% - 1 pass
+==PROF== Profiling "kernel" - 1: 0%....50%....100% - 1 pass
+Using persistent blocks (148 = 1 per SM)
+
+154.20682 ms
+
+==PROF== Disconnected from process 3821441
+[3821441] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+=== END 02_lgc510 ===
+=== 03_lgc1005 ===
+Lock cmd: nvidia-smi -lgc 1005
+--- pre
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1005 MHz, 3996 MHz, 156.90 W, 42, P0
+--- 3x runs
+RUN 1: Using persistent blocks (148 = 1 per SM)
+
+1.85168 ms
+RUN 2: Using persistent blocks (148 = 1 per SM)
+
+1.85311 ms
+RUN 3: Using persistent blocks (148 = 1 per SM)
+
+1.85429 ms
+--- post
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1005 MHz, 3996 MHz, 157.67 W, 43, P0
+--- sampled during runs (clocks.gr,power,temp)
+1005, 156.90, 42
+1005, 158.46, 42
+1005, 157.18, 42
+1005, 158.51, 42
+1005, 159.04, 42
+1005, 157.44, 42
+1005, 157.44, 43
+1005, 157.66, 43
+1005, 157.55, 43
+1005, 157.59, 43
+1005, 160.12, 43
+1005, 157.75, 43
+--- ncu pass
+==PROF== Connected to process 3821950 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0: 0%....50%....100% - 1 pass
+==PROF== Profiling "kernel" - 1: 0%....50%....100% - 1 pass
+Using persistent blocks (148 = 1 per SM)
+
+153.24509 ms
+
+==PROF== Disconnected from process 3821950
+[3821950] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+=== END 03_lgc1005 ===
+=== 04_lgc1500 ===
+Lock cmd: nvidia-smi -lgc 1500
+--- pre
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1500 MHz, 3996 MHz, 176.66 W, 45, P0
+--- 3x runs
+RUN 1: Using persistent blocks (148 = 1 per SM)
+
+1.21322 ms
+RUN 2: Using persistent blocks (148 = 1 per SM)
+
+1.21349 ms
+RUN 3: Using persistent blocks (148 = 1 per SM)
+
+1.21220 ms
+--- post
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1500 MHz, 3996 MHz, 176.82 W, 45, P0
+--- sampled during runs (clocks.gr,power,temp)
+1500, 176.74, 45
+1500, 178.10, 45
+1500, 176.10, 45
+1500, 176.31, 45
+1500, 177.97, 45
+1500, 176.48, 45
+1500, 176.70, 45
+1500, 176.43, 45
+1500, 176.63, 45
+1500, 176.70, 45
+1500, 176.71, 45
+1500, 176.93, 45
+--- ncu pass
+==PROF== Connected to process 3822490 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0: 0%....50%....100% - 1 pass
+==PROF== Profiling "kernel" - 1: 0%....50%....100% - 1 pass
+Using persistent blocks (148 = 1 per SM)
+
+154.32256 ms
+
+==PROF== Disconnected from process 3822490
+[3822490] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+=== END 04_lgc1500 ===
+=== 05_lgc1800 ===
+Lock cmd: nvidia-smi -lgc 1800
+--- pre
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1800 MHz, 3996 MHz, 196.30 W, 46, P0
+--- 3x runs
+RUN 1: Using persistent blocks (148 = 1 per SM)
+
+0.94852 ms
+RUN 2: Using persistent blocks (148 = 1 per SM)
+
+0.94842 ms
+RUN 3: Using persistent blocks (148 = 1 per SM)
+
+0.94875 ms
+--- post
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1800 MHz, 3996 MHz, 196.49 W, 46, P0
+--- sampled during runs (clocks.gr,power,temp)
+1800, 196.45, 46
+1800, 198.41, 46
+1800, 198.23, 46
+1800, 196.29, 46
+1800, 198.53, 46
+1800, 196.58, 46
+1800, 196.35, 46
+1800, 196.49, 46
+1800, 196.50, 46
+1800, 196.45, 46
+1800, 196.54, 46
+1800, 196.48, 46
+--- ncu pass
+==PROF== Connected to process 3823006 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0: 0%....50%....100% - 1 pass
+==PROF== Profiling "kernel" - 1: 0%....50%....100% - 1 pass
+Using persistent blocks (148 = 1 per SM)
+
+154.37866 ms
+
+==PROF== Disconnected from process 3823006
+[3823006] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+=== END 05_lgc1800 ===
+=== 06_lgc1920 ===
+Lock cmd: nvidia-smi -lgc 1920
+--- pre
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1920 MHz, 3996 MHz, 213.06 W, 47, P0
+--- 3x runs
+RUN 1: Using persistent blocks (148 = 1 per SM)
+
+0.91681 ms
+RUN 2: Using persistent blocks (148 = 1 per SM)
+
+0.91721 ms
+RUN 3: Using persistent blocks (148 = 1 per SM)
+
+0.91480 ms
+--- post
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1920 MHz, 3996 MHz, 213.29 W, 47, P0
+--- sampled during runs (clocks.gr,power,temp)
+1920, 213.10, 47
+1920, 215.39, 47
+1920, 215.10, 47
+1920, 213.02, 47
+1920, 215.76, 47
+1920, 213.06, 47
+1920, 213.21, 47
+1920, 212.81, 47
+1920, 216.28, 47
+1920, 213.80, 47
+1920, 213.72, 47
+1920, 213.45, 47
+--- ncu pass
+==PROF== Connected to process 3823609 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0: 0%....50%....100% - 1 pass
+==PROF== Profiling "kernel" - 1: 0%....50%....100% - 1 pass
+Using persistent blocks (148 = 1 per SM)
+
+171.55017 ms
+
+==PROF== Disconnected from process 3823609
+[3823609] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+=== END 06_lgc1920 ===
+=== 07_lgc2032 ===
+Lock cmd: nvidia-smi -lgc 2032
+--- pre
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1920 MHz, 3996 MHz, 213.42 W, 47, P0
+--- 3x runs
+RUN 1: Using persistent blocks (148 = 1 per SM)
+
+1.36276 ms
+RUN 2: Using persistent blocks (148 = 1 per SM)
+
+1.36295 ms
+RUN 3: Using persistent blocks (148 = 1 per SM)
+
+1.36362 ms
+--- post
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1920 MHz, 3996 MHz, 212.85 W, 46, P0
+--- sampled during runs (clocks.gr,power,temp)
+1920, 213.45, 47
+1920, 215.70, 47
+1920, 216.14, 47
+1920, 216.15, 46
+1920, 216.00, 47
+1920, 213.68, 46
+1920, 213.68, 46
+1920, 213.23, 46
+1920, 213.49, 46
+1920, 213.21, 46
+1920, 213.18, 46
+1920, 213.34, 46
+--- ncu pass
+==PROF== Connected to process 3824180 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0: 0%....50%....100% - 1 pass
+==PROF== Profiling "kernel" - 1: 0%....50%....100% - 1 pass
+Using persistent blocks (148 = 1 per SM)
+
+176.09059 ms
+
+==PROF== Disconnected from process 3824180
+[3824180] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+=== END 07_lgc2032 ===
+=== 08_lgc2032_2032 ===
+Lock cmd: nvidia-smi -lgc 2032,2032
+--- pre
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1920 MHz, 3996 MHz, 213.07 W, 46, P0
+--- 3x runs
+RUN 1: Using persistent blocks (148 = 1 per SM)
+
+1.36408 ms
+RUN 2: Using persistent blocks (148 = 1 per SM)
+
+1.36410 ms
+RUN 3: Using persistent blocks (148 = 1 per SM)
+
+1.36419 ms
+--- post
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1920 MHz, 3996 MHz, 212.24 W, 46, P0
+--- sampled during runs (clocks.gr,power,temp)
+1920, 213.05, 46
+1920, 215.43, 46
+1920, 213.29, 46
+1920, 215.42, 46
+1920, 215.51, 46
+1920, 212.86, 46
+1920, 212.58, 46
+1920, 212.63, 46
+1920, 212.27, 46
+1920, 212.09, 46
+1920, 212.24, 46
+1920, 213.51, 46
+--- ncu pass
+==PROF== Connected to process 3824668 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0: 0%....50%....100% - 1 pass
+==PROF== Profiling "kernel" - 1: 0%....50%....100% - 1 pass
+Using persistent blocks (148 = 1 per SM)
+
+171.29674 ms
+
+==PROF== Disconnected from process 3824668
+[3824668] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+=== END 08_lgc2032_2032 ===
+=== 09_lgc2031 ===
+Lock cmd: nvidia-smi -lgc 2031
+--- pre
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1920 MHz, 3996 MHz, 211.93 W, 46, P0
+--- 3x runs
+RUN 1: Using persistent blocks (148 = 1 per SM)
+
+1.36185 ms
+RUN 2: Using persistent blocks (148 = 1 per SM)
+
+1.36293 ms
+RUN 3: Using persistent blocks (148 = 1 per SM)
+
+1.36199 ms
+--- post
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1920 MHz, 3996 MHz, 211.93 W, 46, P0
+--- sampled during runs (clocks.gr,power,temp)
+1920, 211.93, 46
+1920, 214.85, 46
+1920, 212.27, 46
+1920, 214.22, 46
+1920, 214.14, 46
+1920, 214.62, 46
+1920, 212.16, 46
+1920, 211.93, 46
+1920, 211.97, 46
+1920, 211.93, 46
+1920, 211.93, 46
+1920, 212.12, 46
+--- ncu pass
+==PROF== Connected to process 3825148 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0: 0%....50%....100% - 1 pass
+==PROF== Profiling "kernel" - 1: 0%....50%....100% - 1 pass
+Using persistent blocks (148 = 1 per SM)
+
+171.30592 ms
+
+==PROF== Disconnected from process 3825148
+[3825148] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+=== END 09_lgc2031 ===
+=== 10_lgc2033 ===
+Lock cmd: nvidia-smi -lgc 2033
+--- pre
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1920 MHz, 3996 MHz, 214.65 W, 46, P0
+--- 3x runs
+RUN 1: Using persistent blocks (148 = 1 per SM)
+
+1.36299 ms
+RUN 2: Using persistent blocks (148 = 1 per SM)
+
+1.36416 ms
+RUN 3: Using persistent blocks (148 = 1 per SM)
+
+1.36259 ms
+--- post
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1920 MHz, 3996 MHz, 212.08 W, 46, P0
+--- sampled during runs (clocks.gr,power,temp)
+1920, 214.69, 46
+1920, 214.93, 46
+1920, 212.39, 46
+1920, 214.71, 46
+1920, 214.76, 46
+1920, 212.28, 46
+1920, 212.40, 46
+1920, 212.32, 46
+1920, 212.04, 46
+1920, 212.08, 46
+1920, 212.20, 46
+1920, 212.05, 46
+--- ncu pass
+==PROF== Connected to process 3825676 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0: 0%....50%....100% - 1 pass
+==PROF== Profiling "kernel" - 1: 0%....50%....100% - 1 pass
+Using persistent blocks (148 = 1 per SM)
+
+175.87738 ms
+
+==PROF== Disconnected from process 3825676
+[3825676] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+=== END 10_lgc2033 ===
+=== 11_lgc1920_1920 ===
+Lock cmd: nvidia-smi -lgc 1920,1920
+--- pre
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1920 MHz, 3996 MHz, 212.50 W, 46, P0
+--- 3x runs
+RUN 1: Using persistent blocks (148 = 1 per SM)
+
+1.36313 ms
+RUN 2: Using persistent blocks (148 = 1 per SM)
+
+1.36279 ms
+RUN 3: Using persistent blocks (148 = 1 per SM)
+
+1.36393 ms
+--- post
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1920 MHz, 3996 MHz, 212.24 W, 46, P0
+--- sampled during runs (clocks.gr,power,temp)
+1920, 212.59, 46
+1920, 214.86, 46
+1920, 212.90, 46
+1920, 215.24, 46
+1920, 215.02, 46
+1920, 212.94, 46
+1920, 212.81, 46
+1920, 212.82, 46
+1920, 215.31, 46
+1920, 213.02, 46
+1920, 212.35, 46
+1920, 212.24, 46
+--- ncu pass
+==PROF== Connected to process 3826161 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0: 0%....50%....100% - 1 pass
+==PROF== Profiling "kernel" - 1: 0%....50%....100% - 1 pass
+Using persistent blocks (148 = 1 per SM)
+
+175.99481 ms
+
+==PROF== Disconnected from process 3826161
+[3826161] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+=== END 11_lgc1920_1920 ===
+=== 12_lgc1800_1800 ===
+Lock cmd: nvidia-smi -lgc 1800,1800
+--- pre
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1800 MHz, 3996 MHz, 195.25 W, 45, P0
+--- 3x runs
+RUN 1: Using persistent blocks (148 = 1 per SM)
+
+1.39689 ms
+RUN 2: Using persistent blocks (148 = 1 per SM)
+
+1.39762 ms
+RUN 3: Using persistent blocks (148 = 1 per SM)
+
+1.39703 ms
+--- post
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+1800 MHz, 3996 MHz, 195.26 W, 45, P0
+--- sampled during runs (clocks.gr,power,temp)
+1800, 195.29, 45
+1800, 197.82, 45
+1800, 195.77, 45
+1800, 200.27, 45
+1800, 197.51, 45
+1800, 195.65, 45
+1800, 195.46, 45
+1800, 195.25, 45
+1800, 195.20, 45
+1800, 195.38, 45
+1800, 195.22, 45
+1800, 195.38, 45
+--- ncu pass
+==PROF== Connected to process 3826747 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0: 0%....50%....100% - 1 pass
+==PROF== Profiling "kernel" - 1: 0%....50%....100% - 1 pass
+Using persistent blocks (148 = 1 per SM)
+
+171.55530 ms
+
+==PROF== Disconnected from process 3826747
+[3826747] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         1.92
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+=== END 12_lgc1800_1800 ===
+All done.
+DONE all sweeps.

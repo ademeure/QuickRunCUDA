@@ -1,0 +1,65 @@
+=== 01_unlocked ===
+Lock cmd: 
+All done.
+--- pre
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+2032 MHz, 3996 MHz, 205.05 W, 41, P0
+--- 3x runs
+RUN 1: Using persistent blocks (148 = 1 per SM)
+
+0.81317 ms
+RUN 2: Using persistent blocks (148 = 1 per SM)
+
+0.81299 ms
+RUN 3: Using persistent blocks (148 = 1 per SM)
+
+0.81309 ms
+--- post
+clocks.current.graphics [MHz], clocks.current.memory [MHz], power.draw [W], temperature.gpu, pstate
+2032 MHz, 3996 MHz, 204.08 W, 41, P0
+--- sampled during runs (clocks.gr,power,temp)
+2032, 204.76, 41
+2032, 206.16, 41
+2032, 206.40, 41
+2032, 204.12, 41
+2032, 206.43, 41
+2032, 204.00, 41
+2032, 204.07, 41
+2032, 206.42, 41
+2032, 204.19, 41
+2032, 204.12, 41
+2032, 204.08, 41
+2032, 204.11, 41
+--- ncu pass
+==PROF== Connected to process 3820920 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0: 0%....50%....100% - 1 pass
+==PROF== Profiling "kernel" - 1: 0%....50%....100% - 1 pass
+Using persistent blocks (148 = 1 per SM)
+
+154.06035 ms
+
+==PROF== Disconnected from process 3820920
+[3820920] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         2.03
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+  kernel (148, 1, 1)x(1024, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    ---------------------------------------------------- ----------- ------------
+    Metric Name                                          Metric Unit Metric Value
+    ---------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                           Ghz         2.03
+    sm__cycles_active.avg.pct_of_peak_sustained_active             %          100
+    smsp__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    smsp__inst_executed.sum                                     inst    486941312
+    ---------------------------------------------------- ----------- ------------
+
+=== END 01_unlocked ===
