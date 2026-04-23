@@ -58,4 +58,32 @@ The 20% .ca-vs-.cg performance gap at L2-hot is plausible per architectural reas
   - .cs → LDG.E.EF.128 (evict-first)
   - .lu → LDG.E.LU.128 (last-use)
 - [x] User L1063 "STRONG.SM is for <256-bit loads" hypothesis — REFUTED (STRONG.SM is L1-cached, width is independent)
-- [ ] §16 LDG hint 20% perf gap at 4 MB WS (.ca 13.1 vs .cg 10.5 TB/s) — plausible from L1 vs L2 paths but not directly re-tested in this iteration
+- [x] §16 LDG hint 20% perf gap at 4 MB WS (.ca 13.1 vs .cg 10.5 TB/s) — ✅ RESOLVED in `16_ca_vs_cg_hot.md`: at L1-fitting WS the gap is **1.88× (NOT 1.25×)** — catalog's 10.5 TB/s for .cg was wrong; real .cg = 6.97 TB/s at hot regime.
+
+---
+
+## ADDENDUM 2026-04-23 — `ENL2` SASS modifier ≠ "bypass L1" (CRIT8 + B12 resolution)
+
+User concern (CRIT8 / B12 / reviewed_errors L1063): "Are you sure ENL2 means what you think it means? I suspect it might not actually bypass L1."
+
+**Direct SASS evidence (grep across our auto-dumped SASS):**
+
+```
+STG.E.ENL2.256.STRONG.SYS desc[UR6][R62.64], R44, R8 ;
+```
+
+This emits from a 256-bit (32-byte) v8 store. The `ENL2.256` modifier means **"Encode/Enable L2 sector size = 256 bytes"** — IDENTICAL purpose to the `.L2::256B` PTX modifier that on the LOAD side emits `LDG.E.LTC256B`. ENL2 is the STORE-side spelling.
+
+**ENL2 does NOT bypass L1.** Per catalog's own table (L4925-4932):
+- WIDTH=8 v8 store (uses ENL2.256) → DRAM write **2.19 TB/s**, **L1 store BW 2.34 TB/s** — both well-populated
+- If ENL2 bypassed L1, you'd see L1 BW ≈ 0
+
+**The mechanism:** ENL2.256 (and LTC256B on the load side) tells the L2 to fetch/coalesce a full 256-byte sector at the L2 level. L1 still participates normally for the SM's local working set. This is the same "promote to 256B sector" hint that gave us 92% HBM SoL on the load side (per `16_L2_256B_modifier.md`).
+
+**Cache-bypass control is via `.cg` (STRONG.GPU scope tag), NOT via ENL2/LTC256B.**
+
+✅ **CRIT8 partially RESOLVED**: ENL2 ≠ bypass L1; it's an L2-sector-size hint emitted for v8 stores. The `.ca`/`.cg` scope tags control L1-vs-L2 caching independently.
+
+(Catalog's "ENL2 SASS bypasses L1" framing was the agent-hallucinated claim from earlier sessions; user was right to be skeptical.)
+
+✅ **B12 RESOLVED**: catalog's "LDG.E.ENL2.256 means bypassing L1" claim is **FALSIFIED**. ENL2.256 is the L2-sector-size encode, not a cache-bypass directive. The L1 is still populated normally.
