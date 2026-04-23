@@ -53,6 +53,7 @@
 | **§0 cheat-sheet Rule 11** (NEW) | "FP64 is 300× slower than FP16 tensor" | ❌ Real ratio is **~2300×** (FP64=1.06 TF vs FP16 mma.sync ~2465 TF). Catalog 300× understates by 8×. |
 | **§0 mbarrier.arrive = 8.1 cy** (NEW) | Catalog headline | ❌ Real **~27 cy** for default `mbarrier.arrive.shared.b64`. Catalog 8.1 likely measured `mbarrier.arrive.relaxed.cta` (lighter). Catalog should specify modifier. |
 | **§0 __syncthreads 45/89 cy** (NEW) | At BS=512/1024 | ❌ Real 54/86 cy via formula 22+2W (E5 RESOLVED). Catalog values from wrong 12+2W formula. |
+| **§14** (NEW) | FMNMX3 fusion (Blackwell 3-input FP min/max, 2× min.f32 → 1 SASS) | ✅ CONFIRMED via SASS (128 FMNMX3 emitted) + ncu pipe_alu=1.97 (98.54%). Real architectural feature. 128 logical FP min ops/SM/cy (same multiplier trick as IADD3 for ints). |
 
 ## RESOLVED SUMMARY (prior 15 items, 2026-04-23)
 
