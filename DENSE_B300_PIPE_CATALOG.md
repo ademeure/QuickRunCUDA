@@ -11,21 +11,24 @@
 >
 > **The 🟡 tag is load-bearing.** Earlier iterations of this DENSE doc were less careful about distinguishing these — many §22c-§22r entries were essentially catalog claims preserved verbatim. They're plausible but not yet in the audit-verified set.
 >
-> **What IS audit-verified** (16 sections, 2026-04-23):
-> - §0 spec card key numbers (148 SMs, 7680-bit, 126 MB L2, 1942 MHz DVFS, etc.)
-> - §1 pipe topology
-> - §0 FFMA peak (00a_ffma_peak.md)
-> - §10 memory hierarchy (00b_mem_hierarchy.md)
-> - §11 latency table key entries (24_latency_table.md)
-> - §12 fence costs (30G_fence.md)
-> - §13 atomics scope/contention basics (30B_atomics.md + 30B_atomics_FOLLOWUP.md correction)
-> - §13a TMA sizes (30_tma_sizes.md)
-> - §14 mma.sync FP16/TF32/FP8/INT8 (22_tensor_mma_sync.md)
-> - §15 + §15a DSMEM (13_dsmem.md + 13_dsmem_exhaustive.md)
-> - §22 dual-issue FFMA2+ALU (22_dual_issue_ffma2_alu.md)
-> - §22e .reuse cache (22e_reuse_cache.md)
-> - §22h compute-memory overlap — **with quantitative corrections** (22h_compute_mem_overlap.md, 11 SASS files preserved)
-> - §30 TMA-vs-LDG max-tuned head-to-head (30_tma_vs_ldg_max_tuned.md)
+> **What IS audit-verified** (40 ✅ verified + 6 ⚠ partial = 50 sections audited as of 2026-04-23 final):
+> - §0 spec card, §1 pipe topology, §0 FFMA peak, §10 memory hierarchy, §11 latency table
+> - §12 fence costs, §13 atomics, §13a TMA, §14 mma.sync FP16/TF32/FP8/INT8
+> - §15+§15a DSMEM (corrected: 23 cy "free" → real 204-223 cy)
+> - §17 MUFU throughput, §22 dual-issue FFMA2+ALU, §22e .reuse cache
+> - §22f L1/L2 stride probe (catalog table FALSIFIED)
+> - §22g tcgen05 SASS, §22h compute-mem overlap, §22i per-GPC L2 latency
+> - §22j smem bank conflicts (corrected: real 9.6× for 32-bit LDS)
+> - §22k PTX special regs, §22l grid sync + CCTL.IVALL (12 ADDENDUMs)
+> - §22m kernel launch overhead, §22n CTA scheduler
+> - §22o NVFP4 (9.26 PF + K=96 ULTRA bit 31 doesn't add MACs)
+> - §22q register spilling (cliff at 32 vars), §22r N=2 atomic hotspot
+> - §23/§25/§26/§27/§29 throughput + warp-coop
+> - §28 compiler-emission gaps, §30.L ALU latency, §30.M CCTL
+> - §30 TMA-vs-LDG max-tuned, §2.1-§2.13 instruction catalog
+> - B9 LDC.32 broadcast (ADU pipe), G7 smem capacities
+>
+> 51+ records under `justifications/` — see `JUSTIFIED_B300_PIPE_CATALOG.md` table for the per-section index.
 >
 > All have `justifications/<id>.md` records with full evidence (CLAIM/TEST/BUILD/RUN/STDOUT/SASS/COUNT/NCU/CLOCK/VERDICT/DELTA per the audit-of-the-audit rubric).
 >
