@@ -1,5 +1,20 @@
 # DENSE B300 / Blackwell sm_103a — SM Pipe Catalog
 
+> ⚠ **CRITICAL READING NOTE — section verification status:**
+>
+> Each section has ONE of these tags (post 2026-04-23 methodology shift):
+>
+> - **✅ AUDIT-VERIFIED** — independently re-run on this rig with SASS dump + ncu metrics + matching catalog claim. Justification record at `justifications/<id>.md`. **Trust these.**
+> - **🟡 CATALOG-PRESERVED** — copied from `B300_PIPE_CATALOG.md` because it looks plausible and methodology was reasonable, but **NOT independently re-run by this audit**. Do NOT cite as authoritative until verified.
+> - **❌ FALSIFIED** — disproved by audit. Section preserved as a corrective record with the wrong claim crossed out.
+> - **🔍 PENDING** — agent is running or queued.
+>
+> **The 🟡 tag is load-bearing.** Earlier iterations of this DENSE doc were less careful about distinguishing these — many §22c-§22r entries were essentially catalog claims preserved verbatim. They're plausible but not yet in the audit-verified set.
+>
+> **What IS audit-verified:** §0 spec card key numbers (148 SMs, 7680-bit, 126 MB L2, 1942 MHz DVFS, etc.), §1 pipe topology, §0 FFMA peak, §10 mem hierarchy, §11 latency table key entries, §12 fence costs, §13 atomics scope/contention basics, §13a TMA sizes, §14 mma.sync FP16/TF32/FP8/INT8, §15 + §15a DSMEM, §22 dual-issue FFMA2+ALU, §22e (.reuse cache verified via FFMA2 SASS dump in audit). All have `justifications/<id>.md` records.
+>
+> **What is NOT audit-verified yet:** §17 MUFU throughput, §18 branch divergence, §19 INT8 dp4a numbers, §20 FMIN penalty, §21 tcgen05 throttling cliff, §22c CTA capacity formula, §22d cluster launch overhead, §22f L1/L2 stride probe, §22g tcgen05 SASS encoding, §22h compute-mem overlap, §22i per-GPC L2 variation (catalog) [though DSMEM exhaustive corroborates], §22j smem bank conflict sweep, §22k PTX special registers (only `%nsmid`,`%clock64` informally checked), §22l grid sync 2.2 µs, §22m kernel launch 5.7 µs, §22n CTA scheduler placement (DSMEM exhaustive corroborates partially), §22o NVFP4 (agent dispatched), §22p power efficiency, §22q register spilling, §22r atomic contention at scale.
+>
 > **Status:** Iteration in progress. This is a pruned, dense version of `B300_PIPE_CATALOG.md` that removes content known to be wrong, outdated, or low-value. Every numerical claim that survives has either a JUSTIFIED entry or a REVIEW_CHECKLIST flag.
 >
 > **Source:** `B300_PIPE_CATALOG.md` (19,742 lines).
