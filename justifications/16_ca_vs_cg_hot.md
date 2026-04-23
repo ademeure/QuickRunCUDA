@@ -48,3 +48,51 @@ For the catalog's 25% gap to materialize, the **hot subset within the working se
 ## REVIEW_CHECKLIST candidates
 
 - [ ] §16 L1571 `.ca = 13.1 TB/s, .cg = 10.5 TB/s = -20%` at "4 MB WS" — **NEEDS NUANCE**: gap requires hot subset ≤ L1 capacity. Uniform 4 MB cycling shows NO gap (both ~7.9 TB/s). Catalog should specify access pattern.
+
+---
+
+## ADDENDUM 2026-04-23 — Reproduced with proper L1-fitting WS
+
+Built focused test with WS_KB sweep (16/64/128/196 KB):
+```c
+const int WS_DWORDS = WS_KB * 256;
+const int MASK = WS_DWORDS - 1;
+unsigned int idx = (i * 256 + tid) & MASK;
+ld.global.{ca,cg}.u32 [A + idx*4]
+```
+
+Launch: `-t 256 -b 1184 -A 1048576 -H "#define WS_KB 16 ... 196"`
+
+### Results (l1tex BW = effective load bandwidth)
+
+| WS_KB | .ca l1tex BW | .cg l1tex BW | .ca/.cg ratio |
+|------:|-------------:|-------------:|--------------:|
+| 16 | **13.13 TB/s** | 6.97 TB/s | **1.88×** |
+| 64 | 13.11 TB/s | 6.97 TB/s | 1.88× |
+| 128 | 13.10 TB/s | 6.94 TB/s | 1.89× |
+| 196 | 13.13 TB/s | 6.98 TB/s | 1.88× |
+
+### Findings
+
+✅ **Catalog .ca = 13.1 TB/s CONFIRMED EXACTLY** (my measurement = 13.10-13.13 TB/s across all WS sizes ≤196 KB)
+
+⚠ **Catalog .cg gap is UNDERSTATED**: catalog says .cg = 10.5 TB/s (-20%); my measurement shows .cg = **6.97 TB/s = -47% from .ca** (i.e., .ca is **1.88× faster**, not 1.25×).
+
+The HW path differentiation is much more dramatic than catalog reports:
+- .ca uses LDG.E.STRONG.SM (L1+L2) → L1TEX serves at 13.1 TB/s
+- .cg uses LDG.E.STRONG.GPU (L2-only) → L1TEX serves at 6.97 TB/s (HALF the rate)
+
+This is consistent with the L1 path being WIDER than the L2-bypass path on the L1TEX unit.
+
+## Updated VERDICT
+
+✅ **Catalog ".ca beats .cg for hot data" CONFIRMED but UNDERSTATED**:
+- True ratio: **1.88× (88% faster)**, not 25%
+- Holds across all WS ≤196 KB (L1-fitting)
+- Falls apart at WS > L1 (4 MB earlier test showed equal rates)
+
+## REVIEW_CHECKLIST candidates (REVISED)
+
+- [x] §16 .ca = 13.1 TB/s — ✅ CONFIRMED EXACTLY at all WS ≤196 KB
+- [ ] §16 .cg = 10.5 TB/s — measured **6.97 TB/s** (-33% lower than catalog); catalog underrepresents the .cg-path speed gap
+- [ ] §16 ".cg = -20% from .ca" — actually **-47% (1.88× ratio)** — catalog claim understates the gap by ~3.5×
