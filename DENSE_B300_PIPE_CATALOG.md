@@ -35,7 +35,11 @@
 > - **Multi-chain identical**: 8 self-op chains AND 8 distinct chains both hit 0.96 op/cy = 96% of FFMA peak. Hardware doesn't differentiate.
 > - **ncu evidence**: `wait` and `short_scoreboard` stalls bit-identical between self-op and distinct.
 > - **FFMA pipe latency = 4 cy architectural** (NCHAINS sweep: 1→4.03, 2→2.06, 3→1.38, 4→1.05 cy/op; saturates at 4-deep ILP).
-> - **The IADD apparent 2.5× self-op penalty is compiler PIPE RE-ROUTING**, not hardware: ptxas can't emit `IADD3 R,R,R,R` (encoding constraint), falls back to `IMAD.IADD R,R,0x1,R` on FMA pipe (4 cy lat) instead of IADD3 pipe (2 cy lat). 3-source IADD3 with constant src gets back to 2.01 cy.
+> - **The IADD apparent 2.5× cy/PTX difference is COMPILER FUSION**, not pipe routing (corrected per `justifications/SELF_OP_DEEP_CORRECTION.md`):
+>   - SASS evidence: self-op (`v = v + v` × 1024 PTX) → 1031 SASS (1:1 SASS:PTX, alternating IMAD.IADD:IADD3 = 2:1)
+>   - Distinct (`v = v + k` × 1024 PTX) → 515 SASS IADD3 (0.5:1 SASS:PTX — compiler FUSES 2 PTX adds into 1 SASS `IADD3 R, k, R, k` computing `v += 2k`)
+>   - Per-SASS cycle cost is ~4-5 cy in BOTH cases — no per-SASS penalty. The cy/PTX difference is purely from fusion ratio.
+>   - The earlier "ptxas can't emit IADD3 R,R,R,R" claim was FALSE — `IADD3 R, PT, PT, R, R, RZ` IS emitted freely; the mechanism narrative was wrong even though the headline finding (no architectural self-op penalty) was right.
 > - **`.reuse` cache helps THROUGHPUT** (per §22e at 99.9% emission), does NOT change dependent-chain latency.
 >
 > **Implication for catalog §24 (and elsewhere): the latency entries (FFMA=4, DFMA=63.9, etc.) ARE architectural — NOT inflated.** JUSTIFIED §24's confirmations stand. The "2× inflated" caveat is RETRACTED.

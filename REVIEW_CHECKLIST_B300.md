@@ -198,7 +198,7 @@ These are the highest-priority items that crossed multiple groups during the dee
    - Pure self-op `FFMA R4,R4,R4,R4` and distinct-source single-chain BOTH measure 4.018-4.024 cy/op (within 0.14% across 30 trials, variance=0)
    - 8-chain self-op = 8-chain distinct = 0.96 op/cy (96% of FFMA peak) — multi-chain throughput identical
    - ncu `wait` and `short_scoreboard` stalls bit-identical between self-op (328,645 cy/warp) and distinct (327,816 cy/warp)
-   - The IADD apparent 2.5× penalty (4.99 vs 2.02 cy) is **COMPILER PIPE RE-ROUTING**, not hardware: ptxas can't emit `IADD3 R,R,R,R` (encoding constraint), falls back to `IMAD.IADD R,R,0x1,R` on FMA pipe (4 cy lat) instead of IADD3 pipe (2 cy lat). Test 2c proves this: a 3-source IADD3 with constant src gets back to 2.01 cy.
+   - The IADD apparent 2.5× cy/PTX difference (4.99 vs 2.02) is **COMPILER FUSION**, NOT pipe routing — corrected via direct SASS count (justifications/SELF_OP_DEEP_CORRECTION.md): self-op emits 1 SASS per PTX add (mix of IMAD.IADD + IADD3), distinct emits 0.5 SASS per PTX add (pure IADD3, fusing 2 adds into `IADD3 R,k,R,k` = `v += 2k`). Per-SASS cycle cost is ~4-5 cy in BOTH cases. The earlier "ptxas can't emit IADD3 R,R,R,R" agent narrative was FALSE — `IADD3 R, PT, PT, R, R, RZ` IS emitted freely.
    - `.reuse` cache helps THROUGHPUT-bound tests by relieving RF read pressure (per §22e), does NOT change dependent-chain latency
    - **FFMA pipe latency on B300 sm_103a = 4 cy** (NCHAINS sweep: 1→4.03, 2→2.06, 3→1.38, 4→1.05 cy/op; saturates at NCHAINS=4)
    - Catalog's L2017+ §24 latency table values (FFMA=4, DFMA=63.9, etc.) are NOT inflated — they ARE the architectural latencies.
