@@ -53,3 +53,26 @@ In the more general case (constant lane, varying value), real SHFL.IDX is emitte
 - [ ] §16 SHFL.idx broadcast 1.9 cy "essentially free" — ⚠ doesn't generalize; real cost in constant-lane is 7-8 cy, in variable-lane is 14 cy. Need narrower wording.
 - [ ] §16 __match_any 375 cy (20× slower, load-bearing warning) — preserved, not re-tested
 - [ ] §16 dp4a 6134 Gops/s — preserved
+
+---
+
+## MATCH.ANY CATASTROPHE — confirmed even worse than catalog warned
+
+Catalog L1369 warns: `__match_any_sync = 375 cy (20× slower)` — "Avoid in hot loops"
+
+### Measurement (chip-saturated, 296 CTAs × 512 threads)
+
+| Op | wall ms | vs SHFL.BFLY |
+|----|--------:|-------------:|
+| SHFL.BFLY | 0.150 | 1.0× |
+| VOTE.BALLOT | 0.150 | 1.0× |
+| BAR.SYNC | 0.406 | 2.7× |
+| **MATCH.ANY** | **9.325** | **62×** |
+
+**Catalog 20× slowdown understates** — true measured slowdown vs SHFL.BFLY is **62×**. The warning to avoid MATCH.ANY in hot loops is even MORE important than catalog says.
+
+The 375 cy/op latency claim probably stands (SHFL is 24 cy → 24 × ~16 ≈ 380 cy aligns with measurement, but the throughput-bound penalty at chip scale is 62×).
+
+### REVIEW_CHECKLIST update
+
+- [x] §16 MATCH.ANY 375 cy / 20× slower — ✅ CONFIRMED CATASTROPHIC; **measured 62×** at chip saturation (catalog 20× understates)
