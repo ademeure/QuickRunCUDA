@@ -63,16 +63,21 @@
 | §13 Predication/divergence | L957 | 🔍 not yet | [13_predication.md](justifications/13_predication.md) |
 | §14 Extended op catalog | L971 | 🔍 not yet | [14_extended_ops.md](justifications/14_extended_ops.md) |
 | §15 Atomics deep + latency | L1008 | 🔍 not yet | [15_atomics.md](justifications/15_atomics.md) |
-| §22 mma.sync FP16/BF16 = 577 TFLOPS | L25 (cheat-sheet) | 🔍 not yet | [22_mma_sync_fp16.md](justifications/22_mma_sync_fp16.md) |
+| §22 mma.sync FP16/BF16 = 577 TFLOPS | L25 (cheat-sheet) | ✅ replicated | [22_tensor_mma_sync.md](justifications/22_tensor_mma_sync.md) — FP16=571 ✓, TF32=285.7 ✓, **FP8 emulated 309 (catalog 276 was 12% LOW)**, INT8 IMMA 142.4 ✓ |
+| §22 dual-issue FFMA2+ALU | L31 cheat-sheet + L218 falsification | ✅ replicated | [22_dual_issue_ffma2_alu.md](justifications/22_dual_issue_ffma2_alu.md) — FFMA2+LOP3 1:1 saturates ALL 3 pipes (314 useful ops/SM/cy vs scalar+LOP3's 187) |
+| §13 DSMEM | L7012 / L7029-7031 | ✅ replicated | [13_dsmem.md](justifications/13_dsmem.md) — **catalog "23 cy ≈ free" FALSIFIED**: real read latency 204-223 cy (9× slower); SASS reveals `ld.shared::cluster` → `LD.E` (global LSU); V53 write 87 GB/s/cluster ✓ |
+| §15a DSMEM EXHAUSTIVE | 9-dim sweep | ✅ replicated | [13_dsmem_exhaustive.md](justifications/13_dsmem_exhaustive.md) — v4 3.5× per-byte efficient; cluster=16 works; ILP=32 → 9 cy/load (LDS-equivalent); **B300 = 9 GPCs × 16 SMs + 1 partial 4-SM GPC = 148 (NOT 8 GPCs as catalog claims)**; per-GPC 20% silicon variation; aggregate 2.4 TB/s W / 1.9 TB/s R |
+| §16 tcgen05.mma | L6686+ | 🔍 catalog content preserved (linear-scaling math is self-consistent) | DENSE §16; tcgen05 specific re-run not yet attempted on this rig |
 | §23 Clean MUFU sweep | L1976 | 🔍 not yet | [23_mufu_sweep.md](justifications/23_mufu_sweep.md) |
-| §24 Latency reference (clock64) | L2007 | 🔍 not yet | [24_latency_clock64.md](justifications/24_latency_clock64.md) |
+| §24 Latency reference (clock64) | L2007 | ✅ replicated | [24_latency_table.md](justifications/24_latency_table.md) — 75% ±15% accurate; **fixes:** DFMA=63.7 (L103's 92 wrong); **syncthreads = `22+2W`** (L116's `12+2W` wrong); mbarrier RTT=123 (header's 54 was arrive-only); **redux.add/or/and/xor=44 cy is 2.4× slower than min/max=18** (NEW) |
 | §25 Final compact throughput | L2062 | 🔍 not yet | [25_final_throughput.md](justifications/25_final_throughput.md) |
 | §26 Warp coop primitives | L2117 | 🔍 not yet | [26_warp_coop.md](justifications/26_warp_coop.md) |
 | §27 BF16 non-tensor arith | L2133 | 🔍 not yet | [27_bf16_arith.md](justifications/27_bf16_arith.md) |
 | §28 Compiler-emission gaps | L2147 | 🔍 not yet | [28_compiler_gaps.md](justifications/28_compiler_gaps.md) |
 | §29 Warp-reduce reality | L2186 | 🔍 not yet | [29_warp_reduce.md](justifications/29_warp_reduce.md) |
-| §30 TMA + mbarrier | L2218 | 🔍 not yet | [30_tma_mbarrier.md](justifications/30_tma_mbarrier.md) |
-| §30.B Atomic latency (1-thread chain) | L2679 | 🔍 not yet | [30B_atom_latency.md](justifications/30B_atom_latency.md) |
+| §30 TMA + mbarrier (size-independence) | L2218 | ✅ replicated | [30_tma_sizes.md](justifications/30_tma_sizes.md) — "48 cy floor" is amortized rate; pure single-issue is ~65 cy. Sharp 8 KiB crossover ✓ in GB/s metric. Per-SM peak ~240-260 GB/s ✓. **Chip-wide 21.9 TB/s requires L2 hits NOT DRAM** (catalog wording fails to flag). |
+| §30 TMA vs LDG max-tuned head-to-head | new audit | ✅ replicated | [30_tma_vs_ldg_max_tuned.md](justifications/30_tma_vs_ldg_max_tuned.md) — **L2-hit: TMA wins 12%** (20.49 vs 18.25 TB/s). **DRAM-cold: TIED at HBM SoL** (96.5%/95.4%). Catalog L2 wire 13.3 TB/s under-counts by 37-54%. NEW: ncu `lts__t_bytes` undercounts LDG L2-hit 2.7× (use `l1tex__t_bytes` for LDG). |
+| §30.B Atomics + contention | L2679 | ✅ replicated | [30B_atomics.md](justifications/30B_atomics.md) — atom chain = LDS at 45 cy ✓; N=2 anomaly 29× ✓; per-warp 5× claim WRONG (actually 1.09× FASTER); coalesced 0.023 atom/cy/lane (NOT 0.94); scope penalty 2.2× NOT 31×; FP16 atomicAdd 6.3× NOT 45×. |
 | §30.G Memory fence costs | L2883 | ✅ replicated | [30G_fence.md](justifications/30G_fence.md) — cta=8/gl=267/sys=1727 single-GPU; V54's 2806 sys was 2-GPU rig; "+60 cy/write" claim RETRACTED |
 | §30.L ALU latency + throughput | L2750 | 🔍 not yet | [30L_alu.md](justifications/30L_alu.md) |
 | §30.M Cache control (CCTL) | L2728 | 🔍 not yet | [30M_cctl.md](justifications/30M_cctl.md) |
