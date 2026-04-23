@@ -23,6 +23,66 @@
 
 ---
 
+## RESOLVED SUMMARY (15 items, 2026-04-23)
+
+These items have been replicated, verified, or had their resolution settled. Skim this list to see what's verified vs what's still open.
+
+| Entry | Catalog claim | Resolution |
+|---|---|---|
+| **A1+A2** | FFMA peak 71.8 TF | ✅ matches exactly (71.82 TF). Clock=1942 MHz (rig DVFS settling, NOT 1920 NOR 2032). |
+| **C8** | "FFMA → both fma sub-pipes simultaneously" | ❌ FALSIFIED. FFMA dispatches to ONE sub-pipe per cycle (scheduler alternates). pipe_fmalite=93%, pipe_fmaheavy=4.5% in dual mode. |
+| **C9** | FFMA2 + ALU dual-issue | ✅ FFMA2+LOP3 1:1 saturates 3 pipes → **314 useful ops/SM/cy** vs scalar+LOP3's 187. **Sweet spot for tuned kernels.** |
+| **C1** | "Dispatch ceiling = 4.00 hard cap" | ✅ confirmed (3.88-3.95 measured); V52 alu+fma=145% (cross-pipe sum). |
+| **D1** | mma.sync FP16 m16n8k16 = 577 TF | ✅ matches (571 TF, 99.5% pipe_tensor). |
+| **D2** | mma.sync TF32 m16n8k8 = 288 TF | ✅ matches (285.7 TF). |
+| **D3** | mma.sync FP8 emulated = 276 TF | ⚠ catalog **12% LOW**. Real value **309 TF**. Recommend bumping catalog L27. |
+| **D4** | mma.sync INT8 IMMA = 142 TOPS | ✅ exact match (142.4). |
+| **E2** | DFMA latency = 92 cy | ⚠ catalog L103 WRONG. Real **63.7 cy** (L460 was right). |
+| **E4** | fence.sc.gpu = 274 cy | ✅ confirmed (267-281 cy single-warp + ~280 cy first-fence-after-write). |
+| **E5** | __syncthreads BS=512 = 45 cy / formula 12+2W | ⚠ both wrong. Real formula `22+2W` (BS=512=54 cy). |
+| **E6** | per-warp atomic 5× slower than 1-hotspot | ❌ catalog REVERSED. Per-warp clean is 1.09× FASTER; per-CTA 12.4× FASTER. |
+| **G1** | TMA cp.async.bulk = 48 cy size-independent floor | ⚠ catalog conflates 2 measurements: 48 cy is amortized rate, pure single-issue is 65 cy. |
+| **G2** | TMA chip-wide 29.2 TB/s | ⚠ requires L2 hits, NOT DRAM. Chip-scale measurement caps at 6.4 TB/s HBM-bound. |
+| **G2b** | TMA vs LDG max-tuned head-to-head | ✅ NEW: L2-hit TMA wins 12% (20.49 vs 18.25); DRAM-cold TIED at HBM SoL (96.5%/95.4%). Catalog L2 wire 13.3 TB/s under-counts by 37-54%. |
+| **CRIT1** | fence costs span 29-8869 cy | ✅ single-GPU ladder is cta=8 / gl=267 (+~280 first-after-write FIXED, NOT linear) / sys=1727. V54's 2806 was 2-GPU NVLink rig. |
+| **CRIT5** | "FREE" claims | ⚠ DSMEM "free" FALSIFIED (real 9× slower); atomic scope FREE for L2-hit confirmed. |
+
+**Resolution summary:** 8 ✅ catalog verified, 9 ⚠ catalog corrected/refined, 2 ❌ falsified.
+
+## CRITICAL RESOLVED — DSMEM falsification
+
+Catalog "DSMEM ~identical to local SMEM, essentially free" is **WRONG**. Real findings (justifications/13_dsmem.md + 13_dsmem_exhaustive.md):
+- Read latency single-chain: **204-223 cy** (vs 23 cy local SMEM = 9× slower)
+- Read latency ILP=32: **9 cy/load** (close to LDS — DSMEM IS hidable with enough ILP)
+- Write throughput sustained, fenced: 87-117 GB/s/cluster (depends on stride)
+- Write burst (no-fence): 660 GB/s/cluster (V21's 560 reproduces here)
+- SASS: `ld.shared::cluster.u32` → `LD.E` (global LSU path), NOT LDS
+- L2 traversal: 0.03-0.05% (both reads AND writes bypass L2)
+- **Topology**: cluster=8 → SMs (0,1,16,17,32,33,48,49) — 1 TPC per GPC, GPC stride=16
+- **Per-GPC silicon variation**: GPC2 189 cy vs GPC1 229 cy (20% spread)
+- **Topology**: B300 SXM6 AC has **9 GPCs × 16 SMs + 1 partial 4-SM GPC = 148** (catalog "8 GPCs" elsewhere WRONG)
+
+---
+
+## STILL-OPEN HIGH-PRIORITY (top 10 to review)
+
+These are the [ ] items the user is most likely to have a strong opinion on. Open `B300_PIPE_CATALOG.md` line by line for the catalog claim.
+
+- [ ] **A3** "FFMA2 packed = 72.3 TFLOPS = 99.4%" — needs SASS verification that FFMA2 (not FFMA scalar pair) is actually emitted — `[ref: catalog L31]`
+- [ ] **A5** "FP64 DFMA = 0.95 TFLOPS" — CLAUDE.md says theoretical 1.20 TF; 0.95/1.20 = 79% suggests under-saturation; needs chip-occupancy retest — `[ref: catalog L35]`
+- [ ] **D5** "tcgen05.mma all formats = 128 cy at M=128 N=256" — catalog math is self-consistent (linear scaling table), but no fresh measurement on this rig — `[ref: catalog L120-130, L6686+]`
+- [ ] **D6** "FP4 NVFP4 K=64 = 9856 TFLOPS" — needs verification; K=96 ULTRA path agent FAILED (token limit) — `[ref: catalog L128]`
+- [ ] **CRIT2** "tcgen05 'peak verified' single-warp scope mismatch" — MITIGATED by Multi-SM linear scaling table L6776 (148 SMs each independent → 148× single-warp = chip-wide makes sense). Per audit, this is now lower priority. — `[ref: catalog L6716]`
+- [ ] **CRIT4** WRONG sections kept in catalog without retroactive correction — needs catalog meta-edit pass — `[ref: B300_PIPE_CATALOG.md:8558,8586]`
+- [ ] **CRIT6** FMNMX3 (3-input min/max) — likely compiler fusion not native opcode; needs cuobjdump — `[ref: catalog L981]`
+- [ ] **CRIT8** "ENL2" SASS bypasses L1 / cudaMallocAsync changes ptxas behavior — both claims suspect, need ISA reference — `[ref: catalog SASS sections]`
+- [ ] **CRIT9** Per-stack stack-locality recipes (D2D 6.93 TB/s) — cross-stack hashing hard to control; recipe may not generalize — `[ref: catalog L1280]`
+- [ ] **F1-F6** All power claims (DVS scaling V², 1005 MHz stuck floor, 1071 W stress recipe, V² formula) — catalog §44 is DISPUTED (M11 vs 16_power_clock 2× discrepancy in canonical) — needs power-per-pipe replication
+
+(The full ~50 still-open entries continue below by group.)
+
+---
+
 ## Group A — Headline FP32 / FFMA
 
 - [ ] **A1** "FP32 FFMA peak = 71.8 TFLOPS = 98.8% of theoretical 72.7 TFLOPS at 1.92 GHz" — the 72.7 denominator uses 1920 MHz; CLAUDE.md says theoretical at 2032 MHz boost is 76.96 TFLOPS — `[ref: B300_PIPE_CATALOG.md:30]` — `[clock-mismatch]`
