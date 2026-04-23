@@ -32,6 +32,7 @@
 | H | CCTL.IVALL is **essentially FREE (~3 cy)** on idle pipeline; observed cost is drain-wait for in-flight loads (acquire fence semantics) | §22l ADDENDUMs 3-16 |
 | I | release.gpu drain is **SM-WIDE** (drains all co-resident CTAs' loads + stores), can compound to 11,000+ cy at high occupancy | §22l ADDENDUMs |
 | J | cp.async (LDGSTS) **bypasses acquire fence drain** unless commit_group is issued first | §22l ADDENDUM 12 |
+| K | **`.L2::256B` cache hint gives 40% DRAM BW boost** (5.07→7.06 TB/s = 92% HBM SoL) for sparse-but-spatially-local access patterns (4B reads at 256B stride between threads). Compiler emits LDG.E.LTC256B. | `16_L2_256B_modifier.md` |
 
 **Format below:** group by catalog section, single-line yes/no per claim. RESOLVED items have `[x]`; OPEN items have `[ ]` for your review.
 

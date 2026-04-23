@@ -259,6 +259,7 @@ If you don't trust a number: it's probably already on `REVIEW_CHECKLIST_B300.md`
 15. **bf16x2 EX2 (`MUFU.EX2.BF16x2`) gives same EX2-throughput as f32 EX2 at HALF dispatch pressure** — useful when co-issuing with other ops. Per `17_mufu.md`.
 16. **Chained 2× min.f32 → single FMNMX3 SASS (3-input fused min)** — 128 logical mins/SM/cy, same multiplier as IADD3 for ints. Per `14_extended_ops.md`.
 17. **u64.ADD demonstrates clean alu+fmaheavy co-issue**: pipe_alu (IADD3) + pipe_fmaheavy (IMAD.X) saturate together → 64 u64-adds/SM/cy. Per `02_4_u64_integer.md`.
+18. **`.L2::256B` cache hint gives 40% DRAM BW boost** for sparse-but-spatially-local LDG patterns: stride-256B 4B-load reaches **7.06 TB/s = 92% of HBM SoL** (vs 5.07 TB/s baseline). Compiler emits `LDG.E.LTC256B`. Use whenever consecutive threads in a warp span a full 256B+ DRAM sector. Per `16_L2_256B_modifier.md`.
 
 ### Catalog corrections (added 2026-04-23, see REVIEW_CHECKLIST)
 
