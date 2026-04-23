@@ -7,7 +7,7 @@
 > - **✅ AUDIT-VERIFIED** — independently re-run on this rig with SASS dump + ncu metrics + matching catalog claim. Justification record at `justifications/<id>.md`. **Trust these.**
 > - **🟡 CATALOG-PRESERVED** — copied from `B300_PIPE_CATALOG.md` because it looks plausible and methodology was reasonable, but **NOT independently re-run by this audit**. Do NOT cite as authoritative until verified.
 > - **❌ FALSIFIED** — disproved by audit. Section preserved as a corrective record with the wrong claim crossed out.
-> - **🔍 PENDING** — agent is running or queued.
+> - **🔍 DEFERRED** — needs measurement infrastructure not available this session (TMEM tcgen05.alloc setup, multi-GPU, etc.). Lists corresponding REVIEW_CHECKLIST item ID.
 >
 > **The 🟡 tag is load-bearing.** Earlier iterations of this DENSE doc were less careful about distinguishing these — many §22c-§22r entries were essentially catalog claims preserved verbatim. They're plausible but not yet in the audit-verified set.
 >
@@ -744,7 +744,7 @@ For the full opcode table, refer to B300_PIPE_CATALOG.md L554-L897 directly. Mos
 | L2 plateau (4-128 MB, bs=512 mb=2) | 22-26 | **20.3 TB/s** (ncu `lts__t_bytes`) | ⚠ below upper end of catalog range; likely launch-config dependent |
 | L2 → DRAM cliff at 126 MB | 8.2 | confirmed cliff (drops 13/9.8/7.8 at 128/256/1024 MB) | ✅ matches direction |
 | HBM3E read WS≥1GB | 7.18 | **7.17-7.25 TB/s** across 2 recipes | ✅ matches catalog exactly |
-| TMEM (catalog 55.92 read / 97.93 write) | — | DEFERRED (needs tcgen05.alloc setup) | 🔍 |
+| TMEM (catalog 55.92 read / 97.93 write) | — | DEFERRED — needs tcgen05.alloc setup; B7/B8 in REVIEW_CHECKLIST. **Hypothesis** (per V1 supplementary review): catalog numbers likely include broadcast-amplification artifact similar to LDC.32; real per-warp tcgen05.ld throughput much lower. | 🔍 |
 
 ### Single-warp DRAM SoL anchor (this device)
 
