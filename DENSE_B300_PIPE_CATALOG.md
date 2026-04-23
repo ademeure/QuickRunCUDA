@@ -1147,7 +1147,11 @@ Pays for cluster/async safety even when not needed. The MEMBAR.ALL.GPU alone is 
 
 | Component | cy | SASS emitted | Mechanism |
 |---|--:|---|---|
-| `fence.acquire.gpu` (in-context) | **25** | **`CCTL.IVALL` only** (no MEMBAR) | L1 invalidate; L2 is GPU-scope coherence point so cheap. Lone-CCTL-after-drain is ~2 cy. |
+| `fence.acquire.gpu` (in-context) | **25** | **`CCTL.IVALL` only** (no MEMBAR) | L1 invalidate; L2 is GPU-scope coherence point so cheap. **Lone-CCTL-after-drain is ~2 cy** per CCTL DEEP — the in-context 25 cy was drain wait. |
+| `fence.release.gpu` (idle drained) | **186** | `MEMBAR.ALL.GPU` only | Base MEMBAR cost on quiet pipeline. Earlier "456 cy" was in §22l grid-sync context with pending atomic-counter writes. |
+| `fence.release.gpu` (after 4-256 KB writes drained) | 712-884 | `MEMBAR.ALL.GPU` only | 186 base + sub-linear write-back drain (530-700 cy). MEMBAR cost grows with outstanding L1→L2 write-back pressure. |
+| `fence.release.sys` (idle) | **1632** | `MEMBAR.ALL.SYS` | System-scope = ~9× GPU-scope. |
+| `fence.acq_rel.gpu` (idle) | **272** | `MEMBAR.ALL.GPU + CCTL.IVALL` | 186 MEMBAR + 86 CCTL — CCTL costs more when paired with MEMBAR (pipeline serialization), not the 2 cy lone-CCTL. |
 | `fence.release.gpu` | 456 | `MEMBAR.ALL.GPU` only | Drain write buffer to L2 (the coherence point) |
 | `fence.acq_rel.gpu` | 575 | `MEMBAR.ALL.GPU` + `CCTL.IVALL` | Both, asymmetrically expensive |
 | `atom.relaxed` (no return) | 123 | `REDG.E.ADD.STRONG.GPU` | L2 atomic unit; no MEMBAR; no MOV-back |

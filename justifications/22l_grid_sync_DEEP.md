@@ -4,11 +4,25 @@
 
 Direct SASS check (justifications/22l_sass/decomp_comp{1,2,3}.sass) confirms the cost decomposition + reveals the architectural mechanism:
 
-| PTX form | SASS emitted | Mechanism / cost |
+| PTX form | SASS emitted | Mechanism / cost (in §22l decomp context) |
 |---|---|---|
-| `fence.acquire.gpu` | **`CCTL.IVALL` only** (no MEMBAR) | L1 cache invalidate. ~25 cy. |
-| `fence.release.gpu` | **`MEMBAR.ALL.GPU` only** (no CCTL) | Drain write buffer to L2. ~456 cy (MEMBAR.ALL.GPU). |
-| `fence.acq_rel.gpu` | **`MEMBAR.ALL.GPU` + `CCTL.IVALL`** | Both: drain own writes + invalidate L1 to read others'. ~575 cy. |
+| `fence.acquire.gpu` | **`CCTL.IVALL` only** (no MEMBAR) | L1 cache invalidate. ~25 cy in §22l decomp; **2 cy on idle drained pipeline** per CCTL DEEP. |
+| `fence.release.gpu` | **`MEMBAR.ALL.GPU` only** (no CCTL) | Drain write buffer to L2. ~456 cy in §22l decomp context; **186 cy on idle drained pipeline** per follow-up. |
+| `fence.acq_rel.gpu` | **`MEMBAR.ALL.GPU` + `CCTL.IVALL`** | Both: drain own writes + invalidate L1 to read others'. ~575 cy in context; **272 cy on idle (= 186 MEMBAR + 86 cy CCTL serialization)**. |
+
+**MEMBAR cost decomposition** (separate test, justifications/22l_cctl_ivall_DEEP.md MODE 10/13/14):
+
+| Scenario | MEMBAR.ALL.GPU cy |
+|---|--:|
+| Truly idle (nanosleep drained pipeline) | 186 |
+| After 4 KB writes (drained) | 712 (= 186 base + 526 write-back drain) |
+| After 16 KB writes | 734 |
+| After 64 KB writes | 823 |
+| After 256 KB writes | 884 |
+
+MEMBAR base cost ~186 cy + sub-linear write-back drain (~530 cy at 4 KB → 698 cy at 256 KB). The drain cost reflects waiting for L1→L2 write-back commits, not the writes hitting L1.
+
+The §22l decomp's "456 cy fence.release.gpu" was measured in grid-sync context with prior atomic-counter writes pending, which inflated the cost above the idle 186 cy base.
 
 **Architectural insight: L2 is the GPU-scope coherence point on Blackwell.** This explains the asymmetric cost:
 - **Acquire is cheap** — just invalidate L1; L2 is already coherent so subsequent loads see the latest data.

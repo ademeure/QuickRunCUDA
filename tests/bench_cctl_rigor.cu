@@ -79,6 +79,44 @@ void kernel(float* A, float* B, float* C, int seed, int u1, int u2) {
         asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
         total_dt += (long long)(t1 - t0);
 
+#elif MODE == 10  // MEMBAR.ALL.GPU on truly-idle pipeline (fence.release.gpu)
+        asm volatile("nanosleep.u32 %0;" :: "r"((unsigned)SLEEP_NS));
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
+        asm volatile("fence.release.gpu;" ::: "memory");
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
+        total_dt += (long long)(t1 - t0);
+#elif MODE == 11  // MEMBAR.ALL.SYS (fence.release.sys) on idle pipeline
+        asm volatile("nanosleep.u32 %0;" :: "r"((unsigned)SLEEP_NS));
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
+        asm volatile("fence.release.sys;" ::: "memory");
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
+        total_dt += (long long)(t1 - t0);
+#elif MODE == 12  // fence.acq_rel.gpu = MEMBAR + CCTL on idle
+        asm volatile("nanosleep.u32 %0;" :: "r"((unsigned)SLEEP_NS));
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
+        asm volatile("fence.acq_rel.gpu;" ::: "memory");
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
+        total_dt += (long long)(t1 - t0);
+#elif MODE == 13  // MEMBAR.ALL.GPU after writes (with drain) — see if writes drain through MEMBAR is faster than naked
+        for (int j = 0; j < WS_INTS; j += 32) {
+            int rval = v + j;
+            asm volatile("st.global.wb.u32 [%0], %1;" :: "l"(workspace + j), "r"(rval) : "memory");
+        }
+        asm volatile("nanosleep.u32 %0;" :: "r"((unsigned)SLEEP_NS));
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
+        asm volatile("fence.release.gpu;" ::: "memory");
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
+        total_dt += (long long)(t1 - t0);
+#elif MODE == 14  // MEMBAR.ALL.GPU after writes WITHOUT drain — measure release "drain time"
+        for (int j = 0; j < WS_INTS; j += 32) {
+            int rval = v + j;
+            asm volatile("st.global.wb.u32 [%0], %1;" :: "l"(workspace + j), "r"(rval) : "memory");
+        }
+        // NO nanosleep here — measures "writes still in flight + MEMBAR drain"
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
+        asm volatile("fence.release.gpu;" ::: "memory");
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
+        total_dt += (long long)(t1 - t0);
 #elif MODE == 5  // WRITES with drain (st.global.wb after nanosleep)
         for (int j = 0; j < WS_INTS; j += 32) {
             int rval = v + j;
