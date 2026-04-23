@@ -1,6 +1,8 @@
 # B300 Benchmark Catalog Inventory — Mapping Claims to Test Files
 
 > **Note:** This table maps the first 50 sections/subsections of `B300_PIPE_CATALOG.md` to their likely source test files. Confidence levels: **HIGH** (test name matches claim topic exactly + SASS-verified), **MED** (multiple candidates or inferred), **LOW** (topic-based guess only).
+>
+> **Status (2026-04-23 final):** This inventory was the early-session scaffolding to identify which test files map to which catalog claim. **Most claims listed here have since been re-run in this audit** with full SASS+ncu evidence — see `JUSTIFIED_B300_PIPE_CATALOG.md` for the per-section verdicts. The "Likely Test File" column was generally correct; "MED/LOW" entries were resolved either by direct re-test (if a clear test existed) or by cross-reference to other justifications. For the authoritative claim-to-evidence mapping, use the JUSTIFIED index, not this inventory.
 
 | § | Section Title | Headline Claim | Catalog Line | Likely Test File(s) | Confidence |
 |---|---|---|---|---|---|
