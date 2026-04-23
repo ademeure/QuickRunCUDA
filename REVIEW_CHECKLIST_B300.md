@@ -74,10 +74,10 @@
 ## Group E — Latency / sync / atomics
 
 - [ ] **E1** "FFMA latency = 4 cy" — generally correct; needs to specify whether single-chain or RAW dependency — `[ref: B300_PIPE_CATALOG.md:101]` — `[regime-narrow]`
-- [ ] **E2** "DFMA latency = 92 cy, no ILP" — likely correct (heavily throttled FP64); needs SASS dump — `[ref: B300_PIPE_CATALOG.md:103]` — `[unverified]`
+- [x] **E2** "DFMA latency = 92 cy, no ILP" — **RESOLVED 2026-04-23**: measured **63.7 cy** (matches L460, NOT L103/header's 92). Catalog L103 is WRONG; L460 is RIGHT. Confirmed not ILP-pipelined (4-chain gives same latency). — `[ref: B300_PIPE_CATALOG.md:103,460]`
 - [ ] **E3** "MUFU.sin latency = 24 cy, ILP throughput 8.4 cy with 3 chains" — needs replication; user separately notes EX2 has split issue/result-availability latencies — `[ref: B300_PIPE_CATALOG.md:106]` — `[unverified]`
-- [ ] **E4** "fence.sc.gpu = 274 cy" — V54 settled at 267 cy + 280 cy first-fence-after-write penalty; catalog needs update — `[ref: B300_PIPE_CATALOG.md:115]` — `[superseded-suspect]`
-- [ ] **E5** "__syncthreads at BS=512 cost 45 cy, BS=1024 cost 89 cy" — formula `12 + 2W` cy from L116 doesn't match these (would give 44 / 76 cy). Inconsistent — `[ref: B300_PIPE_CATALOG.md:74,75,116]` — `[inconsistent]`
+- [x] **E4** "fence.sc.gpu = 274 cy" — **RESOLVED 2026-04-23**: §24 latency audit measured 281 cy (close to L115 274); §30.G fence audit measured 267 cy in single-warp/no-pending-write context. Catalog L115 is approximately correct; "544 cy" elsewhere is wrong. — `[ref: B300_PIPE_CATALOG.md:115]`
+- [x] **E5** "__syncthreads at BS=512 cost 45 cy, BS=1024 cost 89 cy" — formula `12 + 2W` — **RESOLVED 2026-04-23**: empirical at this rig is **`22 + 2W` cy** (BS=512 measured 54 cy). The +10 cy is a fixed barrier-instantiation overhead the catalog formula missed. Both 45 and 12+2W=44 are wrong. — `[ref: B300_PIPE_CATALOG.md:74,75,116]`
 - [ ] **E6** "Atomic single-address chip-wide is 5× FASTER than per-warp atomic hotspot" — per claim L87, the per-warp hotspot is SLOWER; verify mechanism (cache-line combining) — `[ref: B300_PIPE_CATALOG.md:87]` — `[unverified]`
 - [ ] **E7** "All-reduce ≤1 MB floor = 21 µs, NCCL = 10 µs" — multi-GPU; needs MGFenceBench + nccl-tests verification at this rig — `[ref: B300_PIPE_CATALOG.md:157,168]` — `[unverified]`
 

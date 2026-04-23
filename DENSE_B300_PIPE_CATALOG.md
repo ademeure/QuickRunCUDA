@@ -493,6 +493,58 @@ Key headlines (suspect):
 
 ---
 
+## §11. Latency reference table (clock64-bracketed) — verified 2026-04-23 (justifications/24_latency_table.md)
+
+§24 of the catalog is **~75% accurate within ±15%**, with 6 specific entries needing fixing. Verified entries below; corrections in **bold**.
+
+| Op | Catalog claim cy | This rig cy | Verdict |
+|---|--:|--:|---|
+| FFMA / FMUL / FADD | 4 | 4.2-4.4 | ✅ matches |
+| HFMA2 / LOP3 / SHF | 4 | 4.2-4.4 | ✅ matches |
+| **DFMA** | 92 (L103) / 63.9 (L460) | **63.7** | ⚠ L103 WRONG; L460 RIGHT |
+| IMAD.HI.U32 | 13 | (TBD) | needs follow-up |
+| MUFU.EX2 (simple) | 14 | 14 | ✅ matches |
+| MUFU.SIN/COS (compound) | 24 | 24 | ✅ matches |
+| MUFU.RSQ/SQRT/LG2 ftz | 18 | 18 | ✅ matches |
+| MUFU.RSQ/SQRT/LG2 non-ftz | 40 | ~40 | ✅ matches (includes range-reduction) |
+| **redux.sync.min/max** | 18 | 18 (CREDUX.MIN/MAX) | ✅ matches |
+| **redux.sync.add/or/and/xor** | (catalog says 18) | **44 cy (REDUX.SUM/OR/AND/XOR)** | ⚠ NEW FINDING — 2.4× slower than min/max; catalog only documents min/max latency |
+| SHFL | 24 | 24 | ✅ matches |
+| **LDS hit** | 33 | 29 | ⚠ 14% high in catalog |
+| **L1 hit (.ca)** | 43 | 38 | ⚠ 14% high in catalog |
+| L2 | 300 | (TBD verified) | likely matches |
+| **DRAM cold** | 789 (L112) / 3000 (header) | **789** verified | ⚠ "3000 cy" header WRONG (came from unrelated 2-SM topology metric) |
+| **__syncthreads BS=512** | 45 (L74) / 12+2W=44 (L116) | **54** | ⚠ both wrong; correct empirical formula is **`22+2W`** |
+| **fence.sc.gpu** | 274 (L115) / 544 (header) | **281** | ✅ L115 close (281 vs 274); header WRONG |
+| fence.sc.cta | 8.6 | 8 | ✅ (per §30.G replication) |
+| **mbarrier RTT** | 54 (header) | **123** | ⚠ 54 was arrive-only dispatch, not full arrive+test_wait round-trip |
+| tcgen05.mma N=256 | 128 | (TBD) | needs separate replication |
+
+### NEW FINDING — redux.sync split into TWO different SASS instructions
+
+| PTX | SASS | Latency |
+|---|---|--:|
+| `redux.sync.min/max.u32` | `CREDUX.MIN`/`CREDUX.MAX` | **18 cy** (compact) |
+| `redux.sync.add/or/and/xor.b32` | `REDUX.SUM`/`OR`/`AND`/`XOR` | **44 cy** (2.4× slower) |
+
+Catalog only documents min/max latency at 18 cy. The add/or/and/xor variants are 2.4× slower because they emit a different SASS opcode family. This is a NEW finding from §24 audit.
+
+### NEW METHODOLOGY TRAP
+
+Default `LDG.E` (compiler-emitted for plain `ld.global`) **hits L1 even for "DRAM" tests** unless you BOTH:
+1. Use `ld.global.cg` (or `.cs` / `.lu`) to bypass L1, AND
+2. Run >500K-hop Sattolo-shuffled chains over working sets exceeding L2 (>126 MB)
+
+Without both, L1/L2/DRAM all collapse to ~38 cy (you're really measuring L1). Several existing benches in `tests/` (e.g. `bench_v6_g2b_dram_latency.cu`) suffer from `init` and `main` kernel arg-conflict that silently shrinks the working set. ⚠ Add to footgun list.
+
+### __syncthreads formula correction
+
+Catalog says `12 + 2W` cy at L116. **Empirical: `22 + 2W` cy.** At W=16: catalog predicts 44, measured 54. At W=8: catalog predicts 28, measured ~38.
+
+The "+10 cy" delta is constant across W ∈ {2, 4, 8, 16, 32} — suggests a fixed barrier-instantiation overhead the catalog formula missed.
+
+---
+
 ## §12. Memory fence costs — RESOLVED 2026-04-23 (justifications/30G_fence.md)
 
 Catalog had inconsistent values across L114-L3635 (40× spread for cta, 6× for gl, 3× for sys). Single-GPU B300 SXM6 AC authoritative ladder:
