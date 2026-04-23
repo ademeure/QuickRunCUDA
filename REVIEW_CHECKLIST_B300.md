@@ -30,6 +30,9 @@
 | **§22e** (NEW) | ".reuse cache 94% of FFMA2" | ✅ AUDIT-VERIFIED via direct SASS grep: scalar FFMA 99.9%, FFMA2 82.8-99.2% across 5 configs. Catalog 94% is in-range for FFMA2; conservative for scalar FFMA. |
 | **§22h** (NEW) | "FFMA fully hidden by 522 cy memory load; ~16 FFMA free" | ✅ qualitative CONFIRMED but quantitative DIFFERS — cold DRAM is **882 cy** (not 522), free budget is **~225 FFMAs** (not ~16). Catalog's 522 was partial-cold; updated to "cold 882 / warm 335". |
 | **§30B SASS-mapping** (CORRECTION) | "atom.global.add → REDG NOT ATOMG" | ⚠ OVERSTATED: direct SASS grep across 20K kernels shows ALL THREE opcodes emitted (REDG / ATOMG.E / ATOM.E) depending on context. Throughput numbers still valid; only SASS-name attribution was wrong. See `30B_atomics_FOLLOWUP.md`. |
+| **§11** (NEW) | redux.sync min/max=1.92, add/and/or/xor=0.50 ADU | ✅ CONFIRMED via ncu pipe metrics: min=1.89 (alu+fmaheavy), add=0.50 (adu) — within 2% of catalog. 4× asymmetry exact. |
+| **§12** (NEW) | pipe_alu cap = 2.00 warp-inst/SM/cy | ✅ CONFIRMED at 1.94 (97%) via pure LOP3 at NC=16+MIN_BLOCKS=4. Methodology lesson: need both high ILP AND high occupancy for true SoL. |
+| **§17 ADDENDUM** (CORRECTION) | "MUFU 0.5/SMSP/cy uniform" + "16 SASS/SM/cy in §4" | ⚠ Architectural truth via ncu at 32 warps/SM oversubscribed: pipe_xu peak=1.0/SM/cy. EX2=4.0 cy/op (100% pipe), compound MUFU=8.0 cy/op (50%), RCP=8.5 cy/op (47%, scaffolding-bound). bf16x2 EX2 hits 50% pipe with 2 ops/inst = SAME throughput at HALF dispatch pressure. Catalog §4 "16 SASS/SM/cy" is OFF by 16-32×. |
 
 ## RESOLVED SUMMARY (prior 15 items, 2026-04-23)
 
