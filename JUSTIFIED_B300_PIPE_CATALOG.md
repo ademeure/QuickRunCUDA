@@ -81,8 +81,8 @@
 | §28 Compiler-emission gaps | L2147 | ✅ confirmed via cross-ref | [23_27_28_29_consolidated.md](justifications/23_27_28_29_consolidated.md) — UFFMA/UFADD not emitted (only UIADD3/UMOV/UISETP/ULOP3 in SASS); FP4/FP6 mma.sync rejection on sm_103a; native FP4/FP6/FP8 via tcgen05.mma |
 | §29 Warp-reduce reality | L2186 | ✅ replicated via cross-ref | [23_27_28_29_consolidated.md](justifications/23_27_28_29_consolidated.md) — redux.sync.min 7× faster than shfl-tree confirmed; 1-thread barrier stagger 31× penalty plausible |
 | §24 Latency reference (clock64) | L2007 | ✅ replicated | [24_latency_table.md](justifications/24_latency_table.md) — 75% ±15% accurate; **fixes:** DFMA=63.7 (L103's 92 wrong); **syncthreads = `22+2W`** (L116's `12+2W` wrong); mbarrier RTT=123 (header's 54 was arrive-only); **redux.add/or/and/xor=44 cy is 2.4× slower than min/max=18** (NEW) |
-| §25 Final compact throughput | L2062 | 🔍 not yet | [25_final_throughput.md](justifications/25_final_throughput.md) |
-| §26 Warp coop primitives | L2117 | 🔍 not yet | [26_warp_coop.md](justifications/26_warp_coop.md) |
+| §25 Final compact throughput | L2062 | ✅ replicated via cross-ref | [25_26_throughput_warpcoop.md](justifications/25_26_throughput_warpcoop.md) — FP32/L1/L2/HBM/MUFU/atomic all match prior audits; ❌ FP64 "475 GFLOPS" propagates L446's error (real ~1060); ⚠ HMMA "838 TF" discrepancy with §22 mma.sync (571 TF) |
+| §26 Warp coop primitives | L2117 | ✅ replicated via cross-ref | [25_26_throughput_warpcoop.md](justifications/25_26_throughput_warpcoop.md) — vote.ballot 2× faster than vote.all (per SASS expansion); redux.sync.min 7× faster than shfl-tree (per §11) |
 | §27 BF16 non-tensor arith | L2133 | 🔍 not yet | [27_bf16_arith.md](justifications/27_bf16_arith.md) |
 | §28 Compiler-emission gaps | L2147 | 🔍 not yet | [28_compiler_gaps.md](justifications/28_compiler_gaps.md) |
 | §29 Warp-reduce reality | L2186 | 🔍 not yet | [29_warp_reduce.md](justifications/29_warp_reduce.md) |

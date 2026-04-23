@@ -57,6 +57,10 @@
 | **§8/§9 mapping** (NEW) | SASS opcode → pipe assignment tables | ✅ FUNDAMENTALLY CORRECT — 40+ rows directly verified across our pipe-rate audits. Catalog mapping reliable. Open: §8 "Peak SASS/SM/cy" column for MUFU=16 cross-conflicts §17 audit (which gives ~1.0). |
 | **§30.M CCTL** (NEW) | "CCTL.IVALL cost UNKNOWN" (catalog open question) | ✅ RESOLVED via 22l_cctl_ivall_DEEP: CCTL.IVALL = 2-3 cy on truly idle pipeline (essentially FREE). Drain-wait for in-flight loads dominates observed fence cost (L1-hit +22 cy, L2-hit +83, DRAM +900). |
 | **§30.L ALU** (NEW) | FFMA/FADD/LOP3=4 cy lat / 2.68 cy tp at 8 ILP; DFMA=64 cy NOT pipelined; HMMA=20/8 cy | ✅ ALL CONFIRMED via §24 + §2.13 + §22 mma.sync audits. |
+| **§25 FP64** (NEW) | "FP64 DFMA scalar 475 GFLOPS" in summary table | ❌ propagates L446's wrong number; real **~1060 GFLOPS** (per §2.13 audit). |
+| **§25 HMMA** (NEW) | "FP16 HMMA tensor 838k = 838 TF" in summary | ⚠ §22 mma.sync audit measured **571 TF** for FP16 (warp-scale). 838 might conflate mma.sync vs tcgen05 paths. |
+| **§25 division ladder** (NEW) | div.rn 330× slower than FFMA, etc. | 🟡 plausible per pipe-mapping but not directly re-tested. |
+| **§26 warp coop** (NEW) | vote.ballot 2× faster than vote.all/any/uni; redux.sync.min 7× shfl-tree | ✅ ALL CONFIRMED (vote per SASS expansion 1 vs 2 SASS; redux per §11) |
 
 ## RESOLVED SUMMARY (prior 15 items, 2026-04-23)
 
