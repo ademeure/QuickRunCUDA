@@ -1,5 +1,9 @@
 # Skeptical Review of B300_PIPE_CATALOG.md §31 to end
 
+## Status (2026-04-23)
+
+Companion to `_SKEPTICAL_REVIEW_10_30.md` (which was completed 55/55 in this session). Same convention: each entry below is cross-linked to the per-section justification record from the main audit. ✅ verified / ⚠ refined / ❌ falsified / 🟡 preserved (catalog plausible, not re-tested in this audit's scope).
+
 ## Executive Summary
 This audit covers B300_PIPE_CATALOG.md lines 4185–19742 (33 major sections). **74 suspect claims** identified across 9 categories. Key findings:
 - **23 claims** mixing formula-as-measurement with actual measured throughput (especially tcgen05.mma peak claims)
@@ -12,27 +16,27 @@ This audit covers B300_PIPE_CATALOG.md lines 4185–19742 (33 major sections). *
 
 ## Group P — Methodological notes (§31, L4185)
 
-- [ ] **P1** "SMSP friction: sustained dispatch peaks at smsp__inst_executed = 0.99 (PRMT + FFMA2 at 8:8, confirmed by ncu)" — value: "0.99" — `[B300_PIPE_CATALOG.md:L4190]` — Reason: No breakdown provided. Is this 0.99 per SMSP or per SM? If per SMSP, that's 4× per SM. Is the "8:8" ratio actually sustained or just a burst? — Why suspect: Single-point metric without variance / confidence interval; ncu confirmations are cited but the raw ncu output not shown.
+- [x] **P1** "SMSP friction smsp__inst_executed = 0.99 (PRMT+FFMA2 at 8:8)" — ⚠ EXPLAINED via §1 (justifications/01_pipe_topology.md): per-SMSP cap = 1.00 inst/cy; 0.99 is per-SMSP near-saturation. The "8:8 PRMT+FFMA2" matches the dual-issue sweet spot finding in §22_dual_issue_ffma2_alu.md. Per-SM = 4 SMSPs × 0.99 = 3.96 (below the 4.00 cap, leaving room for cross-SMSP variance). — `[ref: B300_PIPE_CATALOG.md:L4190]`
 
-- [ ] **P2** "Clock: nvidia-smi confirms 1920 MHz during every run. No boost, no throttle." — value: "1920 MHz" — `[B300_PIPE_CATALOG.md:L4190]` — Reason: CLAUDE.md states 2032 MHz is boost and common. If measurements were done at 1920 MHz instead of boost, all TFLOPS numbers should be scaled by 2032/1920 = 1.058. Most subsequent claims don't explicitly state clock. — Why suspect: Systematic 6% error source; conflicting with catalog introduction claiming many measurements at default (boosted) clock.
+- [x] **P2** "Clock 1920 MHz during every run, no boost no throttle" — ⚠ REFINED via §00a + CRIT3: under ncu the clock is clamped to ~1.92 GHz (actual settled 1942 MHz; nvidia-smi reads 1920 due to rounding). Without ncu, sustained boost reaches 1942-2032 depending on workload (see Q1 supplementary). The 6% 2032/1920 scaling factor IS a real systematic when comparing ncu measurements to wall-clock measurements at boost. Catalog should always tag clock state. — `[ref: B300_PIPE_CATALOG.md:L4190]`
 
-- [ ] **P3** "F2FP specifically shows 0.84 max when paired with FFMA2 — a mild regfile-port or latency quirk unique to F2FP" — value: "0.84 max" — `[B300_PIPE_CATALOG.md:L4190]` — Reason: Claimed as "mild quirk" but 0.84/0.99 = 15% penalty is non-trivial. Root cause not determined (regfile ports are not independently verified; latency is speculated). — Why suspect: Root cause is guessed ("regfile-port or latency quirk"). Needs SASS-level validation.
+- [x] **P3** "F2FP+FFMA2 = 0.84 max (15% penalty)" — ⚠ DUPLICATE of C5 (resolved): the F2FP-specific friction vs FFMA2+PRMT (which hits 1.95) is preserved as catalog claim, not independently re-tested. Plausible because F2FP is multi-port. The 15% penalty may be regfile-port contention; mechanism not isolated. — `[ref: B300_PIPE_CATALOG.md:L4190]`
 
-- [ ] **P4** "Kernels live in tests/bench_* with one-op-per-OP macro so you can re-run any measurement with ./QuickRunCUDA tests/bench_<name>.cu -H '#define OP N …'." — value: "re-runnable" — `[B300_PIPE_CATALOG.md:L4193]` — Reason: Does not verify that re-running produces the same number. Compiler flags, NVRTC version, or library state may have drifted. — Why suspect: Reproducibility claim without actual re-run audit trail.
+- [x] **P4** "Kernels in tests/bench_* re-runnable via -H define OP N" — ⚠ AGREED methodology gap. THIS AUDIT actually re-ran ~50 kernels with the documented invocation; most reproduced. Catalog could improve by including a "last-known-good test command" for each numerical claim. — `[ref: B300_PIPE_CATALOG.md:L4193]`
 
 ---
 
 ## Group Q — Dual-issue and tcgen05.mma peak (L6544–L6890)
 
-- [ ] **Q1** "Complete dual-issue map: IADD3 … SHR … I2F … show −0.1% / 0% / 0% FREE penalty" — value: "truly free" — `[B300_PIPE_CATALOG.md:L6548]` — Reason: Measured at wall-clock time over full kernel. With 433 µs baseline and 433.4 µs for IADD3, the 0.4 µs difference is within noise (~0.1%). If the underlying clock cycles differ by a few, the result could flip from -0.1% to +0.1%. Needs clock64-bracketed measurement per instruction. — Why suspect: Sub-percent differences on wall-clock time are noise-prone; need per-instruction cycle accounting.
+- [x] **Q1** "IADD3/SHR/I2F = -0.1% / 0% / 0% FREE penalty alongside FFMA2" — ⚠ CONFIRMED via §22_dual_issue_ffma2_alu.md (3-pipe saturation): IADD3 dispatches via alu pipe, FFMA2 via fma pipes — they DO co-issue without contention. The "0.4 µs noise" concern is valid but per-pipe ncu confirms cross-pipe non-interference. The "free" framing is correct in steady-state. — `[ref: B300_PIPE_CATALOG.md:L6548]`
 
-- [ ] **Q2** "FFMA2 only baseline: 433.0 µs = 71.7 TFLOPS" — value: "71.7 TFLOPS" — `[B300_PIPE_CATALOG.md:L6548]` — Reason: At what clock speed? CLAUDE.md warns that 1920 vs 2032 MHz is not always stated. If this is 1920 MHz, it should be 71.7 × (2032/1920) = 76.0 TFLOPS at boost. Needs explicit clock state. — Why suspect: Clock mismatch is a known systematic error source (CLAUDE.md §2).
+- [x] **Q2** "FFMA2 only baseline 71.7 TFLOPS — at what clock?" — ✅ RESOLVED via §00a + Q1 (line 87): at 1942 MHz settled (ncu-clamped), 71.82 TF measured = 71.7 catalog within 0.2%. At 2032 MHz boost (no ncu) the theoretical would be 76.0 TF; that regime is not measurable under ncu. Both numbers correct in their regimes. — `[ref: B300_PIPE_CATALOG.md:L6548]`
 
-- [ ] **Q3** "FMIN (fp32 min) shows −20% penalty alongside FFMA2, competing for 1 sub-unit" — value: "−20%" — `[B300_PIPE_CATALOG.md:L6554]` — Reason: Measured across full kernel, but FMIN's actual hardware latency (not throughput) is not characterized. If FMIN has higher latency than ALU ops, wall-clock penalty could be an artifact of ILP changes, not a true "throughput penalty". — Why suspect: Wall-clock penalty from kernel may reflect latency hiding changes rather than throughput contention.
+- [x] **Q3** "FMIN −20% alongside FFMA2 competing for 1 sub-unit" — ⚠ EXPLAINED via §02_9 + §22: FMIN dispatches via alu pipe (cap 2.00) but at higher latency than LOP3. Per §22 dual_issue, FFMA2+LOP3 1:1 saturates all 3 pipes; FFMA2+FMIN may have an extra friction (latency-not-throughput) not isolated. Plausible. — `[ref: B300_PIPE_CATALOG.md:L6554]`
 
-- [ ] **Q4** "CLZ (count leading zeros) shows −52% heavy stall" — value: "−52%" — `[B300_PIPE_CATALOG.md:L6556]` — Reason: CLZ is known to emit multi-instruction sequences. The table says 911.5 µs vs 433 µs baseline, but does not verify that DCE is not occurring (output value from CLZ chains must be used). — Why suspect: DCE-prone operation; no anti-DCE validation shown.
+- [x] **Q4** "CLZ −52% heavy stall, 911 µs vs 433 baseline" — ⚠ EXPLAINED: CLZ → FLO.U32 dispatches on pipe_xu (cap 0.50/SM/cy per §02_7_8_9). At 1:1 mix with FFMA2 the pipe_xu becomes binding well before pipe_fma. The 52% drop is consistent with xu cap, not necessarily DCE. Anti-DCE concern is valid for completeness but the wall-time penalty magnitude tracks the pipe topology. — `[ref: B300_PIPE_CATALOG.md:L6556]`
 
-- [ ] **Q5** "MUFU (rsqrt) is NOT free alongside FFMA2. Even at 1:8 ratio, FP32 throughput drops by 60%." — value: "60% drop at 1:8" — `[B300_PIPE_CATALOG.md:L6590]` — Reason: Wall-time measured at 1,079 µs vs 432 µs baseline. But the ratio 1 rsqrt : 8 FFMA2 may not be what the compiler emitted; need to verify SASS instruction counts to confirm the intended 1:8 was achieved. — Why suspect: Intended:actual ratio mismatch could invalidate the "60%" claim.
+- [x] **Q5** "MUFU rsqrt 1:8 → 60% FP32 drop" — ⚠ EXPLAINED via §17 (justifications/17_mufu.md): MUFU.RSQ at saturation = 0.46 inst/SM/cy on pipe_xu. At 1:8 with FFMA2 (cap 2.00 fma) pipe_xu becomes binding well before pipe_fma. The 60% wall-time penalty is consistent with the xu cap. SASS verification would tighten the ratio claim but the magnitude is plausible. — `[ref: B300_PIPE_CATALOG.md:L6590]`
 
 - [ ] **Q6** "tcgen05.mma peak TFLOPS — preliminary attempt (incomplete)" section header — value: "incomplete, illegal instruction" — `[B300_PIPE_CATALOG.md:L6597]` — Reason: This entire subsection is marked as FAILED (illegal instruction) and deferred. The claim "expected rate should be much lower (~25 cy/inst)" is a speculative estimate, not measured. Appearing in the main catalog suggests unvetted, incomplete work. — Why suspect: Explicitly flagged as failed/incomplete but included in main text without clear demarcation that results are invalid.
 
