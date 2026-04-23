@@ -33,6 +33,7 @@ The 6 remaining open are all genuinely measurement-blocked (B6 DRAM-write clock-
 1. FP64 catalog "off by 2.2×" → actually 12% off (wording confusion not numerical error)
 2. SMEM 32-bit bank conflicts "absent on B300" → REAL at 9.6× when properly tested
 3. SHFL broadcast "1.9 cy essentially free" → 7.46 cy in general case; uniform path only triggers in narrow uniform-value cases
+4. `.ca` vs `.cg` "no gap at 4 MB WS" → was a test-config issue (4 MB WS exceeds L1 cap = 228 KB); the real 1.88× gap shows up at L1-fitting WS (16-196 KB) per `16_ca_vs_cg_hot.md`
 
 **Open multi-GPU items (deferred this session, GPU 0 only):**
 - All-reduce 21 µs floor (custom) / 10 µs (NCCL)
