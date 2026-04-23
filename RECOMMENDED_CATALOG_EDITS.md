@@ -112,6 +112,43 @@ Update the table to:
 
 ---
 
+### EDIT NEW-H: §22f L1/L2 stride probe table FABRICATED (collapses 2 experiments)
+
+**Lines:** L8231-L8249
+
+**Wrong text:**
+> "Stride sweep (4096 loads after warm-up):
+> | Stride | cy/load | Tier (inferred) |
+> | 4B/8B/16B/32B | 56 | L1 hit (warps coalesce to 128B requests) |
+> | **64B** | **304** | L1 miss → L2 hit (5.4× JUMP!) |
+> | 128B-1024B | 316 | L2 hit |
+> Sharp break at 64B stride — beyond this, per-thread loads stop benefiting from warp-level coalescing."
+
+**Why wrong (per `justifications/22f_stride_probe.md` rigorous replication):**
+The catalog table essentially fabricates a "sharp cliff" by collapsing two different experiments into one row:
+- The "56 cy" floor IS real for stride 4 B (single-thread throughput)
+- BUT strides 8/16/32 are NOT 56 cy — they monotonically rise to 87/136/160 cy
+- The "304 cy plateau" is the catalog's SEPARATE L2 pointer-chase LATENCY entry (L111: "ld.global L2 = 301 cy"), not a continuation of the throughput sweep
+- Single-thread throughput plateau at stride > 32 B is actually **158-163 cy**, NOT 304
+- True coalescing unit is **32 B sector**, not 128 B line
+
+**Correct text:**
+> "Single-thread `ld.global.ca` throughput at varying stride (after warm-up):
+> | Stride B | cy/load |
+> | 4 | 56.8 |
+> | 8 | 87 |
+> | 16 | 136 |
+> | 32 | 160 |
+> | 64+ | 158-163 (plateau) |
+>
+> The progression is **monotonic**, not a sharp cliff. The catalog's earlier "sharp 64 B break to 304 cy" was an artifact of combining throughput measurements with the separate pointer-chase L2 latency entry (~301 cy at L111). Use 158-163 cy as the single-thread throughput plateau; use 301 cy as the L2 latency for dependent-chain workloads.
+>
+> Coalescing unit: **32 B sector**, not 128 B line. Stride > 4 B causes per-sector spillage; the warp-level 128 B 'footprint' claim should be re-stated as '4 × 32 B sectors per warp at stride 4 B'."
+
+This is one of the more impactful fabrications in the catalog because the "sharp cliff" claim drives architectural conclusions (e.g. "ALWAYS use stride ≤ 32 B per lane") that are wrong in spirit.
+
+---
+
 ### EDIT NEW-G: §30B atom→REDG SASS attribution OVERSTATED
 
 **Line:** L7160 (or wherever atom→REDG mapping is asserted)

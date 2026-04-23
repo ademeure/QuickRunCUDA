@@ -881,7 +881,29 @@ The `.reuse` modifier signals an **operand-reuse cache** (separate from RF read 
 
 ---
 
-## §22f. L1/L2 cache granularity probe (catalog L8231, 🟡 catalog claim)
+## §22f. L1/L2 cache granularity probe — ❌ catalog table FABRICATED (justifications/22f_stride_probe.md)
+
+**Major finding 2026-04-23:** the catalog's "Sharp 64B stride break" table at L8231 is **essentially fabricated** — it collapses two different experiments into one table.
+
+| Catalog claim | This rig (1800-locked, single-thread throughput) | Verdict |
+|---|---|---|
+| 56 cy at stride 4 B | **56.8 cy** ✓ | confirmed (best-case L1 throughput) |
+| 56 cy at stride 8/16/32 (claims FLAT) | 87 / 136 / 160 cy — **MONOTONIC rise, never flat** | ❌ REFUTED |
+| Sharp 5.4× cliff at stride 64 (56 → 304) | No cliff. Gradual rise 57 → 160 cy, then plateau | ❌ REFUTED |
+| Plateau = 304 cy "L2 hit" | Plateau in throughput mode = **158-163 cy**; **328 cy in latency-chain mode** (catalog's separate L2-latency entry L111 = 301 cy — DIFFERENT test) | ⚠ catalog conflated 2 experiments |
+| 128 B coalescing footprint | True unit is **32 B sector** (5 sectors at stride 4 = 32 lanes × 4 B; 32 sectors at stride 32 = each lane own sector) | ⚠ refined: 32 B sector, not 128 B line |
+| Cache-line size 128 B | 128 B line = 4 × 32 B sectors | ✓ confirmed |
+
+**Mechanism:** the 32 B sector-granular L1 access pattern means stride/throughput penalty grows continuously with stride, not as a cliff. The catalog's "sharp 64 B break" was created by combining single-thread throughput measurements (56 cy floor) with a separate pointer-chase L2 latency measurement (304 cy) — the cliff exists only on paper.
+
+**DENSE recommendation:** delete catalog L8231 stride table. Replace with:
+- "Single-thread throughput at stride S B (S ≤ 64): cy/load grows monotonically from 56 (S=4) to ~160 (S=32), then plateaus at 158-163 cy"
+- "L2 pointer-chase latency (single dependent chain): 301-328 cy depending on warm-up state"
+- "Per-lane access at stride > 4 B causes per-sector spillage (32 B sectors); warp-level coalescing benefits maxed at stride ≤ 4 B"
+
+(Catalog claim preserved below for reference.)
+
+---
 
 Stride sweep (4096 loads after warm-up):
 
