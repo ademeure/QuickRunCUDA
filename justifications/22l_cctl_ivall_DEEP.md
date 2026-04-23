@@ -87,7 +87,55 @@ If you're a consumer that issues `fence.acquire.gpu` to read fresh data AFTER yo
 
 ## Open follow-ups
 
-1. Fix the writes test — find a PTX form that genuinely fills L1 with dirty lines that CCTL must invalidate
+1. ~~Fix the writes test — find a PTX form that genuinely fills L1 with dirty lines that CCTL must invalidate~~ — **PARTIALLY ADDRESSED** (see addendum below)
 2. Probe L1 capacity precisely — at what KB count does L1 evict lines on a single-thread fill?
 3. Investigate WHY the compiler refuses full unroll past ~32 KB worth of loads (NVRTC limit? Code-size heuristic?)
 4. Test CCTL on small kernels with small L1 footprints to see if there's a per-CTA L1 share quota
+
+---
+
+## ADDENDUM 2 — Store cache hints don't control L1 (2026-04-23)
+
+Tested 3 different store-fill modes:
+
+| Mode | PTX | SASS emitted | CCTL @4 KB | @16 KB | @32 KB |
+|---|---|---|--:|--:|--:|
+| 4 | `st.global.wb.u32` (L1+L2 documented) | `STG.E.STRONG.SM` | 59 | 59 | 3 |
+| 6 | `st.global.cg.u32` (L2-only documented) | `STG.E.STRONG.GPU` | 59 | 59 | 3 |
+| 8 | RMW: `ld.global.ca` + `st.global.wb` | `LDG.E.STRONG.SM` + `STG.E.STRONG.SM` | 36 | 3 | 3 |
+
+**Key observation**: `.wb` (L1+L2) and `.cg` (L2-only) give **identical CCTL costs**. If the cache modifiers actually controlled L1 caching as PTX docs imply, `.wb` should fill L1 with dirty lines (high CCTL cost) while `.cg` should bypass L1 entirely (low CCTL cost). **They behave the same.**
+
+This means EITHER:
+- Both `.wb` and `.cg` bypass L1 caching for stores on B300, OR
+- All store paths inherently cache in L1 (regardless of hint), OR
+- The cache hints affect SOMETHING ELSE (e.g. memory ordering, write-combining) but not L1 residency
+
+Note the SASS difference: `.wb` → `.STRONG.SM` (SM-scope ordering), `.cg` → `.STRONG.GPU` (GPU-scope ordering). So the hints DO affect ordering scope, but not L1 caching.
+
+**Re-interpretation of the 59 cy CCTL cost**: not "invalidating dirty L1 lines" but more likely **waiting for in-flight stores to drain to L2**. At 4-16 KB worth of stores, some are still in flight when t0/CCTL/t1 happens; the CCTL waits. At 32+ KB the writes have had more time to drain naturally, so by the time CCTL hits there's nothing to wait for.
+
+**MODE 8 (RMW)** is interesting: 36 cy at 4 KB but 3 cy at 16+ KB. The load-then-store pattern serializes naturally (load must complete before store), so by the time CCTL hits at 16+ KB the work is fully drained.
+
+### Implication
+
+The original hypothesis "CCTL after dirty L1 = expensive" is **NOT verified** by these tests. The 59 cy plateau at small write counts is more plausibly **drain wait** than dirty-line invalidation.
+
+The earlier load-fill results (60 cy at 4 KB / 312 cy at 16 KB cached LOADS, scaling with line count) DO show genuine L1-resident-line scaling — that part stands.
+
+### Updated TL;DR
+
+| Scenario | cy | mechanism |
+|---|--:|---|
+| Lone CCTL on truly-empty L1 | ~1.7 net | SASS-cycle floor |
+| Chained CCTL (1024-deep) | ~16/op | shallow internal queue saturates |
+| CCTL after CACHED LOADS (4-16 KB filled) | 60-312 | ~2 cy per L1-resident line — **REAL invalidation cost** |
+| CCTL after STORES (any KB count) | 3-59 | NOT dirty-L1 invalidation; store-drain wait dominates. Stores apparently bypass L1 caching on B300 regardless of `.wb`/`.cg` hint |
+
+### Action
+
+The "consumer of cached data pays per-line invalidation cost" finding (~2 cy/line for cached loads) is robust.
+
+The "producer of cached data pays similar cost on next CCTL" claim is **NOT supported** — store paths on B300 don't appear to fill L1 in the way that would make subsequent CCTLs more expensive.
+
+This is an important refinement: `fence.acquire.gpu` cost depends on what your kernel CACHED-LOADED prior, not on what it WROTE. If your kernel is write-only before the acquire, CCTL is cheap. If it has cached reads, CCTL pays per-line.

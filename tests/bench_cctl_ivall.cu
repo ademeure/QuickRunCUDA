@@ -71,6 +71,36 @@ void kernel(float* A, float* B, float* C, int seed, int u1, int u2) {
         asm volatile("fence.acquire.gpu;" ::: "memory");
         asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
         total_dt += (long long)(t1 - t0);
+#elif MODE == 6  // st.global.cg (L2-only, NO L1 — baseline for "no dirty L1")
+        for (int j = 0; j < WS_INTS; j += 32) {
+            int rval = v + j;
+            asm volatile("st.global.cg.u32 [%0], %1;" :: "l"(workspace + j), "r"(rval) : "memory");
+        }
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
+        asm volatile("fence.acquire.gpu;" ::: "memory");
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
+        total_dt += (long long)(t1 - t0);
+#elif MODE == 7  // plain st.global (no hint, compiler default)
+        for (int j = 0; j < WS_INTS; j += 32) {
+            int rval = v + j;
+            asm volatile("st.global.u32 [%0], %1;" :: "l"(workspace + j), "r"(rval) : "memory");
+        }
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
+        asm volatile("fence.acquire.gpu;" ::: "memory");
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
+        total_dt += (long long)(t1 - t0);
+#elif MODE == 8  // load THEN write same lines (RMW — load.ca + store.wb)
+        for (int j = 0; j < WS_INTS; j += 32) {
+            int loaded;
+            asm volatile("ld.global.ca.u32 %0, [%1];" : "=r"(loaded) : "l"(workspace + j));
+            int rval = loaded ^ v;
+            asm volatile("st.global.wb.u32 [%0], %1;" :: "l"(workspace + j), "r"(rval) : "memory");
+            v ^= loaded;
+        }
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t0) :: "memory");
+        asm volatile("fence.acquire.gpu;" ::: "memory");
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(t1) :: "memory");
+        total_dt += (long long)(t1 - t0);
 #elif MODE == 5
         int fill_v = v;
         for (int j = 0; j < WS_INTS; j += 32) {
