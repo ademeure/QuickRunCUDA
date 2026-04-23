@@ -1012,7 +1012,15 @@ Per-warp store throughput coalesced: ~32 stores per 33 cy = **0.97 stores/cy/lan
 
 ---
 
-## §22k. PTX special registers (catalog L8216, 🟢 verified)
+## §22k. PTX special registers — ✅ AUDIT-VERIFIED 2026-04-23 (justifications/22k_ptx_special_regs.md)
+
+Direct verification via 5-asm-instruction kernel reading registers into C buffer:
+- ✅ `%nsmid = 148` (matches catalog)
+- ✅ `%nwarpid = 64` (matches catalog)
+- ✅ `%warpid`, `%laneid` = 0 for thread 0 of warp 0 in block 0 (correct semantics)
+- ✅ `%smid = 142` for CTA 0 — **EXACT match to catalog L7551 claim "CTA 0 → SM 142"**
+
+Bonus: this single 5-instruction kernel cross-corroborated §22n (CTA scheduler placement) AND the topology claim (CTA 0 landing on SM 142 in partial GPC 9 with SMs 142-147).
 
 | Register | Value | Meaning |
 |---|--:|---|
