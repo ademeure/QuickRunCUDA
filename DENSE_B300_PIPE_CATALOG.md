@@ -561,20 +561,28 @@ PACK (wide → narrow): rates drop because of LOP3/PRMT tax. See catalog §2.5 f
 
 ⚠ The "FMNMX3" 3-input fused min in catalog L981 may be compiler fusion not a native opcode. See REVIEW_CHECKLIST CRIT6.
 
-### §2.10 Transcendentals (pipe_xu) — verified 2026-04-23
+### §2.10 Transcendentals (pipe_xu) — ✅ AUDIT-VERIFIED 2026-04-23 ([17_mufu.md](justifications/17_mufu.md))
 
-| PTX | SASS | r | Notes |
-|---|---|--:|---|
-| `ex2.approx.f32` | MUFU.EX2 | **0.50–0.63 ✅ simple** | 16-20 SASS/SM/cy. Saturates pipe_xu at 98.5% solo. |
-| `rsqrt.approx.f32` | MUFU.RSQ | 0.5 | (catalog claim, simple) |
-| `sqrt.approx.f32` | MUFU.SQRT | 0.5 | simple |
-| `rcp.approx.f32` | MUFU.RCP | 0.5 | simple |
-| `sin.approx.f32` | MUFU.SIN + FMUL range-reduction | **0.5 (compound) ✅** | Saturates pipe_xu at 49.8% (half the simple rate); also drives pipe_fma to 12.5% (range-reduction FFMA). |
-| `cos.approx.f32` | MUFU.COS | 0.5 (compound) | likely same as sin |
-| `lg2.approx.f32` | MUFU.LG2 | 0.5 | simple per catalog |
-| `tanh.approx.f32` | MUFU.TANH | 0.5 | simple per catalog |
+Per-warp throughput (single warp on 1 SMSP, ILP=16, all OTHER SMSPs idle):
 
-⚠ Catalog §16 has older MUFU latencies (RSQ=40 cy, RCP=42 cy) that include range-reduction overhead from author-added scaffolding. Prefer §23 clean sweep numbers (RSQ=18 cy ftz). See REVIEW_CHECKLIST CRIT7.
+| PTX | SASS | cy/op/warp | rate (op/cy/SM)¹ | Notes |
+|---|---|--:|--:|---|
+| `ex2.approx.f32` | MUFU.EX2 | **4.28** | **0.93** | ~2× faster than other MUFU ops — load-bearing fact missed by catalog |
+| `tanh.approx.f32` | MUFU.TANH | 8.07 | 0.50 | NATIVE — no manual synthesis needed |
+| `cos.approx.f32` | MUFU.COS | 8.56 | 0.47 | (no measurable conditioning overhead vs SIN) |
+| `sin.approx.f32` | MUFU.SIN | 8.56 | 0.47 | |
+| `rsqrt.approx.f32` | MUFU.RSQ | 8.74 | 0.46 | |
+| `sqrt.approx.f32` | MUFU.SQRT | 8.74 | 0.46 | |
+| `lg2.approx.f32` | MUFU.LG2 | 8.74 | 0.46 | |
+| `rcp.approx.f32` | MUFU.RCP | 9.09 | 0.44 | slowest |
+
+¹ Computed assuming MUFU pipe is per-SM (shared across 4 SMSPs), so SM-rate = 4 × (1/cy_per_op_per_warp).
+
+**Latency** (low-ILP, N_CHAINS=1): RCP=44 cy, SIN=24 cy, EX2=18 cy. Need ILP ≥ 8 to saturate (else latency-bound).
+
+⚠ Catalog L383 (§2.10) labels rates as "ops/SMSP/cy" — likely **unit confusion**, the rate is per-SM. And catalog's uniform "0.5" hides the 2× EX2 advantage. See REVIEW_CHECKLIST E3a.
+
+**Practical recipe**: prefer EX2-based activation functions (GELU/SiLU = 2× cheaper than alternatives); use single MUFU.TANH instead of manual `(ex2(2x)-1)/(ex2(2x)+1)` (~22 cy → 8 cy).
 
 ### §2.11 Warp / sync / barrier ops (key entries)
 
@@ -737,28 +745,31 @@ The "11 TB/s at 256 MB" was probably L2 partial-hit amortization at the boundary
 
 ---
 
-## §17. MUFU transcendental throughput — per-warp (catalog L7696+, 🟡 catalog claim)
+## §17. MUFU transcendental throughput — ✅ AUDIT-VERIFIED 2026-04-23 ([17_mufu.md](justifications/17_mufu.md))
 
-8 independent chains, throughput per warp:
+Per-warp throughput, 16 independent chains (saturating ILP), `-lgc 1800`:
 
-| Op | cy/op | Chip GOPS @ 1.92 GHz × 4 SMSP × 148 SM |
-|---|--:|--:|
-| **ex2.approx.f32** | **10.5** | **433** ← fastest |
-| tanh.approx.f32 | 11.3 | 403 |
-| sin.approx.f32 | 12.0 | 379 |
-| cos.approx.f32 | 12.0 | 379 (same as sin — likely shared HW) |
-| sqrt.approx.f32 | 13.9 | 328 |
-| rsqrt.approx.f32 | 13.9 | 328 |
-| lg2.approx.f32 | 13.9 | 328 |
-| **rcp.approx.f32** | **15.5** | **294** ← slowest (counterintuitive — normally simplest) |
+| Op | cy/op @ N=16 | cy/op @ N=8 | Latency (N=1) | Notes |
+|---|--:|--:|--:|---|
+| **ex2.approx.f32** | **4.28** | 4.57 | 18 | ~**2× faster** than other MUFU ops |
+| tanh.approx.f32 | 8.07 | — | — | NATIVE on B300 (no manual synthesis needed) |
+| sin.approx.f32 | 8.56 | 8.74 | 24 | (no measurable conditioning vs cos) |
+| cos.approx.f32 | 8.56 | — | — | |
+| sqrt.approx.f32 | 8.74 | — | — | |
+| rsqrt.approx.f32 | 8.74 | — | — | |
+| lg2.approx.f32 | 8.74 | — | — | |
+| **rcp.approx.f32** | **9.09** | 9.75 | 44 | slowest |
 
-⚠ Catalog uses 1.92 GHz; rig DVFS settles at 1942 — chip GOPS are ~1% under-stated. Latency cy/op is clock-independent.
+⚠ **PRIOR DENSE table (10.5/13.9/15.5 cy) was at lower ILP** (~N=2 chains); saturated values are ~2× faster. SASS confirmed (MUFU.EX2/RSQ/RCP/SIN/COS/LG2/TANH).
 
-**Practical guidance:**
+⚠ **Catalog L383 (§2.10) labels rate as "ops/SMSP/cy"** — likely unit confusion (rate is per-SM, not per-SMSP — pipe is shared across 4 SMSPs). And catalog hides EX2's 2× advantage by labeling all ops as "0.5". See REVIEW_CHECKLIST E3a.
+
+**Practical guidance** (still valid):
 - Softmax: prefer `ex2` over `exp` (which is `ex2 × ln(2)`)
 - Normalization: use `rsqrt × x` instead of `sqrt → rcp`
-- Activations: `tanh.approx` is reasonably cheap (11 cy)
+- Activations: `tanh.approx` is now **8 cy native** (cheaper than manual `(ex2(2x)-1)/(ex2(2x)+1)` ~22 cy synthesis)
 - For division: `__fdividef(a, b)` (= `div.approx`, 5.5 cy) is **3× FASTER than rcp(b) × a**
+- Need ILP ≥ 8 chains to saturate (else latency-bound: RCP=44 cy at N=1)
 
 ---
 

@@ -62,12 +62,13 @@
 | §12 pipe_alu ceiling | L937 | 🔍 not yet | [12_alu_ceiling.md](justifications/12_alu_ceiling.md) |
 | §13 Predication/divergence | L957 | 🔍 not yet | [13_predication.md](justifications/13_predication.md) |
 | §14 Extended op catalog | L971 | 🔍 not yet | [14_extended_ops.md](justifications/14_extended_ops.md) |
-| §15 Atomics deep + latency | L1008 | 🔍 not yet | [15_atomics.md](justifications/15_atomics.md) |
+| §15 Atomics deep + latency | L1008 | ⚠ partially verified | [15_atomics.md](justifications/15_atomics.md) — MAJOR: REDG vs ATOMG = 25× (catalog conflated); POPC.INC compiler trick missed; CAS scope wrong (SYS not GPU); §15 latency entries OK ±25% |
 | §22 mma.sync FP16/BF16 = 577 TFLOPS | L25 (cheat-sheet) | ✅ replicated | [22_tensor_mma_sync.md](justifications/22_tensor_mma_sync.md) — FP16=571 ✓, TF32=285.7 ✓, **FP8 emulated 309 (catalog 276 was 12% LOW)**, INT8 IMMA 142.4 ✓ |
 | §22 dual-issue FFMA2+ALU | L31 cheat-sheet + L218 falsification | ✅ replicated | [22_dual_issue_ffma2_alu.md](justifications/22_dual_issue_ffma2_alu.md) — FFMA2+LOP3 1:1 saturates ALL 3 pipes (314 useful ops/SM/cy vs scalar+LOP3's 187) |
 | §13 DSMEM | L7012 / L7029-7031 | ✅ replicated | [13_dsmem.md](justifications/13_dsmem.md) — **catalog "23 cy ≈ free" FALSIFIED**: real read latency 204-223 cy (9× slower); SASS reveals `ld.shared::cluster` → `LD.E` (global LSU); V53 write 87 GB/s/cluster ✓ |
 | §15a DSMEM EXHAUSTIVE | 9-dim sweep | ✅ replicated | [13_dsmem_exhaustive.md](justifications/13_dsmem_exhaustive.md) — v4 3.5× per-byte efficient; cluster=16 works; ILP=32 → 9 cy/load (LDS-equivalent); **B300 = 9 GPCs × 16 SMs + 1 partial 4-SM GPC = 148 (NOT 8 GPCs as catalog claims)**; per-GPC 20% silicon variation; aggregate 2.4 TB/s W / 1.9 TB/s R |
 | §16 tcgen05.mma | L6686+ | 🔍 catalog content preserved (linear-scaling math is self-consistent) | DENSE §16; tcgen05 specific re-run not yet attempted on this rig |
+| §17 MUFU per-op throughput | L383-400 (§2.10) | ⚠ partially verified | [17_mufu.md](justifications/17_mufu.md) — EX2 unique 2× advantage missed; "0.5/SMSP/cy" is unit-confused (rate is per-SM); latency ±25% |
 | §23 Clean MUFU sweep | L1976 | 🔍 not yet | [23_mufu_sweep.md](justifications/23_mufu_sweep.md) |
 | §24 Latency reference (clock64) | L2007 | ✅ replicated | [24_latency_table.md](justifications/24_latency_table.md) — 75% ±15% accurate; **fixes:** DFMA=63.7 (L103's 92 wrong); **syncthreads = `22+2W`** (L116's `12+2W` wrong); mbarrier RTT=123 (header's 54 was arrive-only); **redux.add/or/and/xor=44 cy is 2.4× slower than min/max=18** (NEW) |
 | §25 Final compact throughput | L2062 | 🔍 not yet | [25_final_throughput.md](justifications/25_final_throughput.md) |

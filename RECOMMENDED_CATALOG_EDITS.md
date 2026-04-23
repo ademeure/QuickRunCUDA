@@ -513,6 +513,65 @@ Catalog has the "Comprehensive Reference Card" at L8807 which is internally MORE
 
 ---
 
+## 🟡 NEW EDITS — 2026-04-23 (fence drain + N=2 atomic)
+
+### EDIT NEW-K: Fence cost methodology — drain wait vs intrinsic, scope hierarchy
+
+**Applies to**: all catalog rows claiming "fence cost = X cy on idle pipeline"
+
+**Wrong pattern**:
+> "fence.acquire.gpu / CCTL.IVALL costs ~315 cy on idle pipeline"
+
+**Correct reframing (per `justifications/22l_cctl_ivall_DEEP.md` ADDENDUMs 3-10):**
+
+> **fence cost = intrinsic + drain_wait.** PTX scope (`.cta`/`.gpu`/`.sys`) controls VISIBILITY; drain scope is INDEPENDENT.
+>
+> | Fence | Drain scope | Intrinsic | Drains |
+> |-------|-------------|-----------|--------|
+> | acquire.{cta,gpu,sys} | per-warp | 2-3 cy | this warp's prior LOADS only |
+> | release.cta | per-warp | 9 cy | this warp's prior STORES only |
+> | release.gpu | **SM-WIDE** | 179 cy | ALL co-resident CTAs' loads + stores |
+> | sc.gpu | SM-wide | 265 cy | ALL co-resident CTAs' ops |
+> | release.sys | SM-wide + NVLink | 1663 cy | ALL on-SM ops + system visibility |
+>
+> **Intrinsic costs measured on truly idle pipeline:**
+> - acquire (CCTL.IVALL): 2-3 cy
+> - release.cta (MEMBAR.ALL.CTA): 9 cy
+> - release.gpu (MEMBAR.ALL.GPU): 179 cy
+> - sc.gpu: 265 cy
+> - release.sys: 1663 cy
+>
+> **Drain wait depends on what's in flight:**
+> - acquire + 1 LD L1-hit: +22 cy
+> - acquire + 1 LD L2-hit: +83 cy
+> - acquire + 1 LD DRAM: +900 cy
+> - acquire + N LDs (pipelined): drain = max(latency), not sum
+> - release.gpu + N CTAs each loading: drain accumulates ACROSS co-resident CTAs
+>
+> **Acquire-cheap trick**: shadow load latency with compute BEFORE the fence (`ld.weak L2 + 8 FFMA + CCTL` = 2 cy because FFMA chain absorbs load latency; compiler emits plain `LDG.E` without `.STRONG`).
+>
+> **Critical implication**: release.gpu in a high-occupancy kernel pays for ALL co-resident CTAs' in-flight ops, not just its own CTA. This is a hidden coordination tax.
+
+---
+
+### EDIT NEW-L: §22r "N=2 atomic 20× hotspot" — mechanism wrong, factor wrong
+
+**Line**: L8466 area
+
+**Wrong text**:
+> "N=2 atomic is ~20× worse than N=1; speculate both addresses hash to same L2 slice"
+
+**Correct text (per `justifications/22r_atom_n2_hotspot_DEEP.md`):**
+> **N=2 atomic hotspot is REAL at WARP-level (not CTA-level), and the measured factor is 34× (not 20×).**
+>
+> - **CTA-level N=2** (N CTAs split between 2 addrs): NO slowdown, within 5% of N=1.
+> - **Warp-level N=2** (each thread in warp picks one of 2 addrs by `threadIdx & 1`): 16-34× slower than N=1.
+> - **Mechanism**: broken intra-warp atomic lane-combining at L2 atomic unit, not L2 hash slice.
+> - **OFFSET dependence** (warp-level N=2): OFFSET=128B (L1 line size) = WORST at 34×. Spikes at 32/64/128/512B; OFFSETs 4/8/16/256/1024+ are ~16× slower (pure coalescing loss). So a hash-like periodic penalty exists on top of the base coalescing loss.
+> - **Mitigation**: use N=1 (best throughput via full coalescing) OR N≥8 distinct per-thread addrs. Avoid N=2/3/4 warp-level splits.
+
+---
+
 ## How to apply these edits
 
 Option 1 (manual): `vim B300_PIPE_CATALOG.md`, jump to each line, apply edit.
