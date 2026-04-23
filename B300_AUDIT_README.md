@@ -22,24 +22,46 @@
 | `b300_clean/` | Original 188-file catalog corpus (predecessor to PIPE_CATALOG) |
 | `CLAUDE.md` | Methodology guide (theoretical peaks, rigor protocol, common pitfalls) |
 
-## What's been done (TL;DR)
+## What's been done (TL;DR — UPDATED 2026-04-23 mature state)
 
-- **12 catalog sections fully replicated** with SASS + ncu evidence (FFMA peak, mem hierarchy, pipe topology, dual-issue FFMA2+ALU, tensor mma.sync FP16/TF32/FP8/INT8, latency table, atomics, fence costs, TMA size dependence, TMA-vs-LDG max-tuned head-to-head, DSMEM, DSMEM exhaustive 9-dim sweep)
-- **12 catalog corrections recommended** (FP8 emulated 276→308 TF, syncthreads formula `12+2W`→`22+2W`, DFMA latency 92→63.7 cy, fence costs single-GPU vs multi-GPU split, FP16 atomicAdd 45×→6.3× slower than u32, etc.)
-- **3 major catalog claims FALSIFIED** with mechanism explained:
-  - "DSMEM is essentially free at 23 cy" → actually 204-223 cy = 9× slower; SASS reveals `ld.shared::cluster` compiles to `LD.E` (global LSU path), not `LDS`
-  - "FFMA uniquely uses both fma sub-pipes simultaneously" (catalog L218) → FFMA dispatches to ONE sub-pipe per cycle, scheduler alternates
-  - Catalog "L2 wire 13.3 TB/s" → real measurement 18-20 TB/s (catalog under-counts by 37-54%)
-- **3 major NEW topology findings** beyond catalog:
-  - **B300 SXM6 AC has 9 GPCs × 16 SMs + 1 partial 4-SM GPC = 148** (catalog claims "8 GPCs" — wrong)
-  - **Per-GPC silicon variation 20%** — GPC2 latency 189 cy vs GPC1 229 cy (catalog assumes uniform)
-  - **DVFS settling clock under sustained load is 1942 MHz** — neither catalog's 1920 nor spec's 2032
-- **Methodology footguns documented** (5):
-  - ncu `lts__t_bytes` undercounts LDG L2-hit by 2.7× (use `l1tex__t_bytes` for LDG instead)
-  - `sm__sass_data_bytes_mem_shared_op_ld` reports warp-aggregated bytes not per-lane (32× undercount risk)
-  - default `LDG.E` hits L1 even for "DRAM" tests unless `.cg` + Sattolo chain
-  - chain-feedback patterns let compiler DCE 32× of inner loop body
-  - `atom.global.add` compiles to `REDG.E.ADD.STRONG.GPU`; ncu `lts__t_sectors_op_atom` reports 0 — use `lts__t_sectors_op_red`
+**JUSTIFIED status:** **38 ✅ verified + 6 ⚠ partial + 4 🟡 preserved** = 48 sections covered (essentially the entire foundational early/mid catalog: §0-§30).
+
+**The ✅ verified sections** include: cheat-sheet, latency table, FFMA peak, memory hierarchy, pipe topology, all of §2.1-§2.13 instruction catalog, contention rules, rate cheatsheet, narrow-format throughput, uniform datapath, ADU pipe, SASS↔PTX mapping, redux.sync, pipe_alu ceiling, predication, extended ops, atomics, MUFU, dual-issue, .reuse, compute-mem-overlap, N=2 atomic hotspot, MUFU sweep, latency reference, final throughput, warp coop, BF16, compiler-emission gaps, warp-reduce, fence/ALU/CCTL.
+
+**🟡 preserved**: tcgen05.mma throughput (alloc/mbarrier setup deferred), multi-GPU all-reduce (GPU 0 only this session), methodology notes, tensor unified.
+
+**9 catalog ERRORS** flagged in REVIEW_CHECKLIST top-9:
+- DFMA latency: 92 → real **63.9 cy**
+- syncthreads formula: 12+2W → real **22+2W** (= 54 cy at BS=512, NOT 45)
+- FP64 chip: "475 GFLOPS" wording = "475 G FMA-ops/s = 950 GFLOPS"; real 1060 GFLOPS (12% off)
+- §4 MUFU rate: "16 SASS/SM/cy" off by 16-32× (real ~1.0)
+- Atomic hotspot at warp-level N=2: "5×" → real **34×**
+- FP64 vs FP16 tensor: "300×" → real **2300×**
+- mbarrier.arrive 8.1 cy → real **27 cy** for default `.shared.b64` modifier
+- atom.global.cas SASS: "STRONG.GPU" → actual **STRONG.SYS**
+- ld.shared bank-conflict scoping (TRUE for v2/v4 AND 32-bit, methodology error in our prior claim)
+
+**12 NEW architectural facts** missing from catalog (top-12 in REVIEW_CHECKLIST TLDR):
+- F2IP.U8 fast path (4× faster than F2I.S8)
+- POPC.INC trick: `atomicAdd(addr, 1u)` → 2.5× speedup at warp-broadcast
+- Global REDG (no-return) vs ATOMG = 25× speedup
+- EX2 uniquely 2× faster than other MUFU ops (4 vs 8 cy)
+- bf16x2 EX2 = same throughput at half dispatch pressure
+- FMNMX3 fusion (Blackwell 3-input min/max)
+- u64.ADD alu+fmaheavy co-issue = 64 u64-adds/SM/cy
+- CCTL.IVALL essentially FREE (~3 cy idle), drain-wait dominates fence cost
+- release.gpu drain is SM-WIDE (compounds at high occupancy)
+- cp.async (LDGSTS) bypasses acquire fence drain unless commit_group
+- **`.L2::256B` cache hint = 92% HBM SoL recipe** (40% boost over baseline)
+- **`.ca` beats `.cg` by 1.88× at L1-fitting WS** (NOT 1.25× as catalog says)
+
+**4 SELF-CORRECTIONS** caught and walked back during the audit:
+- FP64 catalog "off by 2.2×" → actually 12% off (wording confusion)
+- SMEM 32-bit bank conflicts "absent on B300" → REAL at 9.6× when properly tested
+- SHFL broadcast "1.9 cy free" → 7.46 cy in general case
+- .ca/.cg "no gap at 4 MB WS" → was test-config issue (WS exceeded L1)
+
+**8 methodology lessons** documented in JUSTIFIED TLDR + per-section records.
 
 ## How to use this audit
 
