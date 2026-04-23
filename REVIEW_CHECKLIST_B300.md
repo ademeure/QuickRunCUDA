@@ -33,6 +33,9 @@
 | **§11** (NEW) | redux.sync min/max=1.92, add/and/or/xor=0.50 ADU | ✅ CONFIRMED via ncu pipe metrics: min=1.89 (alu+fmaheavy), add=0.50 (adu) — within 2% of catalog. 4× asymmetry exact. |
 | **§12** (NEW) | pipe_alu cap = 2.00 warp-inst/SM/cy | ✅ CONFIRMED at 1.94 (97%) via pure LOP3 at NC=16+MIN_BLOCKS=4. Methodology lesson: need both high ILP AND high occupancy for true SoL. |
 | **§17 ADDENDUM** (CORRECTION) | "MUFU 0.5/SMSP/cy uniform" + "16 SASS/SM/cy in §4" | ⚠ Architectural truth via ncu at 32 warps/SM oversubscribed: pipe_xu peak=1.0/SM/cy. EX2=4.0 cy/op (100% pipe), compound MUFU=8.0 cy/op (50%), RCP=8.5 cy/op (47%, scaffolding-bound). bf16x2 EX2 hits 50% pipe with 2 ops/inst = SAME throughput at HALF dispatch pressure. Catalog §4 "16 SASS/SM/cy" is OFF by 16-32×. |
+| **§13** (NEW) | predication zero-effect on pipe rate | ✅ CONFIRMED via ncu pipe_fma identical (within 1%) across 32/16/1 active-lane masks (2.91/2.94/2.94). |
+| **§7** (NEW) | pipe_adu cap ~0.4-0.5 | ✅ CONFIRMED at 0.50 exactly (REDUX.SUM saturates 100%, bar.sync 72%). |
+| **§6** (NEW) | pipe_uniform "~1.0 warp-inst/SM/cy" | ⚠ ARCHITECTURAL PEAK is 2.0/SM/cy per ncu. LDSM hits 0.70 = 35% in our test. Catalog "1.0" is BELOW true peak; possibly was original measurement artifact at lower ILP/occupancy. |
 
 ## RESOLVED SUMMARY (prior 15 items, 2026-04-23)
 

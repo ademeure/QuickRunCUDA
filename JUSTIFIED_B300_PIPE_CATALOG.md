@@ -54,13 +54,13 @@
 | §3 Contention rules | L472 | ⚠ partially verified | [03_contention.md](justifications/03_contention.md) — Rules 1-3 confirmed via prior audits; Rule 4 (HFMA2+FFMA mix) preserved-not-re-tested |
 | §4 Rate cheatsheet | L485 | ⚠ partially verified | [04_rates.md](justifications/04_rates.md) — most rows correct, but **MUFU "16 SASS/SM/cy" is OFF BY 16-32×**; F2I/POPC/BREV/FLO same issue; u32 IADD "128" only via alternation |
 | §5 Narrow-format throughput | L513 | 🔍 not yet | [05_narrow.md](justifications/05_narrow.md) |
-| §6 Uniform datapath | L521 | 🔍 not yet | [06_uniform.md](justifications/06_uniform.md) |
-| §7 ADU pipe | L536 | 🔍 not yet | [07_adu.md](justifications/07_adu.md) |
+| §6 Uniform datapath | L521 | ⚠ partially verified | [06_uniform.md](justifications/06_uniform.md) — pipe_uniform PEAK is 2.0/SM/cy (not 1.0 as catalog implied); LDSM hits 0.70 = 35% |
+| §7 ADU pipe | L536 | ✅ replicated | [07_adu.md](justifications/07_adu.md) — pipe_adu cap = 0.50/SM/cy confirmed (REDUX.SUM 0.50 = 100%, bar.sync 0.36 = 72%) |
 | §8 SASS opcode → pipe classification | L554 | 🔍 not yet | [08_sass_opcode_pipe.md](justifications/08_sass_opcode_pipe.md) |
 | §9 PTX → SASS mapping | L821 | 🔍 not yet | [09_ptx_sass.md](justifications/09_ptx_sass.md) |
 | §11 redux.sync deep | L898 | ✅ replicated | [11_redux.md](justifications/11_redux.md) — min/max=1.89 (catalog 1.92 ✓), add=0.50 ADU (catalog 0.50 ✓), 4× asymmetry confirmed |
 | §12 pipe_alu ceiling | L937 | ✅ replicated | [12_alu_ceiling.md](justifications/12_alu_ceiling.md) — pure LOP3 hits 1.94 (97% of 2.00 cap) at NC=16+MB=4; methodology lesson: need both high ILP and high occupancy |
-| §13 Predication/divergence | L957 | 🔍 not yet | [13_predication.md](justifications/13_predication.md) |
+| §13 Predication/divergence | L957 | ✅ replicated | [13_predication.md](justifications/13_predication.md) — pipe_fma rate identical (within 1%) across 32/16/1 active lane masks; predication zero-effect confirmed |
 | §14 Extended op catalog | L971 | 🔍 not yet | [14_extended_ops.md](justifications/14_extended_ops.md) |
 | §15 Atomics deep + latency | L1008 | ⚠ partially verified | [15_atomics.md](justifications/15_atomics.md) — MAJOR: REDG vs ATOMG = 25× (catalog conflated); POPC.INC compiler trick missed; CAS scope wrong (SYS not GPU); §15 latency entries OK ±25% |
 | §22 mma.sync FP16/BF16 = 577 TFLOPS | L25 (cheat-sheet) | ✅ replicated | [22_tensor_mma_sync.md](justifications/22_tensor_mma_sync.md) — FP16=571 ✓, TF32=285.7 ✓, **FP8 emulated 309 (catalog 276 was 12% LOW)**, INT8 IMMA 142.4 ✓ |
