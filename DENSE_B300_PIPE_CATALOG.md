@@ -1141,16 +1141,22 @@ BAR.SYNC × 3
 
 Pays for cluster/async safety even when not needed. The MEMBAR.ALL.GPU alone is ~575 cy.
 
-### WHY ninja_F3 wins (decomposition at 1800 MHz locked)
+### WHY ninja_F3 wins (decomposition at 1800 MHz locked, with SASS mechanism)
 
-| Component | cy |
-|---|--:|
-| `fence.acquire.gpu` | **25** (essentially free) |
-| `fence.release.gpu` | 456 |
-| `atom.relaxed` (no return) → `REDG.E.ADD.STRONG.GPU` | 123 |
-| `atom.acq_rel` (with return) → `ATOM.E.ADD.STRONG.GPU` | 1122 |
-| `__syncthreads` | 6 |
-| MEMBAR.ALL.GPU | 575 |
+| Component | cy | SASS emitted | Mechanism |
+|---|--:|---|---|
+| `fence.acquire.gpu` | **25** | **`CCTL.IVALL` only** (no MEMBAR) | L1 invalidate; L2 is GPU-scope coherence point so cheap |
+| `fence.release.gpu` | 456 | `MEMBAR.ALL.GPU` only | Drain write buffer to L2 (the coherence point) |
+| `fence.acq_rel.gpu` | 575 | `MEMBAR.ALL.GPU` + `CCTL.IVALL` | Both, asymmetrically expensive |
+| `atom.relaxed` (no return) | 123 | `REDG.E.ADD.STRONG.GPU` | L2 atomic unit; no MEMBAR; no MOV-back |
+| `atom.acq_rel` (with return) | 1122 | `ATOM.E.ADD.STRONG.GPU` (+ MEMBAR.ALL.GPU) | Atom + drain — MEMBAR dominates cost |
+| `__syncthreads` | 6 | `BAR.SYNC` | CTA-local; cheap |
+
+**Architectural insight: L2 is the GPU-scope coherence point on Blackwell.** Asymmetric:
+- **Acquire is cheap (25 cy)** — just CCTL.IVALL the L1; L2 already coherent
+- **Release is expensive (456 cy)** — must drain write buffer through L1 into L2
+
+For consumer-heavy protocols (many CTAs reading shared data), favor `fence.acquire`/`ld.acquire`. For producer-rare protocols, `fence.release` overhead amortizes.
 
 The big wins:
 1. **Relaxed atom (123 cy) instead of acq_rel (1122 cy)** — 9× cheaper. Relies on memory-model cumulativity for correctness (ping-pong workload validated).

@@ -1,5 +1,28 @@
 # §22l — Grid Sync DEEP DIVE (catalog 4245 cy / 2.2 µs)
 
+## ⚠ ADDENDUM 2026-04-23 — SASS verification of fence.* mechanism
+
+Direct SASS check (justifications/22l_sass/decomp_comp{1,2,3}.sass) confirms the cost decomposition + reveals the architectural mechanism:
+
+| PTX form | SASS emitted | Mechanism / cost |
+|---|---|---|
+| `fence.acquire.gpu` | **`CCTL.IVALL` only** (no MEMBAR) | L1 cache invalidate. ~25 cy. |
+| `fence.release.gpu` | **`MEMBAR.ALL.GPU` only** (no CCTL) | Drain write buffer to L2. ~456 cy (MEMBAR.ALL.GPU). |
+| `fence.acq_rel.gpu` | **`MEMBAR.ALL.GPU` + `CCTL.IVALL`** | Both: drain own writes + invalidate L1 to read others'. ~575 cy. |
+
+**Architectural insight: L2 is the GPU-scope coherence point on Blackwell.** This explains the asymmetric cost:
+- **Acquire is cheap** — just invalidate L1; L2 is already coherent so subsequent loads see the latest data.
+- **Release is expensive** — must drain write buffer through L1 into L2 (MEMBAR ~456 cy).
+
+**Implication for kernel writers:** if you're a CONSUMER reading data others wrote, `fence.acquire.gpu` (or `ld.acquire`) is ~20× cheaper than `fence.release.gpu`. Favor producer-cost-heavy protocols (the producer pays release, the consumer pays acquire — but acquire dominates the count when you have many consumers).
+
+This refines the ninja_F3 recipe explanation: relaxed atom + relaxed spin works because the L2 atomic unit IS the coherence point AND synchronization point — atom-add commits at L2 are visible to all readers, and the spin-loop's natural re-reads pick them up.
+
+⚠ The earlier SELF_OP-style mechanism caveat applies: this SASS-mapping is verified for THIS rig + this NVCC. Different toolchains may emit different SASS for the same PTX fence (e.g. cuda 13.0 vs 13.2; sm_90a vs sm_103a). Always cross-check via `cuobjdump --dump-sass` if porting.
+
+---
+
+
 Audit date: 2026-04-23
 Clock: `-lgc 1800,1800` → effective 1800 MHz (verified per-test by `nvidia-smi` sampling). All cycle/wall numbers are at 1800 MHz unless stated otherwise.
 GPU: B300 SXM6 AC (sm_103a), GPU 0
