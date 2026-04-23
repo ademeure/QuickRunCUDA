@@ -84,3 +84,34 @@ This is a **load-bearing finding** that should be in the catalog as a recipe row
 - [x] §16 .L2::256B modifier emits LDG.E.LTC256B — ✅ confirmed via SASS
 - [x] **User L925 recipe** (stride 256B + 4B + .L2::256B) for highest DRAM BW% — ✅ **REPRODUCED at 92% HBM SoL** (7.06 TB/s vs 5.07 TB/s baseline = +40%)
 - [ ] **NEW recipe missing from catalog** — adding `.L2::256B` to LDG in sparse-but-spatially-local access patterns gives 30-50% DRAM BW boost. Should be promoted to top of memory recipes.
+
+---
+
+## ADDENDUM 2026-04-23 — Stride sweep finds stride=256B is optimal
+
+Subsequent tuning to find the optimal stride for `.L2::256B` recipe:
+
+| stride_B | DRAM BW | % HBM SoL | Notes |
+|---------:|--------:|----------:|-------|
+| 64 | 6.23 | 81.2% | smaller than sector |
+| 128 | 6.58 | 85.8% | half-sector |
+| **256** | **7.07** | **92.2%** | **OPTIMAL — matches sector size** |
+| 512 | 4.06 | 52.9% | over-strides — drops off |
+| 1024 | 54.64 (INVALID) | 712% | aliasing into L2 |
+| 2048 | 17.88 (INVALID) | 233% | aliasing into L2 |
+
+The **>100% results at 1024B+ stride are INVALID** — they indicate the address pattern is wrapping around the 256 MB workspace and hitting L2-cached lines from prior iterations. Real DRAM BW cannot exceed HBM SoL ~7.5 TB/s.
+
+Block-count sweep at stride=256B:
+
+| blocks | DRAM BW | % SoL |
+|-------:|--------:|------:|
+| 296 | 7.02 | 91.5% |
+| 1184 | 7.08 | 92.3% |
+| 4096 | 60.04 (INVALID) | 783% |
+
+At 296+ blocks the DRAM is fully utilized; higher block count just adds memory contention without exceeding HBM peak. The 4096-block "60 TB/s" is again L2-aliasing.
+
+### CLEAN PEAK CONFIRMED: stride=256B + .L2::256B + ≥296 blocks → **92% HBM SoL**
+
+This is the highest DRAM BW recipe in our audit. Catalog should add this as a top-tier memory recipe.
