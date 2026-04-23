@@ -456,7 +456,9 @@ The catalog's L218 wording should be: "FFMA can use EITHER sub-pipe per cycle, f
 
 ⚠ FOOTGUN: scalar FFMA at 4.00 already saturates dispatch — cannot be co-issued with anything else without losing throughput. See §1 footgun on "both sub-pipes simultaneously" wording.
 
-### §2.2 Packed FP32/FP16/BF16 (pipe_fma, both sub-units occupied for 1 inst)
+### §2.2 Packed FP32/FP16/BF16 (pipe_fma, both sub-units occupied for 1 inst) — ✅ AUDIT-VERIFIED 2026-04-23 ([02_1_2_3_fp32_int.md](justifications/02_1_2_3_fp32_int.md))
+
+**Pitfall (A4 finding):** scalar `fma.rn.f16` and `fma.rn.bf16` ALSO emit HFMA2 / HFMA2.BF16_V2 — no scalar HFMA1 exists on sm_103a. The scalar path emits the SAME packed instruction with both halves computing the redundant value, so per-useful-FLOP throughput is HALF of the true packed throughput (35.2 TF instead of 70.4 TF for fp16). To actually get the catalog's 70.4 TF, you MUST use `fma.rn.f16x2` or the `__half2` operator overloads.
 
 | PTX | SASS | r | Logical (FLOPS/SM/cy) |
 |---|---|--:|---|
