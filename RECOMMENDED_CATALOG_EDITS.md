@@ -11,7 +11,136 @@
 
 ---
 
-## 🔴 CRITICAL FIXES
+## 🔴 CRITICAL FIXES — NEWLY ADDED 2026-04-23 (RIGOROUS REPLICATION RESULTS)
+
+### EDIT NEW-A: NVFP4 9.9 PF needs clock context
+
+**Line:** L9303 (and similar)
+
+**Wrong/incomplete text:**
+> "kind::mxf4nvf4.block_scale.block16 = 9.9 PFLOPS at K=64"
+
+**Correct text (per `justifications/49_nvfp4.md` rigorous replication):**
+> "kind::mxf4nvf4.block_scale.block16 = **9.26 PFLOPS at 1942 MHz observed clock** (= 92.6% of NVIDIA's 10 PF spec, = 98.4% of theoretical at observed clock). Catalog's 9.9 PF assumes 2032 MHz boost which was never observed during sustained runs on this rig. cy/MMA = 128.001 (matches catalog's 128.01 exactly). For citation: state both '9.26 PF measured @1942 MHz / theoretical 9.85 PF @2032 MHz boost'."
+
+---
+
+### EDIT NEW-B: NVFP4 `.block32` ptxas rejection — partly FALSIFIED
+
+**Line:** L9259-L9266
+
+**Wrong text:**
+> "ptxas V13.2.78 rejects the codegen: 'Illegal modifier .block32 for instruction tcgen05.mma'"
+> "All tested syntax variants (.block_scale, .scale_vec::2X, .kind::mxf4, .kind::mxf8f6f4, both .ws and non-.ws forms, raw PTX assembly) produce 'Arguments mismatch' or 'Illegal modifier' from ptxas 13.2"
+
+**Correct text (per `justifications/49_nvfp4_ptxas_errors.txt`):**
+> "ptxas V13.2.78 rejects most variants but `kind::mxf4.block_scale.block32` actually **COMPILES** — emits SASS `UTCOMMA` (without `.BLOCK16` suffix). The kernel then crashes at RUNTIME with 'illegal instruction'. So the situation is more nuanced: SOME forms are ptxas-rejected with 'Illegal modifier' messages, but `kind::mxf4.block_scale.block32` is ptxas-accepted but runtime-rejected. For full audit-grade list of accepted vs rejected variants, see preserved file."
+
+---
+
+### EDIT NEW-C: NVFP4 tcgen05.cp shape `128x256b` claim FALSIFIED
+
+**Line:** L9452-L9457
+
+**Wrong text:**
+> "| `128x256b` | ✓ | ✗ | Crashes (illegal memory access, descriptor issue) |"
+
+**Correct text (per `justifications/49_nvfp4_cp_shapes.txt`):**
+> "| `128x256b` | ✓ | **✓** | Works fine with 8 KB+ smem buffer (catalog's earlier crash was likely smem under-allocation, not a shape limitation) |"
+
+Bonus: `4x256b` also works on this rig — could be added to the working-shapes table.
+
+---
+
+### EDIT NEW-D: NVFP4 K=64 correctness path is broader than catalog claimed
+
+**Line:** L9444+ ("Key breakthrough: tcgen05.cp.cta_group::1.128x128b correctly copies smem→TMEM")
+
+**Catalog implication:** the `tcgen05.cp + TMEM-A` path is required for the K=64 correctness tests.
+
+**Audit finding (per `justifications/49_nvfp4_correctness15.txt`):** the simpler **smem-descriptor A path** (NOT `tcgen05.cp + TMEM-A`) ALSO produces all 15/15 correct outputs. The catalog should note this is one path among several rather than the only working configuration.
+
+---
+
+### EDIT NEW-E: Kernel launch overhead 2.0 vs 5.7 µs reconciled
+
+**Lines:** L7654 (5.7 µs) and L8917 (2.0 µs) — looked inconsistent
+
+**Reconciliation (per `justifications/22m_launch_overhead.md`):**
+
+The two numbers are NOT contradictory; they reflect different timing modes:
+- **2.05 µs** = pipelined (2-event around N launches; QuickRunCUDA default `-T` mode)
+- **5.20 µs** = per-iter event recording (`--timesPerRun` mode adds ~3 µs overhead per launch)
+
+Catalog L8395 already mentions this; just be more explicit:
+> "Empty kernel launch overhead measured TWO ways:
+> - **2.05 µs** = bare cudaLaunchKernel pipelined (with single start/stop event around N launches)
+> - **5.20 µs** = per-iter event recording (each launch wrapped in its own start+stop event, adds ~3 µs overhead)
+> Use the lower number for "what does my workload pay per launch". Use the higher number when comparing to wall-clock benchmarks that record per-iteration events.
+>
+> Cluster launch (sizes 1/2/4/8) is identical to single-CTA at 2.05 µs flat — no setup overhead."
+
+Catalog kernel-size table (L8385) reproduces EXACTLY (within rounding) on this rig.
+
+---
+
+### EDIT NEW-F: §22h compute-memory overlap — quantitative correction
+
+**Line:** L8309-L8316
+
+**Wrong text:**
+> "| Pure memory load (cold cache) | 522 |"
+> "Memory + 16 FFMA = 522 (still hidden), Memory + 64 FFMA = 580 (FFMA budget exceeded)"
+
+**Correct text (per `justifications/22h_compute_mem_overlap.md` 11-SASS-file replication):**
+
+The qualitative claim (FFMA fully hidden by cold-DRAM load) is **CORRECT**. But quantitative numbers DIFFER:
+- Cold DRAM (LCG walk + l2flush) is **882 cy / 451 ns**, NOT 522
+- Catalog's 522 was probably partial-cold (between cold 882 and warm L2-line 335)
+- Free FFMA budget is **~225 FFMAs**, NOT ~16 (the 522 cy → ~16 FFMA derivation was based on the wrong 522 baseline)
+- Crossover at N≈225-256 FFMAs (above which ptxas register-spills, contributing to apparent extra latency)
+
+Update the table to:
+| Pattern | cy/iter |
+|---|--:|
+| Pure cold DRAM (LCG, l2flush) | 882 |
+| Pure warm L2 line (repeat-stride) | 335 |
+| Memory + 8 FFMA | 877 (FFMA fully hidden) |
+| Memory + 128 FFMA | 877 (still hidden!) |
+| Memory + 224 FFMA | 876 (still hidden — bracket of "free" budget) |
+| Memory + 256 FFMA | 1217 (crossover; ptxas register-spills here) |
+
+---
+
+### EDIT NEW-G: §30B atom→REDG SASS attribution OVERSTATED
+
+**Line:** L7160 (or wherever atom→REDG mapping is asserted)
+
+**Wrong text (single SASS attribution):**
+> "atom.global.add compiles to REDG.E.ADD.STRONG.GPU"
+
+**Correct text (per `justifications/30B_atomics_FOLLOWUP.md`):**
+
+Direct SASS grep across 20K preserved kernel files shows ALL THREE opcodes are emitted depending on context:
+- **REDG.E.ADD** when atomic return value is DISCARDED (semantically `red.add`)
+- **ATOMG.E.ADD** when return value is USED with default scope
+- **ATOM.E.ADD** for some scoped variants (esp. STRONG.GPU with certain address patterns)
+
+Counts across all preserved kernel SASS:
+- REDG variants: 1869 occurrences
+- ATOMG.E variants: 4976 occurrences
+- ATOM.E variants: 318 occurrences
+
+ncu metric implication:
+- If your kernel emits REDG → use `lts__t_sectors_op_red`
+- If your kernel emits ATOMG.E or ATOM.E → use `lts__t_sectors_op_atom`
+- BEST PRACTICE: capture BOTH counters and add them
+
+CONFIRMED: `atom.f16/bf16 atomicAdd` emits `ATOM.E.CAS.STRONG.GPU` loops (CAS-emulation). Packed `f16x2/bf16x2` emits `REDG.E.ADD.F16x2` natively.
+
+---
+
+## 🔴 CRITICAL FIXES — original
 
 ### EDIT 1: Catalog says "8 GPCs"; actually 9 + 1 partial
 
