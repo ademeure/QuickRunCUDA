@@ -7,6 +7,8 @@
 - **6 ⚠ partially verified** (some rows confirmed, some preserved)
 - **4 🟡 preserved** (catalog plausible but specific tests not re-run; e.g. tcgen05 throughput, multi-GPU all-reduce, methodology notes, tensor unified)
 
+**REVIEW_CHECKLIST status:** **66 [x] resolved / 19 [ ] still open** (out of 85 main items + 124 supplements). Remaining open items are mostly TMEM/write-path (need fresh measurement), tcgen05.mma direct (needs alloc/mbarrier setup), multi-GPU (D7/E7, single-GPU rig), and 2 documentation improvements (G3/G4). Power group (F1-F6) deferred en bloc to a separate power campaign; methodology meta-claims (H1-H7) resolved as documented audit lessons.
+
 **The 51 detailed records under `justifications/` contain:** verbatim catalog claims, exact `./QuickRunCUDA` invocation, raw ncu metrics, SASS dumps with instruction counts, % delta vs catalog, verdict tag.
 
 **Important methodology lessons surfaced this audit:**

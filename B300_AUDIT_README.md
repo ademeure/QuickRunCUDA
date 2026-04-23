@@ -85,7 +85,7 @@
 
 ### "I want to know what's still unverified"
 
-→ STATUS_OF_REPLICATION.md "What's still NOT replicated" section. Or REVIEW_CHECKLIST_B300.md, count `[ ]` entries (~61 still open in main + 124 supplements).
+→ STATUS_OF_REPLICATION.md "What's still NOT replicated" section. Or REVIEW_CHECKLIST_B300.md, count `[ ]` entries (~19 still open in main + 124 supplements). Power F-group and methodology H-group resolved en bloc 2026-04-23.
 
 ## Audit conventions
 
