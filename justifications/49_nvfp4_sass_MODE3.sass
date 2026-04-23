@@ -1,0 +1,858 @@
+	.target	sm_103a
+
+	.elftype	@"ET_EXEC"
+
+
+//--------------------- .text.kernel              --------------------------
+	.section	.text.kernel,"ax",@progbits
+	.align	128
+        .global         kernel
+        .type           kernel,@function
+        .size           kernel,(.L_x_94 - kernel)
+        .other          kernel,@"STO_CUDA_ENTRY STV_DEFAULT"
+kernel:
+.text.kernel:
+        /*0000*/                   LDC R1, c[0x0][0x37c] ;
+        /*0010*/                   LDC R2, c[0x0][0x39c] ;
+        /*0020*/                   LDCU UR4, c[0x0][0x2f8] ;
+        /*0030*/                   VIADD R1, R1, 0xffffffc8 ;
+        /*0040*/                   IMAD.MOV.U32 R23, RZ, RZ, 0x43900000 ;
+        /*0050*/                   LDCU UR5, c[0x0][0x2fc] ;
+        /*0060*/                   IMAD.MOV.U32 R0, RZ, RZ, 0x38 ;
+        /*0070*/                   LDCU.64 UR36, c[0x0][0x358] ;
+        /*0080*/                   IADD3 R6, P1, PT, R1, UR4, RZ ;
+        /*0090*/                   ISETP.GT.AND P0, PT, R2, 0x6, PT ;
+        /*00a0*/                   IMAD.X R7, RZ, RZ, UR5, P1 ;
+        /*00b0*/               @P0 BRA `(.L_x_0) ;
+        /*00c0*/                   ISETP.GT.AND P0, PT, R2, 0x3, PT ;
+        /*00d0*/                   IMAD.MOV.U32 R4, RZ, RZ, 0x55 ;
+        /*00e0*/               @P0 BRA `(.L_x_1) ;
+        /*00f0*/                   ISETP.NE.U32.AND P0, PT, R2, 0x1, PT ;
+        /*0100*/                   IMAD.MOV.U32 R3, RZ, RZ, 0x33 ;
+        /*0110*/                   IMAD.MOV.U32 R5, RZ, RZ, 0x38 ;
+        /*0120*/              @!P0 BRA `(.L_x_2) ;
+        /*0130*/                   IMAD.MOV.U32 R3, RZ, RZ, -0x2 ;
+        /*0140*/                   VIADDMNMX.U32 R2, R2, R3, 0x2, PT ;
+        /*0150*/                   IMAD.SHL.U32 R4, R2, 0x4, RZ ;
+        /*0160*/                   LDC R2, c[0x2][R4] ;
+        /*0170*/                   SHF.R.S32.HI R3, RZ, 0x1f, R2 ;
+.L_x_74:
+        /*0180*/                   BRX R2 -0x190                                                                                                   (*"BRANCH_TARGETS .L_x_75,.L_x_76,.L_x_77"*);
+.L_x_76:
+        /*0190*/                   IMAD.MOV.U32 R23, RZ, RZ, 0x44900000 ;
+        /*01a0*/                   IMAD.MOV.U32 R4, RZ, RZ, 0x77 ;
+        /*01b0*/                   IMAD.MOV.U32 R3, RZ, RZ, 0x55 ;
+        /*01c0*/                   IMAD.MOV.U32 R5, RZ, RZ, 0x38 ;
+        /*01d0*/                   BRA `(.L_x_2) ;
+.L_x_75:
+        /*01e0*/                   IMAD.MOV.U32 R23, RZ, RZ, 0x44100000 ;
+        /*01f0*/                   IMAD.MOV.U32 R4, RZ, RZ, 0x33 ;
+        /*0200*/                   IMAD.MOV.U32 R3, RZ, RZ, 0x77 ;
+        /*0210*/                   IMAD.MOV.U32 R5, RZ, RZ, 0x38 ;
+        /*0220*/                   BRA `(.L_x_2) ;
+.L_x_1:
+        /*0230*/                   IMAD.MOV.U32 R3, RZ, RZ, -0x4 ;
+        /*0240*/                   VIADDMNMX.U32 R2, R2, R3, 0x3, PT ;
+        /*0250*/                   IMAD.SHL.U32 R5, R2, 0x4, RZ ;
+        /*0260*/                   LDC R2, c[0x2][R5+0xc] ;
+        /*0270*/                   SHF.R.S32.HI R3, RZ, 0x1f, R2 ;
+.L_x_78:
+        /*0280*/                   BRX R2 -0x290                                                                                                   (*"BRANCH_TARGETS .L_x_79,.L_x_80,.L_x_81,.L_x_77"*);
+.L_x_81:
+        /*0290*/                   IMAD.MOV.U32 R23, RZ, RZ, 0x45100000 ;
+        /*02a0*/                   IMAD.MOV.U32 R3, RZ, RZ, 0x77 ;
+        /*02b0*/                   IMAD.MOV.U32 R4, RZ, RZ, 0x77 ;
+        /*02c0*/                   IMAD.MOV.U32 R5, RZ, RZ, 0x38 ;
+        /*02d0*/                   BRA `(.L_x_2) ;
+.L_x_79:
+        /*02e0*/                   IMAD.MOV.U32 R23, RZ, RZ, 0x41800000 ;
+        /*02f0*/                   IMAD.MOV.U32 R3, RZ, RZ, 0x11 ;
+        /*0300*/                   IMAD.MOV.U32 R4, RZ, RZ, 0x11 ;
+        /*0310*/                   IMAD.MOV.U32 R5, RZ, RZ, 0x38 ;
+        /*0320*/                   BRA `(.L_x_2) ;
+.L_x_80:
+        /*0330*/                   IMAD.MOV.U32 R23, RZ, RZ, RZ ;
+        /*0340*/                   IMAD.MOV.U32 R3, RZ, RZ, RZ ;
+        /*0350*/                   IMAD.MOV.U32 R5, RZ, RZ, 0x38 ;
+        /*0360*/                   BRA `(.L_x_2) ;
+.L_x_0:
+        /*0370*/                   ISETP.GT.AND P0, PT, R2, 0x9, PT ;
+        /*0380*/               @P0 BRA `(.L_x_3) ;
+        /*0390*/                   VIADD R2, R2, 0xfffffff9 ;
+        /*03a0*/                   VIMNMX.U32 R2, PT, PT, R2, 0x3, PT ;
+        /*03b0*/                   IMAD.SHL.U32 R4, R2, 0x4, RZ ;
+        /*03c0*/                   LDC R2, c[0x2][R4+0x1c] ;
+        /*03d0*/                   SHF.R.S32.HI R3, RZ, 0x1f, R2 ;
+.L_x_83:
+        /*03e0*/                   BRX R2 -0x3f0                                                                                                   (*"BRANCH_TARGETS .L_x_84,.L_x_85,.L_x_86,.L_x_77"*);
+.L_x_86:
+        /*03f0*/                   IMAD.MOV.U32 R23, RZ, RZ, 0x45100000 ;
+        /*0400*/                   IMAD.MOV.U32 R5, RZ, RZ, 0x50 ;
+        /*0410*/                   IMAD.MOV.U32 R4, RZ, RZ, 0x33 ;
+        /*0420*/                   IMAD.MOV.U32 R3, RZ, RZ, 0x55 ;
+        /*0430*/                   BRA `(.L_x_2) ;
+.L_x_84:
+        /*0440*/                   IMAD.MOV.U32 R23, RZ, RZ, 0x44100000 ;
+        /*0450*/                   IMAD.MOV.U32 R5, RZ, RZ, 0x40 ;
+        /*0460*/                   IMAD.MOV.U32 R4, RZ, RZ, 0x33 ;
+        /*0470*/                   IMAD.MOV.U32 R3, RZ, RZ, 0x55 ;
+        /*0480*/                   BRA `(.L_x_2) ;
+.L_x_85:
+        /*0490*/                   IMAD.MOV.U32 R23, RZ, RZ, 0x44100000 ;
+        /*04a0*/                   IMAD.MOV.U32 R0, RZ, RZ, 0x40 ;
+        /*04b0*/                   IMAD.MOV.U32 R4, RZ, RZ, 0x33 ;
+        /*04c0*/                   IMAD.MOV.U32 R3, RZ, RZ, 0x55 ;
+        /*04d0*/                   IMAD.MOV.U32 R5, RZ, RZ, 0x38 ;
+        /*04e0*/                   BRA `(.L_x_2) ;
+.L_x_3:
+        /*04f0*/                   ISETP.GT.AND P0, PT, R2, 0xb, PT ;
+        /*0500*/               @P0 BRA `(.L_x_4) ;
+        /*0510*/                   IMAD.MOV.U32 R3, RZ, RZ, -0xa ;
+        /*0520*/                   VIADDMNMX.U32 R2, R2, R3, 0x2, PT ;
+        /*0530*/                   IMAD.SHL.U32 R4, R2, 0x4, RZ ;
+        /*0540*/                   LDC R2, c[0x2][R4+0x2c] ;
+        /*0550*/                   SHF.R.S32.HI R3, RZ, 0x1f, R2 ;
+.L_x_88:
+        /*0560*/                   BRX R2 -0x570                                                                                                   (*"BRANCH_TARGETS .L_x_89,.L_x_90,.L_x_77"*);
+.L_x_90:
+        /*0570*/                   IMAD.MOV.U32 R23, RZ, RZ, 0x46900000 ;
+        /*0580*/                   IMAD.MOV.U32 R0, RZ, RZ, 0x50 ;
+        /*0590*/                   IMAD.MOV.U32 R5, RZ, RZ, 0x50 ;
+        /*05a0*/                   IMAD.MOV.U32 R4, RZ, RZ, 0x33 ;
+        /*05b0*/                   IMAD.MOV.U32 R3, RZ, RZ, 0x55 ;
+        /*05c0*/                   BRA `(.L_x_2) ;
+.L_x_89:
+        /*05d0*/                   IMAD.MOV.U32 R23, RZ, RZ, 0x45100000 ;
+        /*05e0*/                   IMAD.MOV.U32 R0, RZ, RZ, 0x50 ;
+        /*05f0*/                   IMAD.MOV.U32 R4, RZ, RZ, 0x33 ;
+        /*0600*/                   IMAD.MOV.U32 R3, RZ, RZ, 0x55 ;
+        /*0610*/                   IMAD.MOV.U32 R5, RZ, RZ, 0x38 ;
+        /*0620*/                   BRA `(.L_x_2) ;
+.L_x_4:
+        /*0630*/                   ISETP.NE.U32.AND P0, PT, R2, 0xc, PT ;
+        /*0640*/              @!P0 BRA `(.L_x_5) ;
+        /*0650*/                   ISETP.NE.U32.AND P0, PT, R2, 0xd, PT ;
+        /*0660*/              @!P0 BRA `(.L_x_6) ;
+.L_x_77:
+        /*0670*/                   IMAD.MOV.U32 R4, RZ, RZ, 0x33 ;
+        /*0680*/                   IMAD.MOV.U32 R3, RZ, RZ, 0x55 ;
+        /*0690*/                   IMAD.MOV.U32 R5, RZ, RZ, 0x38 ;
+        /*06a0*/                   BRA `(.L_x_2) ;
+.L_x_6:
+        /*06b0*/                   IMAD.MOV.U32 R0, RZ, RZ, 0x70 ;
+        /*06c0*/                   IMAD.MOV.U32 R23, RZ, RZ, 0x47100000 ;
+        /*06d0*/                   IMAD.MOV.U32 R4, RZ, RZ, 0x33 ;
+        /*06e0*/                   IMAD.MOV.U32 R3, RZ, RZ, 0x55 ;
+        /*06f0*/                   IMAD.MOV.U32 R5, RZ, RZ, 0x38 ;
+        /*0700*/                   BRA `(.L_x_2) ;
+.L_x_5:
+        /*0710*/                   IMAD.MOV.U32 R23, RZ, RZ, 0x47100000 ;
+        /*0720*/                   IMAD.MOV.U32 R5, RZ, RZ, 0x70 ;
+        /*0730*/                   IMAD.MOV.U32 R4, RZ, RZ, 0x33 ;
+        /*0740*/                   IMAD.MOV.U32 R3, RZ, RZ, 0x55 ;
+.L_x_2:
+        /*0750*/                   S2R R2, SR_TID.X ;
+        /*0760*/                   S2UR UR7, SR_CgaCtaId ;
+        /*0770*/                   UMOV UR8, 0x400 ;
+        /*0780*/                   IMAD R10, R3, 0x1010101, RZ ;
+        /*0790*/                   UIADD3 UR4, UPT, UPT, UR8, 0x3000, URZ ;
+        /*07a0*/                   IMAD R11, R4, 0x1010101, RZ ;
+        /*07b0*/                   ULEA UR9, UR7, UR8, 0x18 ;
+        /*07c0*/                   ULEA UR4, UR7, UR4, 0x18 ;
+        /*07d0*/                   LEA R8, R2, UR9, 0x2 ;
+        /*07e0*/                   VIADD R9, R8, 0x200 ;
+        /*07f0*/                   LEA R8, R2, UR4, 0x2 ;
+        /*0800*/                   UMOV UR4, 0x380 ;
+.L_x_7:
+        /*0810*/                   STS [R9+-0x200], R10 ;
+        /*0820*/                   STS [R8+UR4+-0x380], R11 ;
+        /*0830*/                   STS [R9+-0x180], R10 ;
+        /*0840*/                   STS [R8+UR4+-0x300], R11 ;
+        /*0850*/                   STS [R9+-0x100], R10 ;
+        /*0860*/                   STS [R8+UR4+-0x280], R11 ;
+        /*0870*/                   STS [R9+-0x80], R10 ;
+        /*0880*/                   STS [R8+UR4+-0x200], R11 ;
+        /*0890*/                   STS [R9], R10 ;
+        /*08a0*/                   STS [R8+UR4+-0x180], R11 ;
+        /*08b0*/                   STS [R9+0x80], R10 ;
+        /*08c0*/                   STS [R8+UR4+-0x100], R11 ;
+        /*08d0*/                   STS [R9+0x100], R10 ;
+        /*08e0*/                   STS [R8+UR4+-0x80], R11 ;
+        /*08f0*/                   STS [R9+0x180], R10 ;
+        /*0900*/                   STS [R8+UR4], R11 ;
+        /*0910*/                   UIADD3 UR4, UPT, UPT, UR4, 0x400, URZ ;
+        /*0920*/                   UISETP.NE.U32.AND UP0, UPT, UR4, 0x3380, UPT ;
+        /*0930*/                   VIADD R9, R9, 0x400 ;
+        /*0940*/                   BRA.U UP0, `(.L_x_7) ;
+        /*0950*/                   ISETP.NE.U32.AND P0, PT, R2, RZ, PT ;
+        /*0960*/                   UMOV UR4, 0x1 ;
+        /*0970*/                   BSSY B0, `(.L_x_8) ;
+        /*0980*/                   VOTEU.ALL UP0, P0 ;
+        /*0990*/              @!P0 IMAD.MOV.U32 R9, RZ, RZ, -0x1 ;
+        /*09a0*/                   @!UP0 UIADD3 UR6, UPT, UPT, UR8, 0x6000, URZ ;
+        /*09b0*/              @!P0 STS [UR9+0x6008], R9 ;
+        /*09c0*/                   @!UP0 UIADD3 UR4, UPT, UPT, -UR4, 0x100000, URZ ;
+        /*09d0*/                   @!UP0 USHF.L.U32 UR5, UR4, 0xb, URZ ;
+        /*09e0*/                   @!UP0 USHF.L.U32 UR4, UR4, 0x1, URZ ;
+        /*09f0*/                   @!UP0 ULEA UR6, UR7, UR6, 0x18 ;
+        /*0a00*/                   VOTEU.ALL UP0, P0 ;
+        /*0a10*/                   FENCE.VIEW.ASYNC.S ;
+        /*0a20*/                   @!UP0 SYNCS.EXCH.64 URZ, [UR6], UR4 ;
+        /*0a30*/              @!PT LDS RZ, [RZ] ;
+        /*0a40*/              @!PT LDS RZ, [RZ] ;
+        /*0a50*/              @!PT LDS RZ, [RZ] ;
+        /*0a60*/              @!PT LDS RZ, [RZ] ;
+        /*0a70*/                   MEMBAR.ALL.CTA ;
+        /*0a80*/                   MEMBAR.ALL.GPU ;
+        /*0a90*/                   ERRBAR;
+        /*0aa0*/                   CGAERRBAR ;
+        /*0ab0*/                   UCGABAR_ARV ;
+        /*0ac0*/                   UCGABAR_WAIT ;
+        /*0ad0*/                   CCTL.IVALL ;
+        /*0ae0*/                   UMOV UR4, 0x40 ;
+        /*0af0*/                   ULEA UR4, UR7, UR4, 0x18 ;
+        /*0b00*/                   NOP ;
+        /*0b10*/                   LDS.U8 R8, [UR4+0x1c] ;
+        /*0b20*/                   ISETP.NE.AND P0, PT, R8, RZ, PT ;
+        /*0b30*/               @P0 BRA `(.L_x_9) ;
+        /*0b40*/                   ULOP3.LUT UR6, UR7, 0x1, URZ, 0xc0, !UPT ;
+        /*0b50*/                   ULOP3.LUT UR5, UR7, 0x1, URZ, 0x3c, !UPT ;
+        /*0b60*/                   UISETP.NE.U32.AND UP0, UPT, UR6, 0x1, UPT ;
+        /*0b70*/                   UIADD3 UR10, UPT, UPT, UR4, 0x8, URZ ;
+        /*0b80*/                   BRA.U !UP0, `(.L_x_10) ;
+        /*0b90*/                   ELECT P0, URZ, PT ;
+        /*0ba0*/                   BSSY B1, `(.L_x_10) ;
+        /*0bb0*/              @!P0 BRA `(.L_x_11) ;
+        /*0bc0*/                   UMOV UR6, 0x10 ;
+        /*0bd0*/                   UIADD3 UR7, UPT, UPT, UR8, 0x6008, URZ ;
+        /*0be0*/                   DEPBAR.LE SB0, 0x36 ;
+        /*0bf0*/                   UTCATOMSWS.2CTA.FIND_AND_SET.ALIGN UP1, UR6, UR6 ;
+        /*0c00*/                   IMAD.U32 R11, RZ, RZ, UR7 ;
+        /*0c10*/                   IMAD.U32 R10, RZ, RZ, UR6 ;
+        /*0c20*/                   BRA.U UP1, `(.L_x_12) ;
+.L_x_13:
+        /*0c30*/                   NANOSLEEP 0x64 ;
+        /*0c40*/                   UMOV UR6, 0x10 ;
+        /*0c50*/                   DEPBAR.LE SB0, 0x36 ;
+        /*0c60*/                   UTCATOMSWS.2CTA.FIND_AND_SET.ALIGN UP1, UR6, UR6 ;
+        /*0c70*/                   IMAD.U32 R10, RZ, RZ, UR6 ;
+        /*0c80*/                   BRA.U !UP1, `(.L_x_13) ;
+.L_x_12:
+        /*0c90*/                   LDS R8, [UR4+0x10] ;
+        /*0ca0*/                   IMAD.U32 R13, RZ, RZ, UR5 ;
+        /*0cb0*/                   SHF.L.U32 R9, R8, 0x1f, RZ ;
+        /*0cc0*/                   S2R R8, SR_CgaCtaId ;
+        /*0cd0*/                   SYNCS.PHASECHK.TRANS64.TRYWAIT P0, [UR4+0x8], R9 ;
+        /*0ce0*/                   LEA R8, R8, R11, 0x18 ;
+        /*0cf0*/               @P0 BRA `(.L_x_14) ;
+        /*0d00*/                   SYNCS.PHASECHK.TRANS64.TRYWAIT P0, [UR4+0x8], R9 ;
+        /*0d10*/              @!P0 BRA `(.L_x_15) ;
+.L_x_14:
+        /*0d20*/                   UPRMT UR6, UR5, 0x654, UR10 ;
+        /*0d30*/                   PRMT R8, R13, 0x654, R8 ;
+        /*0d40*/                   IMAD.MOV.U32 R11, RZ, RZ, 0xffff ;
+        /*0d50*/                   IMAD.MOV.U32 R13, RZ, RZ, 0x1 ;
+        /*0d60*/                   IMAD.MOV.U32 R15, RZ, RZ, 0x4 ;
+        /*0d70*/                   SHF.L.U32 R11, R11, R10.reuse, RZ ;
+        /*0d80*/                   IMAD.SHL.U32 R12, R10, 0x20, RZ ;
+        /*0d90*/                   SHF.L.U32 R14, R13, R10, RZ ;
+        /*0da0*/                   IMAD.U32 R9, RZ, RZ, UR6 ;
+        /*0db0*/                   SYNCS.ARRIVE.TRANS64.RED RZ, [UR6], R15 ;
+        /*0dc0*/                   STS [UR9+0x6008], R12 ;
+        /*0dd0*/                   STAS [R8.64], R10 ;
+        /*0de0*/                   ATOMS.OR RZ, [UR4+0x14], R11 ;
+        /*0df0*/                   ATOMS.OR RZ, [UR4+0x18], R14 ;
+        /*0e00*/                   ATOMS.XOR RZ, [UR4+0x10], R13 ;
+.L_x_11:
+        /*0e10*/                   BSYNC B1 ;
+.L_x_10:
+        /*0e20*/                   BRA.U UP0, `(.L_x_16) ;
+        /*0e30*/                   UMOV UR6, 0xffffffff ;
+        /*0e40*/                   BRA.DIV UR6, `(.L_x_17) ;
+        /*0e50*/                   ELECT P0, URZ, PT ;
+.L_x_72:
+        /*0e60*/              @!P0 BRA `(.L_x_16) ;
+        /*0e70*/                   LDS R8, [UR4+0x10] ;
+        /*0e80*/                   SHF.L.U32 R8, R8, 0x1f, RZ ;
+        /*0e90*/                   SYNCS.PHASECHK.TRANS64.TRYWAIT P0, [UR4+0x8], R8 ;
+        /*0ea0*/               @P0 BRA `(.L_x_18) ;
+        /*0eb0*/                   SYNCS.PHASECHK.TRANS64.TRYWAIT P0, [UR4+0x8], R8 ;
+        /*0ec0*/              @!P0 BRA `(.L_x_19) ;
+.L_x_18:
+        /*0ed0*/                   LDS R8, [UR9+0x6008] ;
+        /*0ee0*/                   IMAD.MOV.U32 R9, RZ, RZ, 0xffff ;
+        /*0ef0*/                   UPRMT UR6, UR5, 0x654, UR10 ;
+        /*0f00*/                   IMAD.MOV.U32 R11, RZ, RZ, 0x1 ;
+        /*0f10*/                   IMAD.SHL.U32 R10, R8, 0x20, RZ ;
+        /*0f20*/                   SHF.L.U32 R9, R9, R8.reuse, RZ ;
+        /*0f30*/                   SHF.L.U32 R8, R11, R8, RZ ;
+        /*0f40*/                   STS [UR9+0x6008], R10 ;
+        /*0f50*/                   ATOMS.OR RZ, [UR4+0x14], R9 ;
+        /*0f60*/                   ATOMS.OR RZ, [UR4+0x18], R8 ;
+        /*0f70*/                   SYNCS.ARRIVE.TRANS64.RED.A1T0 RZ, [UR6], RZ ;
+        /*0f80*/                   ATOMS.XOR RZ, [UR4+0x10], R11 ;
+        /*0f90*/                   BRA `(.L_x_16) ;
+.L_x_9:
+        /*0fa0*/                   IMAD.MOV.U32 R9, RZ, RZ, -0x1 ;
+        /*0fb0*/                   MOV R8, 0xfe0 ;
+        /*0fc0*/                   STS [UR9+0x6008], R9 ;
+        /*0fd0*/                   CALL.REL.NOINC `($__internal_1_$__cuda_sm10x_tcgen05_guardrail_trap_phase_invalid_during_alloc) ;
+.L_x_16:
+        /*0fe0*/                   BSYNC B0 ;
+.L_x_8:
+        /*0ff0*/                   WARPSYNC.ALL ;
+        /*1000*/                   S2UR UR38, SR_CgaCtaId ;
+        /*1010*/                   ELECT P0, URZ, PT ;
+        /*1020*/                   IMAD.MOV.U32 R8, RZ, RZ, 0x1 ;
+        /*1030*/                   UMOV UR4, 0x40 ;
+        /*1040*/                   UMOV UR40, 0x400 ;
+        /*1050*/                   S2R R21, SR_CTAID.X ;
+        /*1060*/                   IMAD R24, R0, 0x1010101, RZ ;
+        /*1070*/                   IMAD R12, R5, 0x1010101, RZ ;
+        /*1080*/                   UVIRTCOUNT.DEALLOC.SMPOOL 0x80 ;
+        /*1090*/                   IMAD.MOV.U32 R25, RZ, RZ, R24.reuse ;
+        /*10a0*/                   IMAD.MOV.U32 R26, RZ, RZ, R24.reuse ;
+        /*10b0*/                   IMAD.MOV.U32 R27, RZ, RZ, R24 ;
+        /*10c0*/                   IMAD.MOV.U32 R13, RZ, RZ, R12.reuse ;
+        /*10d0*/                   IMAD.MOV.U32 R14, RZ, RZ, R12 ;
+        /*10e0*/                   IMAD.MOV.U32 R15, RZ, RZ, R12 ;
+        /*10f0*/                   IMAD.MOV.U32 R10, RZ, RZ, R24.reuse ;
+        /*1100*/                   ULEA UR4, UR38, UR4, 0x18 ;
+        /*1110*/                   IMAD.MOV.U32 R11, RZ, RZ, R24 ;
+        /*1120*/                   ULEA UR39, UR38, UR40, 0x18 ;
+        /*1130*/                   IMAD.MOV.U32 R16, RZ, RZ, R12.reuse ;
+        /*1140*/                   IMAD.MOV.U32 R17, RZ, RZ, R12.reuse ;
+        /*1150*/                   IMAD.MOV.U32 R18, RZ, RZ, R12 ;
+        /*1160*/               @P0 STS.U8 [UR4+0x1c], R8 ;
+        /*1170*/              @!PT LDS RZ, [RZ] ;
+        /*1180*/              @!PT LDS RZ, [RZ] ;
+        /*1190*/              @!PT LDS RZ, [RZ] ;
+        /*11a0*/              @!PT LDS RZ, [RZ] ;
+        /*11b0*/                   MEMBAR.ALL.CTA ;
+        /*11c0*/                   MEMBAR.ALL.GPU ;
+        /*11d0*/                   ERRBAR;
+        /*11e0*/                   CGAERRBAR ;
+        /*11f0*/                   UCGABAR_ARV ;
+        /*1200*/                   IMAD.MOV.U32 R19, RZ, RZ, R12 ;
+        /*1210*/                   LOP3.LUT P0, RZ, R2, 0x1, R21, 0xf8, !PT ;
+        /*1220*/                   LOP3.LUT R20, R21, 0x1, RZ, 0xc0, !PT ;
+        /*1230*/                   UCGABAR_WAIT ;
+        /*1240*/                   CCTL.IVALL ;
+        /*1250*/                   LDS R9, [UR39+0x6008] ;
+        /*1260*/                   IMAD.MOV.U32 R8, RZ, RZ, R24.reuse ;
+        /*1270*/                   R2UR UR41, R9 ;
+        /*1280*/                   IMAD.MOV.U32 R9, RZ, RZ, R24 ;
+        /*1290*/                   STTM.x4 tmem[UR41], R24 ;
+        /*12a0*/                   STTM.x4 tmem[UR41+0x80], R12 ;
+        /*12b0*/                   STTM.x4 tmem[UR41+0x100], R8 ;
+        /*12c0*/                   STTM.x4 tmem[UR41+0x180], R16 ;
+        /*12d0*/                   FENCE.VIEW.ASYNC.T ;
+        /*12e0*/                   BAR.SYNC.DEFER_BLOCKING 0x0 ;
+        /*12f0*/               @P0 BRA `(.L_x_20) ;
+        /*1300*/                   LDCU UR11, c[0x0][0x398] ;
+        /*1310*/                   UISETP.GE.AND UP0, UPT, UR11, 0x1, UPT ;
+        /*1320*/                   BRA.U !UP0, `(.L_x_21) ;
+        /*1330*/                   UIADD3 UR4, UPT, UPT, UR40, 0x3000, URZ ;
+        /*1340*/                   UISETP.GE.U32.AND UP0, UPT, UR11, 0x4, UPT ;
+        /*1350*/                   ULEA UR5, UR38, UR4, 0x18 ;
+        /*1360*/                   USHF.R.U32.HI UR4, URZ, 0x4, UR39 ;
+        /*1370*/                   USHF.R.U32.HI UR5, URZ, 0x4, UR5 ;
+        /*1380*/                   ULOP3.LUT UR4, UR4, 0x3fc0, URZ, 0xc0, !UPT ;
+        /*1390*/                   ULOP3.LUT UR5, UR5, 0x3fc0, URZ, 0xc0, !UPT ;
+        /*13a0*/                   ULOP3.LUT UR6, UR4, 0x10000, URZ, 0xfc, !UPT ;
+        /*13b0*/                   ULOP3.LUT UR10, UR11, 0x3, URZ, 0xc0, !UPT ;
+        /*13c0*/                   UIADD3 UR12, UPT, UPT, UR41, 0x80, URZ ;
+        /*13d0*/                   UIADD3 UR13, UPT, UPT, UR41, 0x100, URZ ;
+        /*13e0*/                   ULOP3.LUT UR8, UR5, 0x10000, URZ, 0xfc, !UPT ;
+        /*13f0*/                   UMOV UR4, URZ ;
+        /*1400*/                   UMOV UR7, 0x10 ;
+        /*1410*/                   UMOV UR9, 0x10 ;
+        /*1420*/                   BRA.U !UP0, `(.L_x_22) ;
+        /*1430*/                   ULOP3.LUT UR4, UR11, 0x7ffffffc, URZ, 0xc0, !UPT ;
+        /*1440*/                   UPLOP3.LUT UP0, UPT, UPT, UPT, UPT, 0x80, 0x8 ;
+        /*1450*/                   UIADD3 UR5, UPT, UPT, URZ, -UR4, URZ ;
+        /*1460*/                   UMOV UR4, URZ ;
+        /*1470*/                   UISETP.GE.U32.AND UP1, UPT, UR5, URZ, UPT ;
+        /*1480*/                   BRA.U !UP1, `(.L_x_23) ;
+        /*1490*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+        /*14a0*/                   UPLOP3.LUT UP0, UPT, UPT, UPT, UPT, 0x40, 0x4 ;
+        /*14b0*/                   UISETP.NE.U32.AND UP1, UPT, UR4, URZ, UPT ;
+        /*14c0*/                   UMOV UR14, 0x0 ;
+        /*14d0*/                   UMOV UR15, 0x10401680 ;
+.L_x_24:
+        /*14e0*/               @P0 ELECT P1, URZ, PT ;
+        /*14f0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UP1 ;
+        /*1500*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1510*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1520*/               @P0 BRA.U.ANY `(.L_x_24) ;
+        /*1530*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+        /*1540*/                   UMOV UR4, 0x1 ;
+.L_x_25:
+        /*1550*/               @P0 ELECT P1, URZ, PT ;
+        /*1560*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1570*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1580*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1590*/               @P0 BRA.U.ANY `(.L_x_25) ;
+        /*15a0*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_26:
+        /*15b0*/               @P0 ELECT P1, URZ, PT ;
+        /*15c0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*15d0*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*15e0*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*15f0*/               @P0 BRA.U.ANY `(.L_x_26) ;
+        /*1600*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_27:
+        /*1610*/               @P0 ELECT P1, URZ, PT ;
+        /*1620*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1630*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1640*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1650*/               @P0 BRA.U.ANY `(.L_x_27) ;
+        /*1660*/                   UIADD3 UR5, UPT, UPT, UR5, 0x4, URZ ;
+.L_x_23:
+        /*1670*/                   UIADD3 UR11, UPT, UPT, URZ, -UR5, URZ ;
+        /*1680*/                   UISETP.GT.AND UP1, UPT, UR11, 0xc, UPT ;
+        /*1690*/                   BRA.U !UP1, `(.L_x_28) ;
+        /*16a0*/                   UPLOP3.LUT UP0, UPT, UPT, UPT, UPT, 0x40, 0x4 ;
+.L_x_45:
+        /*16b0*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+        /*16c0*/                   UISETP.NE.U32.AND UP1, UPT, UR4, URZ, UPT ;
+        /*16d0*/                   UMOV UR14, 0x0 ;
+        /*16e0*/                   UMOV UR15, 0x10401680 ;
+.L_x_29:
+        /*16f0*/               @P0 ELECT P1, URZ, PT ;
+        /*1700*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UP1 ;
+        /*1710*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1720*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1730*/               @P0 BRA.U.ANY `(.L_x_29) ;
+        /*1740*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_30:
+        /*1750*/               @P0 ELECT P1, URZ, PT ;
+        /*1760*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1770*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1780*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1790*/               @P0 BRA.U.ANY `(.L_x_30) ;
+        /*17a0*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_31:
+        /*17b0*/               @P0 ELECT P1, URZ, PT ;
+        /*17c0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*17d0*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*17e0*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*17f0*/               @P0 BRA.U.ANY `(.L_x_31) ;
+        /*1800*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_32:
+        /*1810*/               @P0 ELECT P1, URZ, PT ;
+        /*1820*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1830*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1840*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1850*/               @P0 BRA.U.ANY `(.L_x_32) ;
+        /*1860*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_33:
+        /*1870*/               @P0 ELECT P1, URZ, PT ;
+        /*1880*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1890*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*18a0*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*18b0*/               @P0 BRA.U.ANY `(.L_x_33) ;
+        /*18c0*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_34:
+        /*18d0*/               @P0 ELECT P1, URZ, PT ;
+        /*18e0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*18f0*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1900*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1910*/               @P0 BRA.U.ANY `(.L_x_34) ;
+        /*1920*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_35:
+        /*1930*/               @P0 ELECT P1, URZ, PT ;
+        /*1940*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1950*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1960*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1970*/               @P0 BRA.U.ANY `(.L_x_35) ;
+        /*1980*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_36:
+        /*1990*/               @P0 ELECT P1, URZ, PT ;
+        /*19a0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*19b0*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*19c0*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*19d0*/               @P0 BRA.U.ANY `(.L_x_36) ;
+        /*19e0*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_37:
+        /*19f0*/               @P0 ELECT P1, URZ, PT ;
+        /*1a00*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1a10*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1a20*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1a30*/               @P0 BRA.U.ANY `(.L_x_37) ;
+        /*1a40*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_38:
+        /*1a50*/               @P0 ELECT P1, URZ, PT ;
+        /*1a60*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1a70*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1a80*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1a90*/               @P0 BRA.U.ANY `(.L_x_38) ;
+        /*1aa0*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_39:
+        /*1ab0*/               @P0 ELECT P1, URZ, PT ;
+        /*1ac0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1ad0*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1ae0*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1af0*/               @P0 BRA.U.ANY `(.L_x_39) ;
+        /*1b00*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_40:
+        /*1b10*/               @P0 ELECT P1, URZ, PT ;
+        /*1b20*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1b30*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1b40*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1b50*/               @P0 BRA.U.ANY `(.L_x_40) ;
+        /*1b60*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_41:
+        /*1b70*/               @P0 ELECT P1, URZ, PT ;
+        /*1b80*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1b90*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1ba0*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1bb0*/               @P0 BRA.U.ANY `(.L_x_41) ;
+        /*1bc0*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+        /*1bd0*/                   UMOV UR4, 0x1 ;
+.L_x_42:
+        /*1be0*/               @P0 ELECT P1, URZ, PT ;
+        /*1bf0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1c00*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1c10*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1c20*/               @P0 BRA.U.ANY `(.L_x_42) ;
+        /*1c30*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_43:
+        /*1c40*/               @P0 ELECT P1, URZ, PT ;
+        /*1c50*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1c60*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1c70*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1c80*/               @P0 BRA.U.ANY `(.L_x_43) ;
+        /*1c90*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_44:
+        /*1ca0*/               @P0 ELECT P1, URZ, PT ;
+        /*1cb0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1cc0*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1cd0*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1ce0*/               @P0 BRA.U.ANY `(.L_x_44) ;
+        /*1cf0*/                   UIADD3 UR5, UPT, UPT, UR5, 0x10, URZ ;
+        /*1d00*/                   UISETP.GE.AND UP1, UPT, UR5, -0xc, UPT ;
+        /*1d10*/                   BRA.U !UP1, `(.L_x_45) ;
+.L_x_28:
+        /*1d20*/                   UIADD3 UR11, UPT, UPT, URZ, -UR5, URZ ;
+        /*1d30*/                   UISETP.GT.AND UP1, UPT, UR11, 0x4, UPT ;
+        /*1d40*/                   BRA.U !UP1, `(.L_x_46) ;
+        /*1d50*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+        /*1d60*/                   UPLOP3.LUT UP0, UPT, UPT, UPT, UPT, 0x40, 0x4 ;
+        /*1d70*/                   UISETP.NE.U32.AND UP1, UPT, UR4, URZ, UPT ;
+        /*1d80*/                   UMOV UR14, 0x0 ;
+        /*1d90*/                   UMOV UR15, 0x10401680 ;
+.L_x_47:
+        /*1da0*/               @P0 ELECT P1, URZ, PT ;
+        /*1db0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UP1 ;
+        /*1dc0*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1dd0*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1de0*/               @P0 BRA.U.ANY `(.L_x_47) ;
+        /*1df0*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_48:
+        /*1e00*/               @P0 ELECT P1, URZ, PT ;
+        /*1e10*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1e20*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1e30*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1e40*/               @P0 BRA.U.ANY `(.L_x_48) ;
+        /*1e50*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_49:
+        /*1e60*/               @P0 ELECT P1, URZ, PT ;
+        /*1e70*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1e80*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1e90*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1ea0*/               @P0 BRA.U.ANY `(.L_x_49) ;
+        /*1eb0*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_50:
+        /*1ec0*/               @P0 ELECT P1, URZ, PT ;
+        /*1ed0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1ee0*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1ef0*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1f00*/               @P0 BRA.U.ANY `(.L_x_50) ;
+        /*1f10*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_51:
+        /*1f20*/               @P0 ELECT P1, URZ, PT ;
+        /*1f30*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1f40*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1f50*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1f60*/               @P0 BRA.U.ANY `(.L_x_51) ;
+        /*1f70*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+        /*1f80*/                   UMOV UR4, 0x1 ;
+.L_x_52:
+        /*1f90*/               @P0 ELECT P1, URZ, PT ;
+        /*1fa0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*1fb0*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*1fc0*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*1fd0*/               @P0 BRA.U.ANY `(.L_x_52) ;
+        /*1fe0*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_53:
+        /*1ff0*/               @P0 ELECT P1, URZ, PT ;
+        /*2000*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*2010*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*2020*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*2030*/               @P0 BRA.U.ANY `(.L_x_53) ;
+        /*2040*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_54:
+        /*2050*/               @P0 ELECT P1, URZ, PT ;
+        /*2060*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*2070*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*2080*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*2090*/               @P0 BRA.U.ANY `(.L_x_54) ;
+        /*20a0*/                   UIADD3 UR5, UPT, UPT, UR5, 0x8, URZ ;
+.L_x_46:
+        /*20b0*/                   UISETP.NE.U32.OR UP0, UPT, UR5, URZ, UP0 ;
+        /*20c0*/                   BRA.U !UP0, `(.L_x_55) ;
+        /*20d0*/                   UMOV UR14, 0x0 ;
+        /*20e0*/                   UMOV UR15, 0x10401680 ;
+.L_x_60:
+        /*20f0*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+        /*2100*/                   UISETP.NE.U32.AND UP0, UPT, UR4, URZ, UPT ;
+.L_x_56:
+        /*2110*/               @P0 ELECT P1, URZ, PT ;
+        /*2120*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UP0 ;
+        /*2130*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*2140*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*2150*/               @P0 BRA.U.ANY `(.L_x_56) ;
+        /*2160*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+        /*2170*/                   UMOV UR4, 0x1 ;
+.L_x_57:
+        /*2180*/               @P0 ELECT P1, URZ, PT ;
+        /*2190*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*21a0*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*21b0*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*21c0*/               @P0 BRA.U.ANY `(.L_x_57) ;
+        /*21d0*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_58:
+        /*21e0*/               @P0 ELECT P1, URZ, PT ;
+        /*21f0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*2200*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*2210*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*2220*/               @P0 BRA.U.ANY `(.L_x_58) ;
+        /*2230*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+.L_x_59:
+        /*2240*/               @P0 ELECT P1, URZ, PT ;
+        /*2250*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UPT ;
+        /*2260*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*2270*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*2280*/               @P0 BRA.U.ANY `(.L_x_59) ;
+        /*2290*/                   UIADD3 UR5, UPT, UPT, UR5, 0x4, URZ ;
+        /*22a0*/                   UISETP.NE.U32.AND UP0, UPT, UR5, URZ, UPT ;
+        /*22b0*/                   BRA.U UP0, `(.L_x_60) ;
+.L_x_55:
+        /*22c0*/                   UISETP.NE.U32.AND UP0, UPT, UR10, URZ, UPT ;
+        /*22d0*/                   BRA.U !UP0, `(.L_x_21) ;
+        /*22e0*/                   UMOV UR4, 0x1 ;
+.L_x_22:
+        /*22f0*/                   UIADD3 UR10, UPT, UPT, URZ, -UR10, URZ ;
+        /*2300*/                   UMOV UR14, 0x0 ;
+        /*2310*/                   UMOV UR15, 0x10401680 ;
+.L_x_62:
+        /*2320*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+        /*2330*/                   UISETP.NE.U32.AND UP0, UPT, UR4, URZ, UPT ;
+.L_x_61:
+        /*2340*/               @P0 ELECT P1, URZ, PT ;
+        /*2350*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR6], gdesc[UR8], tmem[UR41], tmem[UR14], idesc[UR15], tmem[UR12], UP0 ;
+        /*2360*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*2370*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*2380*/               @P0 BRA.U.ANY `(.L_x_61) ;
+        /*2390*/                   UIADD3 UR10, UPT, UPT, UR10, 0x1, URZ ;
+        /*23a0*/                   UMOV UR4, 0x1 ;
+        /*23b0*/                   UISETP.NE.U32.AND UP0, UPT, UR10, URZ, UPT ;
+        /*23c0*/                   BRA.U UP0, `(.L_x_62) ;
+.L_x_21:
+        /*23d0*/                   S2R R9, SR_CgaCtaId ;
+        /*23e0*/                   UIADD3 UR4, UPT, UPT, UR40, 0x6000, URZ ;
+        /*23f0*/                   PLOP3.LUT P0, PT, PT, PT, PT, 0x80, 0x8 ;
+        /*2400*/                   UMOV UR5, URZ ;
+        /*2410*/                   IMAD.U32 R8, RZ, RZ, UR4 ;
+        /*2420*/                   LEA R9, R9, R8, 0x18 ;
+        /*2430*/                   R2UR UR4, R9 ;
+        /*2440*/                   UMOV UR4, UR4 ;
+.L_x_63:
+        /*2450*/               @P0 ELECT P1, URZ, PT ;
+        /*2460*/                   UTCBAR.2CTA [UR4], URZ ;
+        /*2470*/               @P1 PLOP3.LUT P0, PT, P1, PT, PT, 0x8, 0x80 ;
+        /*2480*/                   PLOP3.LUT P1, PT, PT, PT, PT, 0x8, 0x80 ;
+        /*2490*/               @P0 BRA.U.ANY `(.L_x_63) ;
+        /*24a0*/                   SHF.L.U32 R8, RZ, 0x1f, RZ ;
+        /*24b0*/                   SYNCS.PHASECHK.TRANS64.TRYWAIT P0, [R9+URZ], R8 ;
+        /*24c0*/              @!P0 BRA `(.L_x_64) ;
+.L_x_20:
+        /*24d0*/                   ISETP.NE.U32.AND P0, PT, R20, RZ, PT ;
+        /*24e0*/                   WARPSYNC.ALL ;
+        /*24f0*/              @!PT LDS RZ, [RZ] ;
+        /*2500*/              @!PT LDS RZ, [RZ] ;
+        /*2510*/              @!PT LDS RZ, [RZ] ;
+        /*2520*/              @!PT LDS RZ, [RZ] ;
+        /*2530*/                   MEMBAR.ALL.CTA ;
+        /*2540*/                   MEMBAR.ALL.GPU ;
+        /*2550*/                   ERRBAR;
+        /*2560*/                   CGAERRBAR ;
+        /*2570*/                   UCGABAR_ARV ;
+        /*2580*/                   UCGABAR_WAIT ;
+        /*2590*/                   CCTL.IVALL ;
+        /*25a0*/               @P0 BRA `(.L_x_65) ;
+        /*25b0*/                   LOP3.LUT P0, RZ, R2, R21, RZ, 0xfc, !PT ;
+        /*25c0*/                   LDTM.x4 R16, tmem[UR41] ;
+        /*25d0*/                   NOP ;
+        /*25e0*/               @P0 BRA `(.L_x_65) ;
+        /*25f0*/                   LDCU.64 UR4, c[0x4][0x8] ;
+        /*2600*/                   FADD.FTZ R2, R16.reuse, -R23 ;
+        /*2610*/                   FMUL.FTZ R8, R16, 1 ;
+        /*2620*/                   FMUL.FTZ R10, R23, 1 ;
+        /*2630*/                   MOV R12, 0x0 ;
+        /*2640*/                   STL [R1+0x10], R0 ;
+        /*2650*/                   FSETP.GEU.FTZ.AND P0, PT, |R2|, 0.0010000000474974513054, PT ;
+        /*2660*/                   LDC R2, c[0x0][0x39c] ;
+        /*2670*/                   F2F.F64.F32 R8, R8 ;
+        /*2680*/                   STL [R1+0x30], R16 ;
+        /*2690*/                   SEL R17, RZ, 0x1, P0 ;
+        /*26a0*/                   STL.64 [R1+0x18], R8 ;
+        /*26b0*/                   IMAD.U32 R13, RZ, RZ, UR4 ;
+        /*26c0*/                   STL.64 [R1+0x8], R4 ;
+        /*26d0*/                   IMAD.U32 R14, RZ, RZ, UR5 ;
+        /*26e0*/                   LDCU.64 UR4, c[0x4][0x18] ;
+        /*26f0*/               @P0 LDC R13, c[0x4][0x10] ;
+        /*2700*/               @P0 LDC R14, c[0x4][0x14] ;
+        /*2710*/                   STL.64 [R1], R2 ;
+        /*2720*/                   IMAD.U32 R4, RZ, RZ, UR4 ;
+        /*2730*/                   IMAD.U32 R5, RZ, RZ, UR5 ;
+        /*2740*/                   IMAD.MOV.U32 R2, RZ, RZ, R13 ;
+        /*2750*/                   LDC.64 R12, c[0x4][R12] ;
+        /*2760*/                   IMAD.MOV.U32 R3, RZ, RZ, R14 ;
+        /*2770*/                   STL.64 [R1+0x28], R2 ;
+        /*2780*/                   NOP ;
+        /*2790*/                   F2F.F64.F32 R10, R10 ;
+        /*27a0*/                   STL.64 [R1+0x20], R10 ;
+        /*27b0*/                   LEPC R20, `(.L_x_66) ;
+        /*27c0*/                   CALL.ABS.NOINC R12 ;
+.L_x_66:
+        /*27d0*/                   LDC.64 R2, c[0x0][0x390] ;
+        /*27e0*/                   STG.E desc[UR36][R2.64], R16 ;
+        /*27f0*/                   STG.E desc[UR36][R2.64+0x4], R23 ;
+        /*2800*/                   STG.E desc[UR36][R2.64+0x8], R17 ;
+.L_x_65:
+        /*2810*/                   WARPSYNC.ALL ;
+        /*2820*/                   S2UR UR5, SR_CgaCtaId ;
+        /*2830*/                   UMOV UR7, 0x1 ;
+        /*2840*/              @!PT LDS RZ, [RZ] ;
+        /*2850*/              @!PT LDS RZ, [RZ] ;
+        /*2860*/              @!PT LDS RZ, [RZ] ;
+        /*2870*/              @!PT LDS RZ, [RZ] ;
+        /*2880*/                   MEMBAR.ALL.CTA ;
+        /*2890*/                   MEMBAR.ALL.GPU ;
+        /*28a0*/                   ERRBAR;
+        /*28b0*/                   CGAERRBAR ;
+        /*28c0*/                   UCGABAR_ARV ;
+        /*28d0*/                   UCGABAR_WAIT ;
+        /*28e0*/                   CCTL.IVALL ;
+        /*28f0*/                   UMOV UR4, 0x40 ;
+        /*2900*/                   ULEA UR6, UR5, UR4, 0x18 ;
+        /*2910*/                   NOP ;
+        /*2920*/                   ULOP3.LUT UR4, UR41, 0xffff, URZ, 0xc0, !UPT ;
+        /*2930*/                   LDS R0, [UR6+0x14] ;
+        /*2940*/                   UMOV UR5, 0xffff ;
+        /*2950*/                   USHF.R.U32.HI UR4, URZ, 0x5, UR4 ;
+        /*2960*/                   USHF.L.U32 UR5, UR5, UR4, URZ ;
+        /*2970*/                   USHF.L.U32 UR4, UR7, UR4, URZ ;
+        /*2980*/                   LOP3.LUT R0, R0, UR5, RZ, 0xc0, !PT ;
+        /*2990*/                   ISETP.NE.AND P0, PT, R0, UR5, PT ;
+        /*29a0*/               @P0 BRA `(.L_x_67) ;
+        /*29b0*/                   LDS R0, [UR6+0x18] ;
+        /*29c0*/                   LOP3.LUT R0, R0, UR4, RZ, 0xc0, !PT ;
+        /*29d0*/                   ISETP.NE.AND P0, PT, R0, UR4, PT ;
+        /*29e0*/               @P0 BRA `(.L_x_68) ;
+        /*29f0*/                   S2R R2, SR_LANEID ;
+        /*2a00*/                   ULOP3.LUT UR5, URZ, UR5, URZ, 0x33, !UPT ;
+        /*2a10*/                   LOP3.LUT R0, RZ, UR4, RZ, 0x33, !PT ;
+        /*2a20*/                   VOTEU.ANY UR4, UPT, PT ;
+        /*2a30*/                   UFLO.U32 UR4, UR4 ;
+        /*2a40*/                   REDUX UR8, R0 ;
+        /*2a50*/                   IMAD.U32 R4, RZ, RZ, UR5 ;
+        /*2a60*/                   UTCATOMSWS.AND URZ, UR5 ;
+        /*2a70*/                   REDUX UR7, R4 ;
+        /*2a80*/                   IMAD.U32 R3, RZ, RZ, UR8 ;
+        /*2a90*/                   ISETP.EQ.U32.AND P0, PT, R2, UR4, PT ;
+        /*2aa0*/                   IMAD.U32 R2, RZ, RZ, UR7 ;
+        /*2ab0*/               @P0 ATOMS.AND RZ, [UR6+0x14], R2 ;
+        /*2ac0*/               @P0 ATOMS.AND RZ, [UR6+0x18], R3 ;
+        /*2ad0*/                   BRA `(.L_x_69) ;
+.L_x_68:
+        /*2ae0*/                   MOV R2, 0x2b00 ;
+        /*2af0*/                   CALL.REL.NOINC `($__internal_0_$__cuda_sm10x_tcgen05_guardrail_trap_col_being_dealloced_not_returned_by_alloc) ;
+        /*2b00*/                   BRA `(.L_x_69) ;
+.L_x_67:
+        /*2b10*/                   MOV R2, 0x2b30 ;
+        /*2b20*/                   CALL.REL.NOINC `($__internal_2_$__cuda_sm10x_tcgen05_guardrail_trap_unallocated_columns_being_dealloced) ;
+.L_x_69:
+        /*2b30*/                   NOP ;
+        /*2b40*/                   EXIT ;
+.L_x_15:
+        /*2b50*/                   IMAD.U32 R12, RZ, RZ, UR4 ;
+        /*2b60*/                   SYNCS.PHASECHK.TRANS64.TRYWAIT P0, [R12+URZ+0x8], R9 ;
+        /*2b70*/              @!P0 NANOSLEEP.SYNCS 0x989680 ;
+        /*2b80*/              @!P0 SYNCS.PHASECHK.TRANS64 P0, [R12+URZ+0x8], R9 ;
+        /*2b90*/              @!P0 BRA `(.L_x_15) ;
+        /*2ba0*/                   BRA `(.L_x_14) ;
+.L_x_17:
+        /*2bb0*/                   BSSY B1, `(.L_x_70) ;
+        /*2bc0*/                   IMAD.MOV.U32 R15, RZ, RZ, -0x1 ;
+        /*2bd0*/                   WARPSYNC.COLLECTIVE R15, `(.L_x_71) ;
+        /*2be0*/                   ELECT P6, UR79, PT ;
+        /*2bf0*/                   MOV R14, UR79 ;
+        /*2c00*/                   ENDCOLLECTIVE ;
+.L_x_71:
+        /*2c10*/                   BSYNC B1 ;
+.L_x_70:
+        /*2c20*/                   PLOP3.LUT P0, PT, P6, PT, PT, 0x80, 0x8 ;
+        /*2c30*/                   BRA `(.L_x_72) ;
+.L_x_19:
+        /*2c40*/                   IMAD.U32 R9, RZ, RZ, UR4 ;
+        /*2c50*/                   SYNCS.PHASECHK.TRANS64.TRYWAIT P0, [R9+URZ+0x8], R8 ;
+        /*2c60*/              @!P0 NANOSLEEP.SYNCS 0x989680 ;
+        /*2c70*/              @!P0 SYNCS.PHASECHK.TRANS64 P0, [R9+URZ+0x8], R8 ;
+        /*2c80*/              @!P0 BRA `(.L_x_19) ;
+        /*2c90*/                   BRA `(.L_x_18) ;
+.L_x_64:
+        /*2ca0*/                   YIELD ;
+        /*2cb0*/                   SYNCS.PHASECHK.TRANS64.TRYWAIT P0, [R9+URZ], R8 ;
+        /*2cc0*/              @!P0 BRA `(.L_x_64) ;
+        /*2cd0*/                   BRA `(.L_x_20) ;
+        .type           $__internal_0_$__cuda_sm10x_tcgen05_guardrail_trap_col_being_dealloced_not_returned_by_alloc,@function
+        .size           $__internal_0_$__cuda_sm10x_tcgen05_guardrail_trap_col_being_dealloced_not_returned_by_alloc,($__internal_1_$__cuda_sm10x_tcgen05_guardrail_trap_phase_invalid_during_alloc - $__internal_0_$__cuda_sm10x_tcgen05_guardrail_trap_col_being_dealloced_not_returned_by_alloc)
+$__internal_0_$__cuda_sm10x_tcgen05_guardrail_trap_col_being_dealloced_not_returned_by_alloc:
+        /*2ce0*/                   BPT.TRAP 0x1 ;
+        /*2cf0*/                   IMAD.MOV.U32 R3, RZ, RZ, 0x0 ;
+        /*2d00*/                   RET.REL.NODEC R2 `(kernel) ;
+        .type           $__internal_1_$__cuda_sm10x_tcgen05_guardrail_trap_phase_invalid_during_alloc,@function
+        .size           $__internal_1_$__cuda_sm10x_tcgen05_guardrail_trap_phase_invalid_during_alloc,($__internal_2_$__cuda_sm10x_tcgen05_guardrail_trap_unallocated_columns_being_dealloced - $__internal_1_$__cuda_sm10x_tcgen05_guardrail_trap_phase_invalid_during_alloc)
+$__internal_1_$__cuda_sm10x_tcgen05_guardrail_trap_phase_invalid_during_alloc:
+        /*2d10*/                   BPT.TRAP 0x1 ;
+        /*2d20*/                   IMAD.MOV.U32 R9, RZ, RZ, 0x0 ;
+        /*2d30*/                   RET.REL.NODEC R8 `(kernel) ;
+        .type           $__internal_2_$__cuda_sm10x_tcgen05_guardrail_trap_unallocated_columns_being_dealloced,@function
+        .size           $__internal_2_$__cuda_sm10x_tcgen05_guardrail_trap_unallocated_columns_being_dealloced,(.L_x_94 - $__internal_2_$__cuda_sm10x_tcgen05_guardrail_trap_unallocated_columns_being_dealloced)
+$__internal_2_$__cuda_sm10x_tcgen05_guardrail_trap_unallocated_columns_being_dealloced:
+        /*2d40*/                   BPT.TRAP 0x1 ;
+        /*2d50*/                   IMAD.MOV.U32 R3, RZ, RZ, 0x0 ;
+        /*2d60*/                   RET.REL.NODEC R2 `(kernel) ;
+.L_x_73:
+        /*2d70*/                   BRA `(.L_x_73);
+        /*2d80*/                   NOP;
+        /*2d90*/                   NOP;
+        /*2da0*/                   NOP;
+        /*2db0*/                   NOP;
+        /*2dc0*/                   NOP;
+        /*2dd0*/                   NOP;
+        /*2de0*/                   NOP;
+        /*2df0*/                   NOP;
+.L_x_94:
+
+
+//--------------------- SYMBOLS --------------------------
+
+	.type		.nv.reservedSmem.offset0,@object
+	.size		.nv.reservedSmem.offset0,0x4
+	.type		.nv.reservedSmem.cap,@object
+	.size		.nv.reservedSmem.cap,0x4
+	.type		vprintf,@function

@@ -1,0 +1,5 @@
+        /*05f0*/                   UTCATOMSWS.FIND_AND_SET.ALIGN UP0, UR5, UR5 ;                                                   /* 0x00000005000575e3 */
+        /*0650*/                   UTCATOMSWS.FIND_AND_SET.ALIGN UP0, UR5, UR5 ;                                                   /* 0x00000005000575e3 */
+        /*0b00*/                   UTCOMMA.BLOCK16 gdesc[UR4], gdesc[UR6], tmem[UR39], tmem[UR12], idesc[UR13], tmem[UR10], UP0 ;  /* 0x800a0c06040075ea */
+        /*0c10*/                   UTCBAR [UR4], URZ ;                                                                             /* 0x000000ff040073e9 */
+        /*1380*/                   UTCATOMSWS.AND URZ, UR5 ;                                                                       /* 0x0000000500ff79e3 */

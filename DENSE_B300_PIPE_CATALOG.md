@@ -1051,7 +1051,57 @@ Same as cluster launch (§22d). Combine with cudaGraph for amortization (catalog
 
 ---
 
-## §22o. NVFP4 — REAL throughput via mxf4nvf4.block16 (catalog L9213+, 🟢 catalog-self-verified with correctness)
+## §22o. NVFP4 — ✅ REPLICATED 2026-04-23 (justifications/49_nvfp4.md — 364 lines + 14 evidence files)
+
+**3 catalog claims CONFIRMED, 2 catalog claims CORRECTED:**
+
+| Claim | Catalog | This rig | Status |
+|---|---|---|---|
+| **A: 9.9 PFLOPS at K=64 via `kind::mxf4nvf4.block_scale.block16`** | 9.9 PF (assumes 2032 MHz boost) | **9.26 PF at 1942 MHz** = 92.6% of 10 PF spec, 98.4% of theoretical at observed clock. cy/MMA = **128.001** matches catalog's 128.01 exactly. | ✅ confirmed |
+| **B: K=96 via idesc bit 31 doesn't add MACs** | "K=96 same D[0] as K=64" | K=64 D[0]=288.0; K=96 D[0]=288.0 (bit-identical). If K=96 had worked, D[0] would be 432 (= 96/64 × 288). | ✅ confirmed |
+| **E: 15/15 K=64 correctness** | all 15 tuples pass | All 15 (A, B, sA, sB) tuples produced bit-exact match: D[0] ∈ {0, 16, 288, 576, 1152, 2304, 18432, 36864} | ✅ confirmed |
+| **C: `kind::mxf4` / `kind::mxf8f6f4` ptxas-rejected** | "all rejected by ptxas 13.2.78" | ⚠ **MOSTLY TRUE** but `kind::mxf4.block_scale.block32` actually **COMPILES** on V13.2.78 (emits SASS `UTCOMMA` without `.BLOCK16`). It crashes only at RUNTIME with "illegal instruction". | ⚠ catalog's "ptxas rejects" claim **FALSIFIED for this one form** |
+| **D: only `128x128b` cp shape works** | "128x256b crashes" | ⚠ **128x256b ALSO RUNS CLEANLY** with 8 KB smem buffer. Bonus: `4x256b` also runs. Other shapes per catalog (64x128b/32x128b need .warptype, 64x256b/32x256b syntax error, 32x32b invalid). | ⚠ catalog's "128x256b crashes" claim **NOT REPRODUCED** |
+
+### Catalog corrections recommended
+
+1. **Claim A clock context**: catalog should specify "9.9 PF at 2032 MHz boost (theoretical)" vs "9.26 PF at 1942 MHz observed (this rig)". The 9.9 number is correct for 2032 MHz boost spec; readers may misinterpret it as a measured value at unspecified clock.
+2. **Claim C `.block32` rejection**: revise from "all rejected by ptxas" to "rejected by ptxas EXCEPT `kind::mxf4.block_scale.block32` which compiles but crashes at runtime with illegal-instruction".
+3. **Claim D `128x256b`**: revise from "crashes" to "WORKS with sufficient smem (8 KB+)". Likely the catalog's earlier crash was a smem under-allocation, not a fundamental shape limitation.
+
+### Mechanism additions (NEW in this audit)
+
+- **Test E used the simpler `smem-descriptor A path`** (NOT `tcgen05.cp + TMEM-A`). All 15 correctness tests still pass. **Catalog's claim that `tcgen05.cp + TMEM-A` is required is wrong** — the smem-descriptor path also produces correct results.
+- ncu MODE0 cross-check confirms `sm__cycles_active = 100%` (saturated) and `sm__inst_executed.pct = 1.96%` (correctly low — only thread 0 of warp 0 issues UTCOMMA).
+
+### Files preserved (full audit trail)
+
+```
+justifications/49_nvfp4.md (364 lines)
+justifications/49_nvfp4_sass_MODE{0,1,3}.sass  ← UTCOMMA.BLOCK16 verified
+justifications/49_nvfp4_utc_inst_MODE{0,1}.txt
+justifications/49_nvfp4_ptxas_errors.txt        ← verbatim ptxas reject messages
+justifications/49_nvfp4_correctness15.txt       ← 15 D[0] values
+justifications/49_nvfp4_k96_correctness.txt     ← K=64 vs K=96 same D[0] proof
+justifications/49_nvfp4_cp_shapes.txt           ← 128x256b runs (CORRECTION)
+justifications/49_nvfp4_ncu_MODE0.txt
+justifications/49_nvfp4_run_MODE0*.txt          ← 4 run logs
+tests/bench_nvfp4_audit.cu (410 lines, 4-mode kernel)
+tests/bench_tcgen05_cp_shape.cu (44 lines, shape sweep)
+```
+
+### Headline result
+
+**B300 SXM6 AC FP4 tensor core via `kind::mxf4nvf4.block_scale.block16`:**
+- **9.26 PFLOPS chip-wide measured at 1942 MHz** (98.4% of theoretical at observed clock, 92.6% of NVIDIA's 10 PF spec)
+- SASS `UTCOMMA.BLOCK16` confirmed
+- 128.001 cy/MMA, perfect linear scaling 1→148 SMs (per catalog L6776)
+- K=96 ULTRA via idesc bit 31 does NOT work (the `kind::mxf4` proper path is rejected by ptxas; the `block_scale.block32` form compiles but crashes at runtime)
+- Wait for newer NVCC point-release for proper K=96 / mxf4 support
+
+---
+
+## §22o-OLD. NVFP4 — original catalog content (preserved as audit reference)
 
 ### ⚠ K=96 ULTRA via idesc bit 31 is FALSIFIED — by the catalog itself
 

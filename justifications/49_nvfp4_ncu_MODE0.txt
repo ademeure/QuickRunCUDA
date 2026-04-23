@@ -1,0 +1,17 @@
+==PROF== Connected to process 3774286 (/root/github/QuickRunCUDA/QuickRunCUDA)
+==PROF== Profiling "kernel" - 0 (1/1): 0%....50%Using persistent blocks (148 = 1 per SM)
+[MODE0] M=128 N=256 K=64 iters=50000 total_cy=6400366 cy/MMA=128.007
+....100% - 1 pass
+==PROF== Disconnected from process 3774286
+[3774286] QuickRunCUDA@127.0.0.1
+  kernel (148, 1, 1)x(32, 1, 1), Context 1, Stream 7, Device 0, CC 10.3
+    Section: Command line profiler metrics
+    -------------------------------------------------- ----------- ------------
+    Metric Name                                        Metric Unit Metric Value
+    -------------------------------------------------- ----------- ------------
+    gpc__cycles_elapsed.avg.per_second                         Ghz         1.91
+    sm__cycles_active.avg.pct_of_peak_sustained_active           %          100
+    sm__inst_executed.avg.pct_of_peak_sustained_active           %         1.96
+    sm__inst_executed.sum                                     inst     74138007
+    -------------------------------------------------- ----------- ------------
+

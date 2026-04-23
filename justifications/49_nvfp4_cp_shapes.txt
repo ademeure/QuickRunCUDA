@@ -1,0 +1,16 @@
+===== SHAPE: 128x128b =====
+  RUN: OK ([CP-SHAPE] 128x128b RAN OK tmem_addr=0x00000000)
+===== SHAPE: 128x256b =====
+  RUN: OK ([CP-SHAPE] 128x256b RAN OK tmem_addr=0x00000000)
+===== SHAPE: 64x128b =====
+  PTXAS REJECT: ------- ERROR DURING KERNEL COMPILATION -------|ptxas application ptx input, line 127; error   : Modifier '.warptype' require for instruction tcgen05.cp with shape '.64x128b'|ptxas fatal   : Ptx assembly aborted due to errors|
+===== SHAPE: 32x128b =====
+  PTXAS REJECT: ------- ERROR DURING KERNEL COMPILATION -------|ptxas application ptx input, line 127; error   : Modifier '.warptype' require for instruction tcgen05.cp with shape '.32x128b'|ptxas fatal   : Ptx assembly aborted due to errors|
+===== SHAPE: 64x256b =====
+  PTXAS REJECT: ------- ERROR DURING KERNEL COMPILATION -------|ptxas application ptx input, line 127; fatal   : Parsing error near 'x256b': syntax error|ptxas <macro util>, line 8; error   : Illegal modifier '.cta_group::1' for instruction 'brkpt'|
+===== SHAPE: 32x256b =====
+  PTXAS REJECT: ------- ERROR DURING KERNEL COMPILATION -------|ptxas application ptx input, line 127; fatal   : Parsing error near 'x256b': syntax error|ptxas <macro util>, line 8; error   : Illegal modifier '.cta_group::1' for instruction 'brkpt'|
+===== SHAPE: 32x32b =====
+  PTXAS REJECT: ------- ERROR DURING KERNEL COMPILATION -------|ptxas application ptx input, line 127; error   : Illegal matrix shape '.32x32b' for instruction 'tcgen05.cp'|ptxas fatal   : Ptx assembly aborted due to errors|
+===== SHAPE: 4x256b =====
+  RUN: OK ([CP-SHAPE] 4x256b RAN OK tmem_addr=0x00000000)

@@ -1,0 +1,19 @@
+===== VARIANT: tcgen05.mma.cta_group::1.kind::mxf4 [%0], %1, %2, %3, [%5], [%6], P; =====
+------- ERROR DURING KERNEL COMPILATION -------
+ptxas application ptx input, line 53; error   : .block_scale modifier required for instruction 'tcgen05.mma'
+ptxas application ptx input, line 53; error   : Arguments mismatch for instruction 'tcgen05.mma'
+ptxas fatal   : Ptx assembly aborted due to errors
+checkCudaErrors() Driver API error = 0006 "NVRTC_ERROR_COMPILATION" from file <utils/cuda_helper.h>, line 279.
+===== VARIANT: tcgen05.mma.cta_group::1.kind::mxf4.block_scale.block32 [%0], %1, %2, %3, [%5], [%6], P; =====
+checkCudaErrors() Driver API error = 0715 "an illegal instruction was encountered" from file <QuickRunCUDA.cpp>, line 524.
+===== VARIANT: tcgen05.mma.cta_group::1.kind::mxf8f6f4 [%0], %1, %2, %3, [%5], [%6], P; =====
+------- ERROR DURING KERNEL COMPILATION -------
+ptxas application ptx input, line 53; error   : .block_scale modifier required for instruction 'tcgen05.mma'
+ptxas application ptx input, line 53; error   : Arguments mismatch for instruction 'tcgen05.mma'
+ptxas fatal   : Ptx assembly aborted due to errors
+checkCudaErrors() Driver API error = 0006 "NVRTC_ERROR_COMPILATION" from file <utils/cuda_helper.h>, line 279.
+===== VARIANT: tcgen05.mma.cta_group::1.kind::f8f6f4.block_scale [%0], %1, %2, %3, [%5], [%6], P; =====
+------- ERROR DURING KERNEL COMPILATION -------
+ptxas application ptx input, line 53; error   : Modifier '.kind::f8f6f4' cannot be combined with modifier '.block_scale'
+ptxas fatal   : Ptx assembly aborted due to errors
+checkCudaErrors() Driver API error = 0006 "NVRTC_ERROR_COMPILATION" from file <utils/cuda_helper.h>, line 279.

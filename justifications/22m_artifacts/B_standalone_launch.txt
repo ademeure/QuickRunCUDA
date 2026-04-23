@@ -1,0 +1,12 @@
+# B300 kernel launch latency (1 block × 1 thread, empty kernel)
+
+  Single launch + sync: 7.42 us
+  Single launch (event timing, no sync): 4.00 us (kernel time only)
+  GPU globaltimer values (ns) - first 5:
+    1776939509469762720
+    1776939509469789888
+    1776939509469802976
+    1776939509469815232
+    1776939509469830240
+  cudaLaunchKernelExC + sync: 7.18 us
+  cudaLaunchKernel + sync:    7.18 us

@@ -25,6 +25,7 @@ This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED
 | §22e .reuse cache | 94% of FFMA2 carry .reuse | ✅ | Direct SASS grep: scalar FFMA 99.9% (1023/1024), FFMA2 82.8-99.2% across 5 configs. Catalog 94% in-range. | `22e_reuse_cache.md` |
 | §22h compute-mem overlap | FFMA hidden by 522 cy memory; ~16 free | ✅⚠⚠ | qualitative CONFIRMED, quantitative CORRECTED: cold DRAM is **882 cy** (not 522), free budget is **~225 FFMAs** (not ~16). Catalog's 522 was partial-cold; recommend split into "cold 882 / warm 335". | `22h_compute_mem_overlap.md` |
 | §30B atom→SASS mapping | atom.add always→REDG | ⚠ CORRECTED | Direct SASS grep across 20K kernels: ALL THREE (REDG/ATOMG.E/ATOM.E) emitted depending on return-value-use + scope. Throughput numbers still valid; SASS-name attribution was wrong. | `30B_atomics_FOLLOWUP.md` |
+| §22o NVFP4 mxf4nvf4 + K=96 | 9.9 PF + K=96 ULTRA bit 31 doesn't work | ✅⚠⚠ | RIGOROUS replication: **9.26 PF at 1942 MHz** (catalog's 9.9 was at 2032 boost not observed); K=64=K=96 D[0]=288 confirms K=96 doesn't add MACs; 15/15 correctness; **2 CATALOG CORRECTIONS**: `.block32` form actually compiles (crashes at runtime); `128x256b` cp shape actually works with 8 KB smem. 14 evidence files. | `49_nvfp4.md` (364 lines) |
 
 ## Pending agent work
 

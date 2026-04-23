@@ -1,0 +1,20 @@
+=== N_INSTS=10 ===
+0.00205 ms
+-rw-r--r-- 1 root root 8528 Apr 23 10:18 sass/bench_22m_size_3082830565.cubin
+  cubin size: 8528 B
+  FFMA count: 10
+=== N_INSTS=100 ===
+0.00205 ms
+-rw-r--r-- 1 root root  8528 Apr 23 10:18 sass/bench_22m_size_3082830565.cubin
+  cubin size: 13600 B
+  FFMA count: 100
+=== N_INSTS=1000 ===
+0.00410 ms
+-rw-r--r-- 1 root root 64160 Apr 23 10:18 sass/bench_22m_size_3367707557.cubin
+  cubin size: 64160 B
+  FFMA count: 1000
+=== N_INSTS=4000 ===
+0.01025 ms
+-rw-r--r-- 1 root root 238136 Apr 23 10:18 sass/bench_22m_size_3367796930.cubin
+  cubin size: 238136 B
+  FFMA count: 4000

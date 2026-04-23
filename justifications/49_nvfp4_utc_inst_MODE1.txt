@@ -1,0 +1,37 @@
+        /*0510*/                   UTCATOMSWS.2CTA.FIND_AND_SET.ALIGN UP1, UR6, UR6 ;                                                  /* 0x00000006000675e3 */
+        /*0580*/                   UTCATOMSWS.2CTA.FIND_AND_SET.ALIGN UP1, UR6, UR6 ;                                                  /* 0x00000006000675e3 */
+        /*0e40*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UP1 ;  /* 0x800e060a080075ea */
+        /*0eb0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*0f10*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*0f70*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1040*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UP1 ;  /* 0x800e060a080075ea */
+        /*10a0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1100*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1160*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*11c0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1220*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1280*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*12e0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1340*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*13a0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1400*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1460*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*14c0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1530*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1590*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*15f0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*16e0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UP1 ;  /* 0x800e060a080075ea */
+        /*1740*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*17a0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1800*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1860*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*18d0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1930*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1990*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1a40*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UP0 ;  /* 0x800e060a080075ea */
+        /*1ab0*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1b10*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1b70*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UPT ;  /* 0x800e060a080075ea */
+        /*1c60*/                   UTCOMMA.2CTA.BLOCK16 gdesc[UR8], gdesc[UR10], tmem[UR38], tmem[UR6], idesc[UR7], tmem[UR14], UP0 ;  /* 0x800e060a080075ea */
+        /*1d70*/                   UTCBAR.2CTA [UR4], URZ ;                                                                            /* 0x000000ff040073e9 */
+        /*23e0*/                   UTCATOMSWS.AND URZ, UR5 ;                                                                           /* 0x0000000500ff79e3 */
