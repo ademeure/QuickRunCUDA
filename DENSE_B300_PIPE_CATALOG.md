@@ -790,6 +790,228 @@ Catalog L7836-L7860 ("DSMEM Bandwidth & Atomic Costs", task #88) makes 3 claims 
 
 ---
 
+## §22c. CTA capacity formula (catalog L8198, 🟡 catalog claim)
+
+| CTA threads | Warps/CTA | Max CTAs/SM | Warps/SM used | Notes |
+|---:|---:|---:|---:|---|
+| 32 | 1 | **32** (CTA limit binds) | 32 | **wastes 50% of warp slots** |
+| 64 | 2 | **32** (both bind) | 64 | full occupancy ✓ |
+| 128 | 4 | **16** (warp limit binds) | 64 | full occupancy ✓ |
+| 256 | 8 | **8** | 64 | full occupancy ✓ |
+| 512 | 16 | **4** | 64 | full occupancy ✓ |
+| 1024 | 32 | **2** | 64 | full occupancy ✓ |
+
+**Formula:** `max_concurrent_CTAs_per_SM = min(32, floor(64 / warps_per_CTA))`
+
+⚠ For maximum SM utilization (64 warps), AVOID 1-warp CTAs — they waste 50% of warp slots. **128-thread CTAs are sweet spot for many kernels.**
+
+---
+
+## §22d. Cluster launch overhead (catalog L8252, 🟡 catalog claim)
+
+| Launch type | µs/launch |
+|---|--:|
+| Single CTA | 5.7 |
+| Cluster of 2 CTAs | 5.7 |
+| Cluster of 8 CTAs | 5.6 |
+
+Cluster launch is **identical cost to single-CTA launch** (~5.7 µs). No additional cost for cluster setup. Use cluster freely when you need cross-CTA communication.
+
+---
+
+## §22e. SASS `.reuse` operand cache (catalog L8142, 🟡 catalog claim)
+
+In real benchmark FFMA2 SASS, **480 of 512 instructions (94%) carry `.reuse` annotation** on at least one operand:
+
+```
+FFMA2 R22, R22.F32x2.HI_LO, R4.reuse.F32, 0.5 ;
+FFMA2 R20, R20.F32x2.HI_LO, R4.F32, 0.5 ;
+FFMA2 R18, R18.F32x2.HI_LO, R4.reuse.F32, 0.5 ;
+```
+
+The `.reuse` modifier signals an **operand-reuse cache** (separate from RF read ports). Pattern: one constant multiplier (R4.reuse), rotating destinations (R22, R20, R18, ...). Each FFMA reads R4 from reuse cache (free) instead of RF (1 port).
+
+**Implication:** to approach FFMA2 peak, the compiler MUST find operand-reuse opportunities. Kernels with random source register access patterns will see lower throughput due to RF port saturation.
+
+`.F32x2.HI_LO` modifier = packed FP32×2 dual-lane operation. The `HI_LO` swap creates butterfly-pattern dot products useful in tensor pipelines.
+
+---
+
+## §22f. L1/L2 cache granularity probe (catalog L8231, 🟡 catalog claim)
+
+Stride sweep (4096 loads after warm-up):
+
+| Stride | cy/load | Tier |
+|---:|--:|---|
+| 4 B | 56 | L1 hit (warps coalesce to 128 B) |
+| 8 B | 56 | L1 hit |
+| 16 B | 56 | L1 hit |
+| 32 B | 56 | L1 hit (still within coalescing) |
+| **64 B** | **304** | **L1 miss → L2 hit (5.4× JUMP)** |
+| 128 B | 316 | L2 hit |
+| 256-1024 B | 316 | L2 hit (no further degradation) |
+
+⚠ **Sharp break at 64 B stride** — beyond this, per-thread loads stop benefiting from warp-level coalescing. Each lane needs its own cacheline transaction.
+
+This indirectly confirms: **the warp-level memory access "footprint" per `ld.global.u32` is 128 B** — when 32 lanes × 4 B fits within a 128 B aligned region, fast (56 cy). Stride > 64 B → loads spill into separate cachelines (304 cy = L2 hit).
+
+⚠ Note conflict with §11 latency table: catalog claims LDS 33 cy, L1 43 cy elsewhere. Audit found LDS=29 / L1=38. The 56 cy here is for warp-level coalesced LDG (different metric). All compatible if regimes are clearly stated.
+
+---
+
+## §22g. tcgen05 SASS encoding (catalog L8263, 🟡 catalog claim)
+
+| PTX | SASS |
+|---|---|
+| `tcgen05.mma kind::f8f6f4` | `UTCQMMA gdesc[URx], gdesc[URy], tmem[URz], ...` |
+| `tcgen05.mma kind::f16` | `UTCHMMA ...` |
+| `tcgen05.mma kind::tf32` | `UTCHMMA ...` (same as f16, different idesc) |
+| `tcgen05.mma cta_group::2` | `UTCQMMA.2CTA ...` |
+| `tcgen05.alloc` | `UTCATOMSWS.FIND_AND_SET.ALIGN UP0, UR5, UR5` |
+| `tcgen05.relinquish_alloc_permit` | `UTCATOMSWS.AND URZ, UR5` |
+| `tcgen05.commit.mbarrier::arrive` | `UTCBAR [UR4], URZ` |
+| `tcgen05.shift.cta_group::1.down` | (PTX-only known; 51 cy/shift) |
+
+⚠ All UTC* instructions use **uniform register operands (UR0..)** and **uniform predicates (UP0..)** — they execute on the SM's uniform datapath, NOT per-lane. One issue per warp.
+
+⚠ `pipe_tensor` ncu metric does NOT measure UTC*MMA. Only legacy mma.sync HMMA family. To measure tcgen05.mma rate, use wall-clock × cy/MMA × ops/MMA.
+
+⚠ The `DEPBAR.LE SB0, 0x36` before UTCATOMSWS is a dependency barrier that waits on scoreboard slot 0 to drop below threshold 54 — ensures previous async ops complete before the alloc atomic.
+
+---
+
+## §22h. Compute-memory overlap (catalog L8309, 🟡 catalog claim)
+
+Critical for kernel design — can compute overlap with memory loads?
+
+| Pattern | cy/iter |
+|---|--:|
+| Pure 8 FFMA chain | 39 |
+| Pure memory load (cold cache) | 522 |
+| **Memory + 8 FFMA (independent)** | **518 (+0%)** ← FFMA fully hidden! |
+| Memory + 16 FFMA | 522 (still hidden) |
+| Memory + 32 FFMA | 530 (some saturation) |
+| Memory + 64 FFMA | 580 (FFMA budget exceeded — visible) |
+
+**FFMA fully overlaps with memory** when the FFMA work fits within the memory latency window. For a 522 cy memory load, you can do ~16 FFMA "for free". Beyond that, the FFMA starts to extend the iter time.
+
+**Practical recipe:** if your kernel is memory-bound, you can add ~16 FFMA per cold-DRAM load with zero additional cost. Use this for fused norm/gelu/etc.
+
+---
+
+## §22i. Per-GPC L2 latency variation (catalog L7593+, ✅ confirmed by DSMEM exhaustive)
+
+L2 latency varies 25% across GPCs depending on which L2 slice serves which SM:
+
+| GPC | Mean atomic latency cy | Range |
+|---:|--:|--|
+| 2 | **115** ← fastest | 110-126 |
+| 8 | 114 | 40-135 (40 = warm L1) |
+| 4 | 119 | 106-138 |
+| 9 | 124 | 117-134 |
+| 0 | 128 | 106-143 |
+| 1 | 127 | 118-143 |
+| 7 | 127 | 106-149 |
+| 5 | 137 | 118-149 |
+| 3 | **143** ← slowest | 126-152 |
+| 6 | 143 | 125-153 |
+
+⚠ For latency-critical primitives (locks, queues), this 25% variation matters. Use `%smid` to pin work to fast GPCs (2, 8, 4) when possible.
+
+DSMEM exhaustive sweep similarly observed 20% per-GPC variation — both findings consistent with **address-hash-based L2 slice mapping**, not GPC topology.
+
+---
+
+## §22j. Smem store bank conflict sweep (catalog L7617, 🟡 catalog claim)
+
+| Stride | cy/iter (128 stores) | Slowdown |
+|---:|--:|--:|
+| 1 (coalesced) | 33 | 1.0× baseline |
+| 2 | 30 | 0.9× |
+| 4 | 30 | 0.9× |
+| 16 (16-way) | 64 | 1.9× |
+| **32 (full 32-way conflict)** | **127** | **3.8×** |
+| random | 33 | 1.0× ← **same as coalesced** |
+
+Confirms 32-bank smem architecture. **Random patterns are AS FAST as coalesced** because random hashing distributes across all 32 banks.
+
+Per-warp store throughput coalesced: ~32 stores per 33 cy = **0.97 stores/cy/lane** (essentially full LSU pipe).
+
+---
+
+## §22k. PTX special registers (catalog L8216, 🟢 verified)
+
+| Register | Value | Meaning |
+|---|--:|---|
+| `%nsmid` | 148 | Active SMs |
+| `%nwarpid` | 64 | Max warps/SM |
+| `%warpid` | 0..63 | Current warp ID |
+| `%laneid` | 0..31 | Lane within warp |
+| `%clock_lo` (32-bit) | wraps at 2^32 | Lower 32 bits of SM clock |
+| `%clock64` (64-bit) | — | SM cycle counter (this rig 1942 MHz under sustained load) |
+| `%globaltimer` (64-bit) | 32 ns granularity | Wall time in ns; **31.25 MHz tick fixed, doesn't change with SM clock** |
+| `%cluster_nctaid.x` | cluster width | Set per launch |
+| `%smid` | 0..147 | SM ID (use to pin work to specific GPCs/L2 slices) |
+
+⚠ Catalog claims "SM clock 1920.0 MHz exactly" (L8138). Audit finding: actual DVFS settling under sustained-FFMA load is **1942 MHz** (not 1920 nor 2032). The 1920 in catalog may be a `nvidia-smi`-reported value at idle / different load condition.
+
+---
+
+## §22l. Grid sync overhead (catalog L7635, 🟡 catalog claim)
+
+Grid sync via global atomic counter (no `cudaLaunchCooperativeKernel` API):
+
+| Grid blocks | cy/sync | µs @ 1.92 GHz |
+|---:|--:|--:|
+| 8 | 4161 | 2.17 |
+| 32 | 4129 | 2.15 |
+| 64 | 4195 | 2.18 |
+| **148** | **4245** | **2.21** |
+
+Grid sync cost is **~constant at ~4200 cy = 2.2 µs**, regardless of grid size. Cost dominated by atomic acq_rel (~1500-1600 cy) + spin loop on phase var.
+
+(Note: per audit §30.B, atomic acq_rel.gpu add scope penalty is 2.0-2.2× over relaxed, NOT the 31.3× catalog earlier claimed. So the "1598 cy acq_rel" attribution may be off — needs separate verification.)
+
+---
+
+## §22m. Kernel launch overhead (catalog L7650, 🟡 catalog claim)
+
+Empty kernel launched 100× via CUDA events:
+- **Per-launch time: ~5.7 µs**
+
+Same as cluster launch (§22d). Combine with cudaGraph for amortization (catalog: 0.56 µs/kernel for cudaGraph batch of 1000).
+
+---
+
+## §22n. CTA scheduler placement pattern (catalog L7546, 🟢 verified)
+
+For 512 CTAs launched, the order CTA 0..15 → SM:
+```
+CTA  0 → SM 142   (partial GPC 9)
+CTA  1 → SM 143
+CTA  2 → SM 144   (last GPC, 4-SM partial)
+CTA  3 → SM 145
+CTA  4 → SM 146
+CTA  5 → SM 147
+CTA  6 → SM 0     (start GPC 0)
+CTA  7 → SM 1
+CTA  8 → SM 16    (GPC 1)
+CTA  9 → SM 17
+CTA 10 → SM 32    (GPC 2)
+...
+```
+
+The scheduler:
+1. Fills the smallest/last GPCs FIRST (CTAs 0-5 → SMs 142-147 in the partial GPC 9)
+2. Then **round-robins 2 CTAs per GPC** across all GPCs (0,1 to GPC0; 2,3 to GPC0+16; etc.)
+3. After hitting all 9 full GPCs (18 CTAs), starts a new pass
+
+⚠ Don't assume `blockIdx.x` correlates with physical SM number. Use `%smid` for physical placement.
+
+⚠ The GPC-aware scheduling can affect L2 partition pressure — adjacent CTAs may target same L2 partition. See §22i for per-GPC variation.
+
+---
+
 ## §22b. TMA multicast on sm_103a (catalog L7864, 🟡 partial)
 
 Catalog claims `cp.async.bulk.multicast::cluster` works on sm_103a despite cccl gating it to SM_90a/100a/110a. Wait latency per CTA after multicast:
