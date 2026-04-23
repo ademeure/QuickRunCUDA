@@ -638,6 +638,110 @@ Recommend consolidation. justifications/13_dsmem.md proposes the consolidated se
 
 ---
 
+## §15a. DSMEM EXHAUSTIVE — full design space (justifications/13_dsmem_exhaustive.md)
+
+### Vector width: v4 is 3.5× more efficient per byte
+
+| Width | SASS | cy/load (cluster=2) | bytes | cy per byte |
+|---|---|--:|--:|--:|
+| u32 | LD.E | 222 | 4 | 55.5 |
+| .v2.u32 | LD.E.64 | 257 | 8 | 32.1 |
+| .v4.u32 | LD.E.128 | 261 | 16 | 16.3 |
+
+v4 is only 17% slower than u32 for 4× the bytes → **3.5× more efficient per byte**. Always prefer v4 (or v8 if available) for DSMEM.
+
+### Latency vs cluster size
+
+| Cluster | Read latency cy/load | Notes |
+|---:|--:|---|
+| 2 | **222.7** | anomalous — slightly higher than 4-8 |
+| 4 | 207 | minimum |
+| 8 | 207 | same as 4 |
+| 12 | (~218) | climbing |
+| **16** | **231** | NON-PORTABLE — works with `cudaFuncAttributeNonPortableClusterSizeAllowed` |
+
+⚠ NEW FINDING: cluster=16 IS ACHIEVABLE on B300 via the non-portable opt-in. Catalog § calling it "8 portable / 16 advertised" is too pessimistic — both work, with cluster=16 only 11% slower per access.
+
+### ILP collapses DSMEM to LDS-equivalent
+
+| Outstanding loads/warp (chains) | cy/load | Notes |
+|---:|--:|---|
+| 1 | 207 | latency-bound (single-chain serial) |
+| 4 | 52 | 4× hidden |
+| 8 | 26 | 8× hidden |
+| 16 | 13 | |
+| **32** | **9** | **23× speedup over latency-bound** |
+
+DSMEM is mostly hidable with **8-16 outstanding loads per warp** — bringing effective cost into LDS-territory. The "9× slower" headline only applies to single-chain code.
+
+### SM placement: GPC topology revealed
+
+Via `%smid` PTX register, cluster=N picks SMs by fixed stride:
+- cluster=8 → SMs **(0, 1, 16, 17, 32, 33, 48, 49)** — picks 1 TPC (2 SMs) per GPC
+- GPC = 16 SMs (8 TPCs × 2 SMs/TPC)
+
+⚠ NEW: B300 SXM6 AC topology is **9 GPCs × 16 SMs + 1 partial GPC × 4 SMs = 148 SMs**. The 4-SM partial GPC is the yield-binned "AC SKU" cell. Catalog's "8 GPCs" claim (canonical doc L482) is WRONG — it's 9 + 1 partial.
+
+### ⚠ Per-GPC silicon variation — 20% spread
+
+| GPC | DSMEM cluster=2 latency cy |
+|---:|--:|
+| 1 (SMs 16-31) | **229** ← slowest |
+| 2 (SMs 32-47) | **189** ← 20% faster |
+| (other GPCs) | between |
+
+Real silicon variation across the chip — not all SMs are equal. Catalog framing "all SMs identical" is wrong.
+
+### Write throughput — sustained, fenced, single-cluster
+
+| Cluster | Single-cluster write SoL (no contention) | 18-cluster aggregate sustained, fenced |
+|---:|--:|--:|
+| 2 | 69 GB/s/cluster | (linear) |
+| 4 | 139 | 105 GB/s/cluster (sub-linear with contention) |
+| 8 | **278** | **117 GB/s/cluster (2.12 TB/s aggregate)** |
+| 16 | 25 GB/s/cluster (12% lower than c=8) | (similar) |
+
+**Single-cluster write SoL scales linearly with cluster size up to 8** (69 → 139 → 278). Above that, contention drops sustained per-cluster numbers.
+
+### V21/V53 reconciliation
+
+| Test | This sweep | V53 prior | V21 prior |
+|---|--:|--:|--:|
+| Burst (no-fence) ceiling, cluster=8 N=8 | **660 GB/s/cluster** | — | 560 |
+| Sustained fenced, cluster=8 18-cluster agg | **117 GB/s/cluster (2.12 TB/s)** | 87 (1.56 TB/s) | — |
+
+V21's 560 GB/s reproduces (within ~15%) as the burst ceiling. V53's 87 was at a specific stride pattern (all 128 threads to adjacent dwords); width-aware striding hits 117 GB/s/cluster (35% higher). **Catalog should quote a range, not a single number.**
+
+### Fence cost
+
+| Operation | cy |
+|---|--:|
+| 1 store, fenced | **1507** (738 ns at 1942 MHz) |
+| 1 store, unfenced | **272** (140 ns) |
+| Fence cost | **~1500 cy fixed**, independent of N_STORES |
+
+⚠ The fence is the dominant cost for small batches. For sustained throughput, accumulate enough stores per fence to amortize the 1500 cy.
+
+### R+W simultaneous = same total as W-only
+
+R+W concurrent: 124 GB/s/cluster (vs 126 W-only). **Fabric arbiter is shared — no separate R/W channels** in the cluster fabric.
+
+### L2 traversal RECONFIRMED
+
+- DSMEM writes: **0.03%** of byte volume hits L2
+- DSMEM reads: **0.05%** of byte volume hits L2
+- Both directions bypass L2 via cluster-local interconnect (per V53 + previous DSMEM agent finding)
+
+### Updated chip aggregate ceiling
+
+With v4 width × cluster=8 × full chip × max-tuned:
+- **Aggregate write: ~2.4 TB/s** (chip ceiling)
+- **Aggregate read: ~1.9 TB/s** (chip ceiling)
+
+Catalog's chip-wide DSMEM claims should reference these numbers, not the older V21 / V53 single-cluster numbers extrapolated naively.
+
+---
+
 ## §14. Tensor cores (mma.sync legacy path) — REPLICATED 2026-04-23 (justifications/22_tensor_mma_sync.md)
 
 | Path | Catalog claim | This rig | Verdict |
