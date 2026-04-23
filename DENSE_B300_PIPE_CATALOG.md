@@ -841,15 +841,20 @@ Catalog L7836-L7860 ("DSMEM Bandwidth & Atomic Costs", task #88) makes 3 claims 
 
 ---
 
-## §22d. Cluster launch overhead (catalog L8252, 🟡 catalog claim)
+## §22d. Cluster launch overhead — ✅ REPLICATED 2026-04-23 (via §22m audit, justifications/22m_launch_overhead.md)
 
-| Launch type | µs/launch |
-|---|--:|
-| Single CTA | 5.7 |
-| Cluster of 2 CTAs | 5.7 |
-| Cluster of 8 CTAs | 5.6 |
+Re-verified via §22m kernel launch audit. Numbers match catalog within rounding. **All cluster sizes 1/2/4/8 take exactly 2.05 µs in pipelined mode** — flat, no setup cost.
 
-Cluster launch is **identical cost to single-CTA launch** (~5.7 µs). No additional cost for cluster setup. Use cluster freely when you need cross-CTA communication.
+| Cluster size | µs/launch (pipelined, this rig) | catalog (per-iter event) |
+|---:|--:|--:|
+| 1 (single-CTA) | 2.05 | 5.7 |
+| 2 | 2.05 | 5.7 |
+| 4 | 2.05 | (interpolation) |
+| 8 | 2.05 | 5.6 |
+
+The catalog's 5.7 / 5.6 µs is the per-iter event mode (adds ~3 µs overhead per launch). The 2.05 µs pipelined number matches catalog's 2.0 µs (L8917).
+
+**Cluster launch IS identical cost to single-CTA launch** — no setup overhead. Cluster activation verified at runtime via `%cluster_nctaid.x` write-back to C[0]. Use cluster freely when you need cross-CTA communication.
 
 ---
 
@@ -1340,7 +1345,16 @@ L2 atomic unit handles up to 32 simultaneously-contending CTAs at 51 cy. Beyond 
 
 ---
 
-## §22n. CTA scheduler placement pattern (catalog L7546, 🟢 verified)
+## §22n. CTA scheduler placement pattern — ✅ REPLICATED 2026-04-23 (via DSMEM exhaustive, justifications/13_dsmem_exhaustive.md)
+
+DSMEM exhaustive sweep used `%smid` PTX register and confirmed:
+- **Cluster=8 picks SMs (0, 1, 16, 17, 32, 33, 48, 49)** — exactly 1 TPC (2 SMs) per GPC, GPC stride = 16
+- **B300 SXM6 AC has 9 GPCs × 16 SMs + 1 partial × 4 SMs = 148** (catalog L7524 had it right; canonical doc had "8 GPCs" wrong)
+
+Catalog's CTA scheduler placement order at L7546 is consistent with this finding (fills smallest/last GPC first, then round-robins 2 CTAs/GPC). Not separately re-tested but the topology underlying both sections is the same and is now solidly verified.
+
+(Catalog claim preserved below for reference)
+---
 
 For 512 CTAs launched, the order CTA 0..15 → SM:
 ```
