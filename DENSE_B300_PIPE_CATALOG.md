@@ -712,16 +712,50 @@ Catalog says 21.9 TB/s chip-wide via 4 KiB batched. Naive math: 158 GB/s/SM × 1
 
 Replication: chip-scale `bench_tma_throughput.cu` at 132 CTAs × 4 KiB × NT=24 caps at **6.4 TB/s (HBM-bound)**. The 21.9 TB/s requires L2 hits (small reused dataset).
 
-### Useful framing — TMA vs LDG, both maxed out
+### TMA vs LDG max-tuned — REPLICATED 2026-04-23 (justifications/30_tma_vs_ldg_max_tuned.md)
 
-The interesting comparison is **maximally-optimized TMA read vs maximally-optimized 256-bit LDG read**, not "TMA tuned vs LDG default":
+**Same kernel framework, same WS, same launch geometry, both max-tuned per their own ceilings:**
 
-| Regime | LDG.E.128 (256-bit, max-tuned) | TMA cp.async.bulk (max-tuned) | Gap |
-|---|--:|--:|--:|
-| **DRAM-cold (WS≥4 GB)** | 7.30-7.37 TB/s ≈ 95-96% of 7672 spec (per §10) | 7.20 TB/s 8-deep pipelined (per catalog §6) | TMA -1.5pp behind LDG; both within HBM ceiling |
-| **L2-hit (WS in 4-128 MB plateau)** | 20.3 TB/s measured (per §10); catalog 22-26 TB/s claim | 21.9 TB/s catalog (claim) — close to 23 TB/s naive max | needs joint replication; gap may be ±2pp |
+| Regime | LDG.E.128 max-tuned | TMA cp.async.bulk max-tuned | Gap | Winner |
+|---|--:|--:|--:|---|
+| **L2-hit (WS=64 MiB)** | **18.25 TB/s** | **20.49 TB/s** | **+12% TMA** | TMA |
+| **DRAM-cold (WS=4 GiB)** | **7.41 TB/s** (96.5% of 7672) | **7.32 TB/s** (95.4%) | -1.2% (noise) | tied |
 
-⚠ Open question (worth a dedicated agent): when TMA and LDG.E.128 are BOTH max-tuned (depth-pipelined / batched / right tile size), what's the gap on this rig? Catalog reports them in different sections with different methodologies, so cross-comparison is unreliable. — see `feedback_tma_vs_ldg_comparison.md`.
+Both kernels exceed catalog's 13.3 TB/s "L2 wire" by 37-54% in L2-hit regime — **catalog L2 wire claim is significantly under-counted**.
+
+User's reported "~22 TB/s TMA load" reconciles: 20.5 TB/s × (2032/1942 MHz) = 21.4 TB/s when scaled to true boost.
+
+### Tuning knobs that mattered (max-tuning recipe)
+
+**TMA winning recipe:**
+- DEPTH=2 (pipeline overlap)
+- bytes-per-iter ≥ 64 KiB per CTA (NTMAS × TILE)
+- broad ridge: any 4-32 KB tile works as long as DEPTH=2
+- ≥ 4 waves (~592 CTAs)
+
+**LDG winning recipe:**
+- BS=128 with many CTAs (≥8192)
+- 256-bit per inst (LDG.E.128 = `v8.b32`)
+- Per-warp 1-KB bursts
+- ⚠ Larger BS lost up to 30% (BS=256/512/1024 all worse than BS=128)
+
+### ⚠ NEW METHODOLOGY TRAP — ncu metric-vs-path mismatch
+
+`lts__t_bytes` **undercounts true L2 traffic by 2.7×** for LDG L2-hit (MSHR/crossbar dedup). For LDG use `l1tex__t_bytes`; for TMA use `lts__t_bytes`. ⚠ If you mix these metrics across paths you'll get wildly inconsistent "% of L2 SoL" numbers.
+
+Also: `.ca` (L1-cached) LDG hits 34.7 TB/s with 99.9% L1 hit — but that's measuring L1, not L2.
+
+### Mechanism takeaways
+
+- **TMA's 12% L2-hit advantage** likely from wider effective burst (TMA descriptor encodes 64 B – 128 B at-a-time vs LDG's per-inst 32 B). At L2 wire level the longer bursts amortize tag/coordination overhead.
+- **No DRAM-side advantage**: HBM scheduler already coalesces LSU bursts, so TMA can't "do better" once memory is the bottleneck.
+- **Both saturate at 1942 MHz** (rig DVFS settling point under sustained mem-bound load), not 2032 boost.
+
+### Practical guidance
+
+- For DRAM-bound kernels: pick whichever path fits your data layout. Both reach 95-97% of HBM SoL when max-tuned.
+- For L2-hot kernels: TMA gives a ~12% edge. Worth the engineering complexity if you're L2-bound.
+- For mixed: profile both with the metric-mismatch caveat above (use `l1tex__t_bytes` for LDG, `lts__t_bytes` for TMA).
 
 ### Bonus finding — silent zero-corruption bug
 

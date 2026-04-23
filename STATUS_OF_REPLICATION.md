@@ -20,12 +20,12 @@ This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED
 | §30.G | Memory fence costs (cta/gl/sys) | ✅ | cta=8 ✓ V54; gl=267 ✓ V54; **sys=1727 single-GPU** (V54's 2806 was 2-GPU NVLink rig, +1.62× = one extra coherence round-trip). "+60 cy/write linear" claim RETRACTED — fixed one-time L2-drain. | `30G_fence.md` |
 | §30 TMA | cp.async.bulk size-independence | ✅⚠ | "48 cy floor" is AMORTIZED rate; pure single-issue is ~65 cy. Sharp 8 KiB crossover ✓ (in GB/s metric not cy). Per-SM peak ~240-260 GB/s ✓. **Chip-wide 21.9 TB/s claim requires L2 hits, NOT DRAM** (catalog wording fails to flag). Open: head-to-head TMA vs LDG max-tuned (in flight). | `30_tma_sizes.md` |
 | §13 DSMEM | latency, write throughput, L2 traversal | ✅⚠⚠ | **Catalog "23 cy ≈ free" FALSIFIED**: real read latency 204-223 cy (9× slower). SASS reveals `ld.shared::cluster` → `LD.E` (global LSU path). V53 write 87 GB/s/cluster sustained ✓ confirmed. V21's 560 GB/s is burst not completion. NEW FINDING: DSMEM reads ALSO bypass L2 (correcting V53). Exhaustive sweep in flight. | `13_dsmem.md` |
+| §30 TMA vs LDG max-tuned | head-to-head, L2-hit + DRAM-cold | ✅⚠ | **L2-hit: TMA wins 12%** (20.49 vs 18.25 TB/s). **DRAM-cold: TIED at HBM SoL** (LDG 96.5%, TMA 95.4%). Catalog L2 wire 13.3 TB/s under-counts by 37-54%. NEW FOOTGUN: ncu lts__t_bytes undercounts LDG L2-hit by 2.7× (MSHR dedup) — use l1tex__t_bytes for LDG, lts__t_bytes for TMA. | `30_tma_vs_ldg_max_tuned.md` |
 
 ## Pending agent work
 
 | Agent | Started | Expected done |
 |---|---|---|
-| TMA vs LDG.E.128 max-tuned head-to-head | running | answers G2b open question |
 | DSMEM exhaustive sweep (vector × cluster × placement × ILP × contention) | running | populates Tables A-F |
 
 ## Skeptical review supplements (entries indexed but not all replicated)
