@@ -29,16 +29,21 @@
 >
 > All have `justifications/<id>.md` records with full evidence (CLAIM/TEST/BUILD/RUN/STDOUT/SASS/COUNT/NCU/CLOCK/VERDICT/DELTA per the audit-of-the-audit rubric).
 >
-> **⚠ CATALOG SELF-ADMISSION TO BE AWARE OF:** catalog L1948 admits "Absolute numbers from self-op chains (`fma %0,%0,%0,%0` etc.) are ~2× inflated from register read-port pressure (a single register fills all 3-4 operand slots). The **ratios** to FFMA are the reliable information."
+> **✅ CATALOG SELF-OP CLAIM REFUTED 2026-04-23** (was: catalog L1948 "self-op chains are ~2× inflated"). RIGOROUS investigation (justifications/SELF_OP_DEEP.md, 354 lines + 27 SASS files):
 >
-> Implication: any catalog cy/op claim measured via single-thread self-op chain is potentially ~2× higher than the architectural latency. Specifically suspect:
-> - The `bench_latency.cu`-style entries (LDS=33, L1=43, L2=300, FFMA=4 etc.) measured via self-op chain MAY be inflated
-> - Self-op chains (e.g. `fma a,a,a,a`) saturate register-file ports because all operands collide on one register
-> - Multi-chain measurements (4 independent registers) avoid this
+> - **No architectural per-instruction self-op penalty for FFMA / DFMA / IMAD / LOP3 / IADD3.** Pure self-op (`FFMA R4,R4,R4,R4`) and distinct-source single-chain BOTH measure 4.02 cy/op (within 0.14%, variance=0 across 30 trials).
+> - **Multi-chain identical**: 8 self-op chains AND 8 distinct chains both hit 0.96 op/cy = 96% of FFMA peak. Hardware doesn't differentiate.
+> - **ncu evidence**: `wait` and `short_scoreboard` stalls bit-identical between self-op and distinct.
+> - **FFMA pipe latency = 4 cy architectural** (NCHAINS sweep: 1→4.03, 2→2.06, 3→1.38, 4→1.05 cy/op; saturates at 4-deep ILP).
+> - **The IADD apparent 2.5× self-op penalty is compiler PIPE RE-ROUTING**, not hardware: ptxas can't emit `IADD3 R,R,R,R` (encoding constraint), falls back to `IMAD.IADD R,R,0x1,R` on FMA pipe (4 cy lat) instead of IADD3 pipe (2 cy lat). 3-source IADD3 with constant src gets back to 2.01 cy.
+> - **`.reuse` cache helps THROUGHPUT** (per §22e at 99.9% emission), does NOT change dependent-chain latency.
 >
-> This audit's §0.FFMA used 8 INDEPENDENT chains (verified in SASS) so the 71.82 TFLOPS result is NOT subject to this. But §24 latency table entries (some via self-op chain) may be 2× too high. JUSTIFIED §24 noted "FFMA cy/op = 4.2-4.4 cy match catalog" — if that's the inflated number, the architectural FFMA latency might actually be ~2 cy (consistent with NVIDIA pipeline depth).
+> **Implication for catalog §24 (and elsewhere): the latency entries (FFMA=4, DFMA=63.9, etc.) ARE architectural — NOT inflated.** JUSTIFIED §24's confirmations stand. The "2× inflated" caveat is RETRACTED.
 >
-> **Going forward**: DENSE / JUSTIFIED should specify chain methodology (self-op vs distinct-chain) for any latency claim, and prefer distinct-chain (or report both).
+> **Methodology lesson for DENSE writers:**
+> - When a "self-op test" gives a different number than a "distinct-source test", the cause is often compiler pipe re-routing (IADD case), NOT hardware port pressure
+> - Always inspect SASS to see what pipe ptxas chose
+> - For IADD-style ops, prefer 3-source (`add.u32 v, v, k` with k constant) to keep ptxas on IADD3 pipe
 >
 > **What is NOT audit-verified yet** (still 🟡 CATALOG-PRESERVED):
 > §17 MUFU throughput, §18 branch divergence, §19 INT8 dp4a numbers, §20 FMIN penalty, §21 tcgen05 throttling cliff, §22c CTA capacity formula, §22d cluster launch overhead, §22f L1/L2 stride probe, §22g tcgen05 SASS encoding (UTC* opcodes confirmed in SASS but exact-cycle claims not retested), §22i per-GPC L2 variation (DSMEM exhaustive partially corroborates), §22j smem bank conflict sweep, §22k PTX special registers (only `%nsmid`/`%clock64` informally checked), §22l grid sync 2.2 µs, §22m kernel launch 5.7 µs, §22n CTA scheduler placement (DSMEM exhaustive partially corroborates), §22o NVFP4 (agent IN FLIGHT — preliminary evidence supports catalog), §22p power efficiency, §22q register spilling, §22r atomic contention at scale.
