@@ -276,8 +276,10 @@ These five remaining items all need either a separate measurement campaign (B6/B
 ## Critical follow-up (top 10 from extended skeptical review)
 
 These are the highest-priority items that crossed multiple groups during the deeper §10–end skeptical pass. Full lists in:
-- [`justifications/_SKEPTICAL_REVIEW_10_30.md`](justifications/_SKEPTICAL_REVIEW_10_30.md) — 50 entries (Groups I-R)
-- [`justifications/_SKEPTICAL_REVIEW_31_END.md`](justifications/_SKEPTICAL_REVIEW_31_END.md) — 74 entries (Groups P-X)
+- [`justifications/_SKEPTICAL_REVIEW_10_30.md`](justifications/_SKEPTICAL_REVIEW_10_30.md) — **55/55 closed (DONE 2026-04-23)** — Groups I-R + supplementary O/P/Q
+- [`justifications/_SKEPTICAL_REVIEW_31_END.md`](justifications/_SKEPTICAL_REVIEW_31_END.md) — **61/61 closed (DONE 2026-04-23)** — Groups P-X + Y/Z
+
+Each entry in those files is now cross-linked to the per-section justification record (`justifications/<id>.md`) that resolved it. Combined supplementary closure: 116/116. Combined main: 74/80.
 
 - [x] **CRIT1** Fence costs span 29/282/337/1679/2914/8869 cy in catalog — **RESOLVED 2026-04-23 (justifications/30G_fence.md)**: single-GPU B300 ladder is cta=8 / gl=267 (+~280 first-after-write FIXED, NOT linear) / sys=1727. V54's sys=2806 was a 2-GPU NVLink rig (1.62× higher = one extra coherence round-trip). All catalog values 1.67× too high for sys are likely multi-GPU contamination. — `[ref: B300_PIPE_CATALOG.md:2889,3068,3193,3635]`
 - [x] **CRIT2** "tcgen05.mma 'peak verified' 2.33 PFLOPS = 93% of spec" single-warp scope — ⚠ MITIGATED by Multi-SM linear scaling table catalog L6776: each SM has independent tcgen05.mma datapath, so 148 SMs × single-warp = chip-wide makes sense. The "single-warp test scaled to chip" interpretation is sound. Lower priority, not a real falsification. (Same as line 166 entry.) — `[ref: B300_PIPE_CATALOG.md:6716]`
