@@ -6,6 +6,49 @@ This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED
 
 ---
 
+## TLDR — current mature state (2026-04-23)
+
+**Coverage:** 48 catalog sections audited (essentially the entire foundational early/mid catalog: §0-§30).
+
+- **38 ✅ verified** (full ncu + SASS + wall-clock evidence on this rig)
+- **6 ⚠ partial** (replicated but with a regime caveat or methodology note)
+- **4 🟡 preserved** (catalog plausible, not re-run — tcgen05.mma, multi-GPU, methodology, tensor unified)
+
+**Top 9 catalog ERRORS** (numbers and recommended fix):
+1. DFMA latency: catalog 92 → real **63.9 cy**
+2. __syncthreads formula: `12+2W` → **`22+2W`** (54 cy at BS=512, NOT 45)
+3. FP64 chip "475 GFLOPS" wording = "475 G FMA-ops/s = 950 GFLOPS"; real **1060 GFLOPS** (12% off, NOT 2.2× as initially claimed)
+4. §4 MUFU rate "16 SASS/SM/cy" off by 16-32× (real **~1.0**)
+5. Atomic hotspot at warp-level N=2: "5×" → real **34×**
+6. FP64 vs FP16 tensor: "300×" → real **2300×**
+7. mbarrier.arrive 8.1 cy → real **27 cy** for default `.shared.b64`
+8. atom.global.cas SASS "STRONG.GPU" → actual **STRONG.SYS**
+9. ld.shared bank-conflict scoping: real at 9.6× for 32-bit LDS (catalog claim that B300 is bank-conflict-free FALSIFIED — methodology error in our prior dismissal too)
+
+**Top 12 NEW architectural facts** missing from catalog:
+- F2IP.U8 fast path (4× faster than F2I.S8)
+- POPC.INC trick: `atomicAdd(addr, 1u)` → ATOMS.POPC.INC.32 = 2.5× speedup at warp-broadcast
+- Global REDG (no-return) vs ATOMG = 25× speedup
+- EX2 uniquely 2× faster than other MUFU ops (4 vs 8 cy/SASS)
+- bf16x2 EX2 = same throughput at half dispatch pressure
+- FMNMX3 fusion (Blackwell 3-input min/max)
+- u64.ADD alu+fmaheavy co-issue = 64 u64-adds/SM/cy
+- CCTL.IVALL essentially FREE (~3 cy idle); drain-wait dominates fence cost
+- release.gpu drain is SM-WIDE (compounds at high occupancy)
+- cp.async (LDGSTS) bypasses acquire fence drain unless commit_group
+- **`.L2::256B` cache hint = 92% HBM SoL recipe** (40% boost vs baseline at stride-256B 4B reads)
+- **`.ca` beats `.cg` by 1.88× at L1-fitting WS** (NOT 1.25× as catalog L1571 says)
+
+**4 self-corrections** caught and walked back during the audit:
+- FP64 catalog "off by 2.2×" → actually 12% off (wording confusion)
+- SMEM 32-bit bank conflicts "absent on B300" → REAL at 9.6× when properly tested
+- SHFL broadcast "1.9 cy free" → 7.46 cy in general case
+- .ca/.cg "no gap at 4 MB WS" → was test-config issue (WS exceeded L1)
+
+For the full per-section trail with raw output, SASS, and ncu: see `JUSTIFIED_B300_PIPE_CATALOG.md` and `justifications/<id>.md`.
+
+---
+
 ## Replication results so far
 
 | Section | Topic | Status | Verdict | Justification |
