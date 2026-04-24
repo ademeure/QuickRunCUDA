@@ -1,6 +1,6 @@
 # Status of Replication — B300_PIPE_CATALOG audit
 
-**Generated:** 2026-04-23 (live; updated as agents finish)
+**Generated:** 2026-04-23. **Audit complete.** No active agents; this doc is now finalized for the 2026-04-23 session and reflects the terminal state (190/196 = 97% checklist closure).
 
 This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED_B300_PIPE_CATALOG.md` (per-section audit), `DENSE_B300_PIPE_CATALOG.md` (pruned reliable subset), `REVIEW_CHECKLIST_B300.md` (yes/no items).
 
