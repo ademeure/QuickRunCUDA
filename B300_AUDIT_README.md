@@ -2,16 +2,16 @@
 
 > **What this is:** a 4-document audit of `B300_PIPE_CATALOG.md` (19,742 lines). The catalog was largely produced by a long autonomous loop and the user warns at top: *"I have not manually checked most of this, and some of it is definitely wrong or misleading."* This audit re-runs the high-value claims, flags the wrong ones, and gives you reliable starting points.
 
-## The 4 documents
+## The 5 documents
 
 | File | Lines | What it's for | Read order |
 |---|--:|---|---|
-| **`B300_AUDIT_README.md`** *(this file)* | — | Reading guide / orientation | start here |
-| **`STATUS_OF_REPLICATION.md`** | ~70 | At-a-glance status table — what's been replicated, what's pending | next |
-| **`DENSE_B300_PIPE_CATALOG.md`** | ~1100 | Pruned, dense, reliable subset. **Use this for actual work.** Each section is a condensed version of the catalog with the wrong / outdated / low-value bits removed. | the workhorse |
-| **`JUSTIFIED_B300_PIPE_CATALOG.md`** | ~120 + index | Per-section audit trail. Each entry links to a detailed `justifications/<id>.md` record with: claim, test, build, run, raw output, SASS, ncu, verdict. | when you want to verify a number |
-| **`REVIEW_CHECKLIST_B300.md`** | ~150 + 124 supplements | Yes/no items I'm not 100% certain of. Mark `[x]` for "right" / `[ ]` for "wrong" / `// note` for comments. Grouped by topic (A FFMA / B memory / C pipe / D tensor / E latency / F power / G TMA / H methodology / CRIT1-10). | when you want to give feedback |
-| `justifications/` | — | Detailed audit records — one per section. SASS dumps, ncu output, raw timings, reconciliation tables. | drill-down |
+| **`B300_AUDIT_README.md`** *(this file)* | 124 | Reading guide / orientation | start here |
+| **`STATUS_OF_REPLICATION.md`** | 136 | At-a-glance status table — what's been replicated, what's pending | next |
+| **`DENSE_B300_PIPE_CATALOG.md`** | 2347 | Pruned, dense, reliable subset. **Use this for actual work.** Each section is a condensed version of the catalog with the wrong / outdated / low-value bits removed. | the workhorse |
+| **`JUSTIFIED_B300_PIPE_CATALOG.md`** | 185 (index) | Per-section audit trail. Each entry links to a detailed `justifications/<id>.md` record with: claim, test, build, run, raw output, SASS, ncu, verdict. | when you want to verify a number |
+| **`REVIEW_CHECKLIST_B300.md`** | 322 (main 80 items + 116 supplementary in 2 files) | Yes/no items I'm not 100% certain of. Mark `[x]` for "right" / `[ ]` for "wrong" / `// note` for comments. Grouped by topic (A FFMA / B memory / C pipe / D tensor / E latency / F power / G TMA / H methodology / CRIT1-10). **190/196 = 97% closed as of 2026-04-23.** | when you want to give feedback |
+| `justifications/` | (51+ records) | Detailed audit records — one per section. SASS dumps, ncu output, raw timings, reconciliation tables. Plus 4 meta files: `_INVENTORY.md`, `_USER_FAILS_INDEX.md`, `_AUDIT_OF_AUDIT.md`, `_SKEPTICAL_REVIEW_*.md` (DONE). | drill-down |
 
 ## Source documents (referenced, not modified)
 
