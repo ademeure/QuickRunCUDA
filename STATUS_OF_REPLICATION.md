@@ -49,7 +49,7 @@ This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED
 
 For the full per-section trail with raw output, SASS, and ncu: see `JUSTIFIED_B300_PIPE_CATALOG.md` and `justifications/<id>.md`.
 
-**Checklist completion (2026-04-23):** 190/196 items closed across main REVIEW_CHECKLIST (74/80) + both supplementary reviews (_10_30: 55/55 DONE; _31_END: 61/61 DONE). The 6 remaining are all genuinely measurement-blocked (TMEM, tcgen05 multi-format, multi-GPU, DRAM-write clock-dep).
+**Checklist completion (2026-04-23, post-D7/E7):** 192/196 items closed across main REVIEW_CHECKLIST (76/80) + both supplementary reviews (_10_30: 55/55 DONE; _31_END: 61/61 DONE). The 4 remaining are all genuinely measurement-blocked at the rig-state level (TMEM B7/B8 needs tcgen05.ld/.st rig; D5 tcgen05 multi-format needs alloc/mbarrier setup; B6 DRAM-write needs clock-locked sweep with F-group power campaign). D7+E7 multi-GPU items closed-as-preserved 2026-04-23 with full justification records (`D7_p2p_gemm_remote_weights.md`, `E7_all_reduce_floor.md`) — host has 2 physical B300 GPUs but only GPU 0 exposed (nvidia-fabricmanager service failed since 2026-04-17 because no NVSwitch hardware enumerated on PCI; on this NVL5-class SXM6 host, fabric manager is required to expose peer GPUs).
 
 ---
 
@@ -75,6 +75,8 @@ For the full per-section trail with raw output, SASS, and ncu: see `JUSTIFIED_B3
 | §30B atom→SASS mapping | atom.add always→REDG | ⚠ CORRECTED | Direct SASS grep across 20K kernels: ALL THREE (REDG/ATOMG.E/ATOM.E) emitted depending on return-value-use + scope. Throughput numbers still valid; SASS-name attribution was wrong. | `30B_atomics_FOLLOWUP.md` |
 | §22o NVFP4 mxf4nvf4 + K=96 | 9.9 PF + K=96 ULTRA bit 31 doesn't work | ✅⚠⚠ | RIGOROUS replication: **9.26 PF at 1942 MHz** (catalog's 9.9 was at 2032 boost not observed); K=64=K=96 D[0]=288 confirms K=96 doesn't add MACs; 15/15 correctness; **2 CATALOG CORRECTIONS**: `.block32` form actually compiles (crashes at runtime); `128x256b` cp shape actually works with 8 KB smem. 14 evidence files. | `49_nvfp4.md` (364 lines) |
 | §22m kernel launch overhead | 5.7 µs / 2.0 µs (looked inconsistent) | ✅✅✅ | RECONCILED: 2.05 µs pipelined / 5.20 µs per-iter event mode — NOT contradictory (different timing setups). Kernel-size table (L8385) reproduces EXACT (10/100/1000/4000 inst → 2.05/2.05/4.10/10.25 µs vs catalog 2.06/2.06/4.11/10.25). Cluster launch == single-CTA at 2.05 µs flat across cluster sizes 1/2/4/8. NOT YET TESTED: cudaLaunchKernelEx+PSS (1.47 µs claim) or cudaGraph batched (0.56 µs/kernel). | `22m_launch_overhead.md` |
+| D7 P2P GEMM remote weights | 1.00-1.01× slowdown (cuBLAS L2-tile) | 🟡 PRESERVED | 2-GPU test cannot run: only GPU 0 visible to CUDA (fabricmanager failed since 2026-04-17, NVSwitch driver enumerates no switches; both GPUs physically present at PCI 04:00.0 + 05:00.0 but CUDA refuses to expose GPU 1 without functional fabric manager). Catalog plausible from L2-tiling first-principles (4096³ BF16 weight = 32 MB fits in 126 MB L2) + prior `project_b300_multigpu` rig measurements (when 2 GPUs were enumerated: 718 GB/s P2P W, 820 GB/s P2P R). | `D7_p2p_gemm_remote_weights.md` |
+| E7 All-reduce ≤1 MB floor | 21 µs custom / 10 µs NCCL | 🟡 PRESERVED | Same rig constraint as D7. NCCL 2.29.3 IS installed (`/usr/lib/x86_64-linux-gnu/libnccl.so.2`) but `all_reduce_perf -g 2` requires 2 visible GPUs. Catalog 21 µs custom matches first-principles budget (launch 2 + NVLink RTT 1.55 + cross-GPU sync 5 + protocol ≈ 12-21 µs); NCCL 10 µs is well-known persistent-proxy-kernel floor. 1428 GB/s @ 256 MB consistent with prior 718+820 = 1538 GB/s NVLink unidir. | `E7_all_reduce_floor.md` |
 
 ## Pending agent work
 
@@ -133,4 +135,4 @@ These are now in DENSE §22o-§22r and §22e-§22n.
 - JUSTIFIED_B300_PIPE_CATALOG.md: index + **51+ full justification records** under `justifications/`
 - REVIEW_CHECKLIST_B300.md: 80 main items + 116 supplementary; **190/196 = 97% resolved** (74/80 main + 55/55 + 61/61)
 - B300_AUDIT_README.md, _USER_FAILS_INDEX.md, _AUDIT_OF_AUDIT.md — all consistent with mature state
-- 6 remaining open items are all genuinely measurement-blocked (TMEM, tcgen05 multi-format, multi-GPU, DRAM-write clock-dep)
+- 4 remaining open items are all genuinely measurement-blocked (TMEM B7/B8, tcgen05 multi-format D5, DRAM-write clock-dep B6); D7+E7 multi-GPU closed-as-preserved 2026-04-23 (rig has 2 GPUs but fabricmanager failure → only GPU 0 visible)

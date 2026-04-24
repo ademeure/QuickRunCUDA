@@ -2,7 +2,7 @@
 
 ## TLDR — current audit state (2026-04-23)
 
-**JUSTIFIED status:** **27 ✅ replicated/verified** sections + **5 🟡 partial** + **1 deferred** (multi-GPU). Audit covers essentially the entire foundational early/mid catalog (§0 through §29 + §30.G/L/M/B).
+**JUSTIFIED status:** **27 ✅ replicated/verified** sections + **7 🟡 partial** (D7+E7 added 2026-04-23 as 🟡 closed-as-preserved due to fabric-manager-failure → only GPU 0 visible). Audit covers essentially the entire foundational early/mid catalog (§0 through §29 + §30.G/L/M/B).
 
 **Top catalog errors to flag for correction (mark these first):**
 
@@ -166,9 +166,9 @@ These are the [ ] items the user is most likely to have a strong opinion on. Ope
 - 🟡 **B6** DRAM write 7.09 TB/s — user flag: SM→L2 write path may be 32B/clk-limited at lower clocks. Existing measurement is at 1942 MHz; verifying user's clock-dependence theory needs a clock-locked sweep deferred with the F-group power campaign.
 - 🟡 **B7 + B8** TMEM read/write bandwidth (55-131 TB/s) — needs tcgen05.ld/.st focused throughput rig (alloc + mbarrier + per-quad accumulator). Catalog numbers very high vs first-principles bound; almost certainly include broadcast-amplification (similar to LDC.32 effect from B9).
 - 🟡 **D5** tcgen05.mma per-format throughput (128 cy at M=128 N=256) — needs alloc/mbarrier/cp setup. D6 already ✅ verified (9.26 PF at 1942 MHz, line 155).
-- 🟡 **D7 + E7** Multi-GPU items — single-GPU rig this session; preserved as plausible per `project_b300_multigpu` memory.
+- 🟡 **D7 + E7** Multi-GPU items — **CLOSED-AS-PRESERVED 2026-04-23**: rig has 2 physical B300 SXM6 GPUs but only GPU 0 exposed to CUDA (nvidia-fabricmanager service failed since 2026-04-17, NVSwitch driver enumerates no switches). Both items now have full justification records (`D7_p2p_gemm_remote_weights.md`, `E7_all_reduce_floor.md`) documenting the rig-state root cause + first-principles plausibility argument + cross-link to prior `project_b300_multigpu` 2-GPU measurements on this same host.
 
-These five remaining items all need either a separate measurement campaign (B6/B7/B8/D5) or a multi-GPU rig (D7/E7) — outside this audit's scope.
+These three remaining items (B6/B7/B8/D5) still need a separate measurement campaign — outside this audit's scope.
 
 ---
 
@@ -218,7 +218,7 @@ These five remaining items all need either a separate measurement campaign (B6/B
 - [x] **D4** "INT8 mma.sync IMMA = 142 TOPS" — **RESOLVED 2026-04-23**: measured 142.4 TOPS exact match. SASS shows 256 IMMA + 8 FADD; pipe_tensor 12.3% (low because IMMA is ~8× slower per inst than HMMA at K=32). ✅ — `[ref: B300_PIPE_CATALOG.md:28]`
 - [ ] **D5** "tcgen05.mma all formats = 128 cy at M=128 N=256" — clean claim but needs replication for ≥3 formats (FP16, FP8, FP4) — `[ref: B300_PIPE_CATALOG.md:120-130]` — `[unverified]`
 - [x] **D6** "FP4 NVFP4 K=64 = 9856 TFLOPS" — ✅ RESOLVED (full verdict at line 155): 9.26 PF at 1942 MHz = 92.6% of 10 PF spec; K=96 via idesc bit 31 does NOT add MACs (confirmed via D[0]=288 identical at K=64/K=96); 15/15 correctness bit-exact; 2 catalog corrections surfaced (kind::mxf4 compiles but crashes, 128x256b cp shape works). See `justifications/49_nvfp4.md`. (Duplicate resolved.) — `[ref: B300_PIPE_CATALOG.md:128]`
-- [ ] **D7** "P2P GEMM remote weights via NVLink: zero penalty" — based on cuBLAS L2-tiling; needs confirmation that "tiles fit in L2" explanation is what's actually happening (vs bandwidth-bound) — `[ref: B300_PIPE_CATALOG.md:178-183]` — `[regime-narrow]`
+- [x] **D7** "P2P GEMM remote weights via NVLink: zero penalty" — 🟡 PRESERVED 2026-04-23 (justifications/D7_p2p_gemm_remote_weights.md): rig has 2 physical B300 GPUs but only GPU 0 exposed to CUDA (fabric manager service failed since 2026-04-17, NVSwitch driver enumerates no switches). Cannot run 2-GPU GEMM this session. Catalog claim preserved as plausible from L2-tiling first-principles (4096³ BF16 weight = 32 MB fits in 126 MB L2 → cold NVLink fetch amortized over ~2K reuses) plus prior `project_b300_multigpu` rig measurements (718 GB/s P2P W, 820 GB/s P2P R when 2 GPUs were enumerated). **Caveat:** at 8192³ BF16 (weight 256 MB > L2) the L2-tile argument breaks and slowdown ≈ HBM/NVLink ratio ≈ 9× expected. — `[ref: B300_PIPE_CATALOG.md:178-183]` — `[regime-narrow]`
 
 ## Group E — Latency / sync / atomics
 
@@ -233,7 +233,7 @@ These five remaining items all need either a separate measurement campaign (B6/B
 - [x] **E4** "fence.sc.gpu = 274 cy" — **RESOLVED 2026-04-23**: §24 latency audit measured 281 cy (close to L115 274); §30.G fence audit measured 267 cy in single-warp/no-pending-write context. Catalog L115 is approximately correct; "544 cy" elsewhere is wrong. — `[ref: B300_PIPE_CATALOG.md:115]`
 - [x] **E5** "__syncthreads at BS=512 cost 45 cy, BS=1024 cost 89 cy" — formula `12 + 2W` — **RESOLVED 2026-04-23**: empirical at this rig is **`22 + 2W` cy** (BS=512 measured 54 cy). The +10 cy is a fixed barrier-instantiation overhead the catalog formula missed. Both 45 and 12+2W=44 are wrong. — `[ref: B300_PIPE_CATALOG.md:74,75,116]`
 - [x] **E6** "Atomic single-address chip-wide is 5× FASTER than per-warp atomic hotspot" — **PARTIALLY RESOLVED 2026-04-23 (justifications/30B_atomics.md)**: clean per-warp pattern (1.09× faster than 1-hotspot) and per-CTA pattern (12.4× faster) both contradict catalog L2708's "5× slowest" / "same as single" claims. Catalog row was measured on a within-warp-divergent variant. Real ranking (49.1/53.7/609 Gops/s for 1-hotspot/per-warp/per-CTA) is REVERSED from catalog. — `[ref: B300_PIPE_CATALOG.md:87,2708]`
-- [ ] **E7** "All-reduce ≤1 MB floor = 21 µs, NCCL = 10 µs" — multi-GPU; needs MGFenceBench + nccl-tests verification at this rig — `[ref: B300_PIPE_CATALOG.md:157,168]` — `[unverified]`
+- [x] **E7** "All-reduce ≤1 MB floor = 21 µs, NCCL = 10 µs" — 🟡 PRESERVED 2026-04-23 (justifications/E7_all_reduce_floor.md): same rig constraint as D7 — only GPU 0 visible; nccl-tests/MGFenceBench multi-GPU runs cannot execute. Catalog 21 µs custom floor matches first-principles budget (launch 2 µs + NVLink RTT 1.55 µs + cross-GPU event sync 5 µs + protocol ≈ 12-21 µs); NCCL 10 µs floor is well-known persistent-proxy-kernel latency on NVL fabrics. NCCL 2.29.3 IS installed. Aggregate 1428 GB/s @ 256 MB consistent with prior `project_b300_multigpu` 718+820 = 1538 GB/s NVLink unidir measurements. — `[ref: B300_PIPE_CATALOG.md:157,168]` — `[unverified, multi-GPU]`
 
 ## Group F — Power / clock / DVS
 

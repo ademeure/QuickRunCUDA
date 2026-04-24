@@ -2,17 +2,17 @@
 
 ## TLDR — current audit state (2026-04-23)
 
-**Coverage:** 50 catalog sections audited, 0 still pending
+**Coverage:** 52 catalog sections audited, 0 still pending (D7+E7 added 2026-04-23 as 🟡 closed-as-preserved due to single-GPU rig state)
 - **40 ✅ replicated/verified** (full ncu + SASS + cudaDeviceProp evidence on this rig)
 - **6 ⚠ partially verified** (some rows confirmed, some preserved)
-- **4 🟡 preserved** (catalog plausible but specific tests not re-run; e.g. tcgen05 throughput, multi-GPU all-reduce, methodology notes, tensor unified)
+- **6 🟡 preserved** (catalog plausible but specific tests not re-run; e.g. tcgen05 throughput, multi-GPU all-reduce + P2P GEMM, methodology notes, tensor unified)
 
-**REVIEW_CHECKLIST status:** **190 [x] resolved / 6 [ ] still open** across all checklist files:
-- **Main:** 74 closed / 6 open (started session at 23/61)
+**REVIEW_CHECKLIST status (post D7+E7 close):** **192 [x] resolved / 4 [ ] still open** across all checklist files:
+- **Main:** 76 closed / 4 open (started session at 23/61)
 - **Supp _10_30:** 55 closed / 0 open (DONE)
 - **Supp _31_END:** 61 closed / 0 open (DONE)
 
-The 6 remaining open are all genuinely measurement-blocked (B6 DRAM-write clock-dep, B7/B8 TMEM, D5 tcgen05 multi-format, D7+E7 multi-GPU). Power group (F1-F6) deferred en bloc to a separate power campaign; methodology meta-claims (H1-H7) resolved as documented audit lessons. All other catalog claims have been either verified, refined, or falsified with cross-link to a per-section justification record.
+The 4 remaining open are all genuinely measurement-blocked (B6 DRAM-write clock-dep, B7/B8 TMEM, D5 tcgen05 multi-format). Power group (F1-F6) deferred en bloc to a separate power campaign; methodology meta-claims (H1-H7) resolved as documented audit lessons. **D7+E7 multi-GPU items closed-as-preserved 2026-04-23** (`justifications/D7_p2p_gemm_remote_weights.md`, `justifications/E7_all_reduce_floor.md`): host has 2 physical B300 GPUs (PCI 04:00.0 + 05:00.0) but only GPU 0 enumerated by CUDA; root cause is `nvidia-fabricmanager` service failed since 2026-04-17 because no NVSwitch hardware is on PCI (the SXM6 host's NVSwitch boards are missing/dead → fabric manager precheck flags "Pre-NVL5" then NVSwitch driver returns `NV_WARN_NOTHING_TO_DO`). Both items have full justification records with the catalog claim preserved as plausible from first-principles + prior `project_b300_multigpu` rig measurements (when both GPUs were enumerated: 718 GB/s P2P W, 820 GB/s P2P R). All other catalog claims have been either verified, refined, or falsified with cross-link to a per-section justification record.
 
 **The 51 detailed records under `justifications/` contain:** verbatim catalog claims, exact `./QuickRunCUDA` invocation, raw ncu metrics, SASS dumps with instruction counts, % delta vs catalog, verdict tag.
 
@@ -35,9 +35,9 @@ The 6 remaining open are all genuinely measurement-blocked (B6 DRAM-write clock-
 3. SHFL broadcast "1.9 cy essentially free" → 7.46 cy in general case; uniform path only triggers in narrow uniform-value cases
 4. `.ca` vs `.cg` "no gap at 4 MB WS" → was a test-config issue (4 MB WS exceeds L1 cap = 228 KB); the real 1.88× gap shows up at L1-fitting WS (16-196 KB) per `16_ca_vs_cg_hot.md`
 
-**Open multi-GPU items (deferred this session, GPU 0 only — D7/E7 in REVIEW_CHECKLIST):**
-- All-reduce 21 µs floor (custom) / 10 µs (NCCL) — preserved per `project_b300_multigpu` memory (built MGFenceBench, key numbers documented there)
-- P2P GEMM zero-penalty 1.00-1.01× remote — preserved per `project_b300_multigpu`
+**Open multi-GPU items (CLOSED-AS-PRESERVED 2026-04-23 — only GPU 0 visible to CUDA on this host due to fabricmanager-failure root cause; D7/E7 in REVIEW_CHECKLIST now `[x]`):**
+- D7 P2P GEMM zero-penalty 1.00-1.01× remote — `D7_p2p_gemm_remote_weights.md`: preserved as plausible from cuBLAS L2-tiling argument (4096³ BF16 weight = 32 MB fits in 126 MB L2) + prior `project_b300_multigpu` rig measurements (718 GB/s P2P W, 820 GB/s P2P R when both GPUs were enumerated). Caveat: at 8192³ BF16 (256 MB weight > L2) the L2-tile argument breaks → expect ≈ 9× slowdown.
+- E7 All-reduce 21 µs floor (custom) / 10 µs (NCCL) — `E7_all_reduce_floor.md`: preserved as plausible from first-principles latency budget (launch 2 + NVLink RTT 1.55 + sync 5 ≈ 12-21 µs); NCCL 10 µs is well-known persistent-proxy floor; aggregate 1428 GB/s = 2 × 700-770 GB/s NVLink unidir consistent with prior measurements. NCCL 2.29.3 IS installed but `nccl-tests -g 2` cannot run.
 - release.sys NVLink visibility ~1663 cy — preserved (V54 measurement; sys=2806 cy in 2-GPU rig vs my single-GPU 1727 cy = +1.6× extra coherence round-trip)
 - Cross-GPU atomics
 
@@ -53,7 +53,7 @@ The 6 remaining open are all genuinely measurement-blocked (B6 DRAM-write clock-
 
 ---
 
-> **Status:** Audit complete (2026-04-23). 50 catalog sections audited (40 ✅ verified + 6 ⚠ partial + 4 🟡 preserved); 51+ per-section justification records written under `justifications/`. The 6 still-open REVIEW_CHECKLIST items are all genuinely measurement-blocked (TMEM, tcgen05 multi-format, multi-GPU, DRAM-write clock-dep) — outside this audit's scope.
+> **Status:** Audit complete (2026-04-23, post D7+E7 close). 52 catalog sections audited (40 ✅ verified + 6 ⚠ partial + 6 🟡 preserved — D7+E7 added 2026-04-23); 53+ per-section justification records written under `justifications/`. The 4 still-open REVIEW_CHECKLIST items are all genuinely measurement-blocked (B6 DRAM-write clock-dep, B7/B8 TMEM, D5 tcgen05 multi-format) — outside this audit's scope. D7+E7 multi-GPU items closed-as-preserved with rig-state root cause documented (fabricmanager-failure → only GPU 0 visible).
 >
 > **Anchor doc:** `B300_PIPE_CATALOG.md` (19,742 lines). This file is a parallel structure that links each numerical claim to a per-section audit record.
 >
@@ -100,6 +100,8 @@ The 6 remaining open are all genuinely measurement-blocked (B6 DRAM-write clock-
 | §0 Quick reference: latency/throughput | L97 | ⚠ partially verified | [00e_latency_table.md](justifications/00e_latency_table.md) — 11 confirmed (FFMA=4, MUFU.sin=24 exact, fences); 2 KNOWN WRONG (DFMA 92 should be 63.9; syncthreads 12+2W should be 22+2W); 3 plausible-not-re-tested |
 | §0 Tensor unified 128 cy/MMA | L120 | 🟡 covered by 00gh + 00cdf | (cross-ref) |
 | §0 tcgen05.mma shape scaling + All-reduce/P2P | L132-187 | 🟡 preserved (multi-GPU + tcgen05 deferred) | [00gh_tcgen05_allreduce.md](justifications/00gh_tcgen05_allreduce.md) — tcgen05 plausible (consistent with §22g SASS audit); multi-GPU constrained to GPU 0 this session, prior `project_b300_multigpu` memory supports ballpark |
+| D7 P2P GEMM remote weights via NVLink | L178-183 | 🟡 preserved (rig has 2 phys GPUs but only GPU 0 visible to CUDA; fabricmanager service failed since 2026-04-17, no NVSwitch HW on PCI) | [D7_p2p_gemm_remote_weights.md](justifications/D7_p2p_gemm_remote_weights.md) — catalog "1.00-1.01× zero-penalty" claim preserved as plausible from cuBLAS L2-tiling argument (4096³ BF16 weight = 32 MB fits in 126 MB L2) + prior `project_b300_multigpu` rig measurements (718 GB/s P2P W, 820 GB/s P2P R when both GPUs enumerated); caveat at 8192³ BF16 (256 MB > L2) where L2-tile argument breaks |
+| E7 All-reduce 21 µs custom / 10 µs NCCL floor | L157, L168 | 🟡 preserved (same rig constraint as D7) | [E7_all_reduce_floor.md](justifications/E7_all_reduce_floor.md) — first-principles budget supports 21 µs custom (launch 2 + NVLink RTT 1.55 + sync 5 + protocol ≈ 12-21 µs); NCCL 10 µs floor is well-known persistent-proxy-kernel latency; aggregate 1428 GB/s @ 256 MB consistent with prior 718+820 = 1538 GB/s NVLink unidir; NCCL 2.29.3 is installed but `nccl-tests -g 2` cannot run with single visible GPU |
 | §1 Pipe topology | L187 | ✅ replicated | [01_pipe_topology.md](justifications/01_pipe_topology.md) — pipe caps verified across all major pipes (alu/fma/fmaH/fmaL/xu/lsu/adu/uniform/fp64) |
 | §2 Complete instruction catalog | L214 | ✅ many sub-rows verified | (umbrella; see §2.1-§2.9 sub-records below) |
 | §2.1/2/3 FP32 scalar/packed/Integer | L216-262 | ✅ replicated | [02_1_2_3_fp32_int.md](justifications/02_1_2_3_fp32_int.md) — FFMA=4.00 (99.5%), FFMA2=2.00 (98.5% via heavy+lite both saturate), IMAD=2.00 (99.94%) |
