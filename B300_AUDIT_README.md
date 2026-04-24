@@ -112,12 +112,13 @@ Each replication follows CLAUDE.md's 8-step rigor protocol:
 
 Plus 5 methodology footguns documented in this audit (see TL;DR above).
 
-## What's still NOT done from the original vision
+## What's still NOT done
 
-- DENSE catalog covers ~19 of catalog's 65 H2 sections (∼30%). Major missing: power per pipe, NVFP4, full methodology section, cluster launch overhead, predication, compiler-emission gaps, comprehensive reference card.
-- ~61 REVIEW_CHECKLIST main items still open (out of 74); 124 supplementary skeptical-review items mostly not yet replicated.
-- NVFP4 K=96 ULTRA replication failed (sub-agent token limit) — needs retry.
-- Some catalog corrections recommended but not yet pushed back into the source `B300_PIPE_CATALOG.md`.
+- **6 main REVIEW_CHECKLIST items remain open** (B6, B7, B8, D5, D7, E7) — all genuinely measurement-blocked: TMEM bandwidth + tcgen05 multi-format need alloc/mbarrier setup; D7+E7 are multi-GPU (single-GPU rig this session); B6 DRAM-write clock-dependence needs locked-clock sweep deferred with the F-group power campaign.
+- **Catalog corrections are recommended but not pushed back into the source `B300_PIPE_CATALOG.md`** — by design (the catalog is preserved unmodified; corrections live in DENSE + REVIEW_CHECKLIST + per-section justifications/).
+- **A separate power campaign** would resolve the F-group (F1-F6) — needs locked-clock sweep + nvidia-smi voltage capture at sub-second cadence, plus per-pipe ncu power counters; out of scope for this measurement-correctness audit.
+
+**What IS done** (final state): 190/196 = 97% of all checklist items (main + 2 supplementary) resolved with cross-link to a per-section justification record. DENSE has ~50 audit-verified sections + 20 design rules + grouped catalog reconciliations (§0-§30 + §22 series + B9/G7). All five public deliverables consistent. User's [!fail] notes from `reviewed_errors_b300.md` mapped 1:1 to specific verdicts in `_USER_FAILS_INDEX.md`.
 
 ## Acknowledgments
 
