@@ -13,6 +13,51 @@
 
 ## 🔴 CRITICAL FIXES — NEWLY ADDED 2026-04-23 (RIGOROUS REPLICATION RESULTS)
 
+### EDIT NEW-§21: tcgen05.mma "sustained-load throttle" cliff (task #87) — DOES NOT REPRODUCE; mechanism narrative wrong; replace section
+
+**Lines:** L7797–7827 (the "tcgen05.mma Sustained-Load Throttling" section)
+
+**Wrong text:**
+> The "100K iter cliff" finding: peak FP8 throughput drops 60% beyond ~30K continuous MMAs from one warp.
+>
+> | ITERS | cy/iter | TFLOPS (148 SM) | % peak |
+> |---|---|---|---|
+> | 5,000 | 128.05 | 4654 | 100% |
+> | 30,000 | 128.01 | 4655 | 100% (cliff edge) |
+> | 50,000 | 305.90 | 1949 | 42% |
+> | 75,000 | 364.71 | 1634 | 35% |
+> | 100,000 | 394.16 | 1512 | 32% |
+>
+> So the slowdown is dispatch bubbles inserted at the SM level... possibly hardware running-average power tracking, tcgen05 internal queue/scheduler limits, sustained-utilization governor.
+
+**Why wrong** (per `justifications/21_tcgen05_throttle_ICACHE_DEEP.md`, 2026-04-24 user-flagged retest):
+
+- On a clean rig (no leftover procs, default boost) at FP8 M=128 N=128 K=32, single warp, the rate is **flat 64–67 cy/MMA across 5K → 100K iters**. Replicated three different unroll regimes (`#pragma unroll 1`, `unroll 8`, compiler default) — all flat.
+- The user-suggested I-cache hypothesis (cliff = thrashing because 30K MMA fully unrolled = 2.88 MB straight-line code) was tested by forcing FULL unroll at STATIC_ITERS=30000 (cubin = 9.1 MB, 30 000 distinct UTCQMMA SASS at exact 96 byte stride, 90× any plausible I-cache). Result: **70.74 cy/MMA, only 5.6% slower than `unroll 1`**. So I-cache thrashing is also FALSIFIED.
+- Catalog L7084 in the SAME catalog already says "Streaming throughput: **67 cy/MMA**" — internally inconsistent with the L7805 cliff table's "128 baseline". My 67 cy matches L7084.
+- Most likely the original cliff table was collected with leftover background procs thrashing the GPU (a known recurring artifact on this rig — see `feedback_clock_stuck_no_lock.md` and `project_b300_corrections_swarm.md`), or a different MMA shape than documented at L7799.
+
+**Correct text:**
+
+> ## tcgen05.mma sustained throughput (task #87, retested 2026-04-24)
+>
+> Single warp, single CTA, FP8 `kind::f8f6f4` M=128 N=128 K=32, default boost (~2032 MHz under load):
+>
+> | Variant | iters | cy/MMA |
+> |---|---:|---:|
+> | `#pragma unroll 1` | 5K, 30K, 50K, 100K | **flat 67.0** |
+> | `#pragma unroll 8` | 30K, 50K | flat 64.0 |
+> | compiler default | 30K, 50K, 100K | flat 64.0 |
+> | FULL unroll | 30K (cubin = 9.1 MB) | 70.7 (only +5.6% vs unroll 1) |
+>
+> **No iteration-count cliff.** The previously reported 128 → 305 → 394 cy/MMA jump at 30K → 50K → 100K iters did not reproduce on a clean rig. The cause was likely residual background-process thrash, NOT a tcgen05 dispatch governor. The "running-average power tracking / sustained-utilization governor" speculation is retracted.
+>
+> Coding style is irrelevant: forcing 30 000 straight-line `UTCQMMA` SASS instructions (2.88 MB of code, 90× I-cache size) measures only 5.6% slower than a compact looped variant — the SM's instruction cache is **not** the bottleneck for pure-MMA throughput.
+>
+> **Practical implication unchanged:** real GEMM kernels comfortably hit 4.7 PFLOPS FP8 because there is no governor to avoid in the first place.
+
+---
+
 ### EDIT NEW-§20: FMIN penalty investigation (task #84) — baseline FALSIFIED, all overheads invalid
 
 **Lines:** L7773-7793 (the "FMIN Penalty Investigation" section)

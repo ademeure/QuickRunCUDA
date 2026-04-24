@@ -1,6 +1,6 @@
 # Status of Replication — B300_PIPE_CATALOG audit
 
-**Generated:** 2026-04-23. **Audit complete + ongoing user-flagged retests** (194/196 = 99.0% checklist closure as of 2026-04-24; B6 closed 2026-04-23 evening; §20 FMIN-baseline retested 2026-04-24).
+**Generated:** 2026-04-23. **Audit complete + ongoing user-flagged retests** (195/196 = 99.5% checklist closure as of 2026-04-24; B6 closed 2026-04-23 evening; §20 FMIN-baseline retested 2026-04-24; §21 tcgen05 sustained-load cliff retested 2026-04-24).
 
 This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED_B300_PIPE_CATALOG.md` (per-section audit), `DENSE_B300_PIPE_CATALOG.md` (pruned reliable subset), `REVIEW_CHECKLIST_B300.md` (yes/no items).
 

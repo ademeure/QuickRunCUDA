@@ -1,12 +1,12 @@
 # JUSTIFIED B300 / Blackwell sm_103a — SM Pipe Catalog
 
-## TLDR — current audit state (2026-04-23, +§20 retest 2026-04-24)
+## TLDR — current audit state (2026-04-23, +§20 retest 2026-04-24, +§21 retest 2026-04-24)
 
-**Coverage:** 54 catalog sections audited, 0 still pending (D7+E7 added 2026-04-23 as 🟡 closed-as-preserved due to single-GPU rig state; B6 DRAM-write clock-dep added 2026-04-23 as ⚠ refined; §20 FMIN-penalty retest added 2026-04-24 as ❌ baseline-falsified)
+**Coverage:** 55 catalog sections audited, 0 still pending (D7+E7 added 2026-04-23 as 🟡 closed-as-preserved due to single-GPU rig state; B6 DRAM-write clock-dep added 2026-04-23 as ⚠ refined; §20 FMIN-penalty retest added 2026-04-24 as ❌ baseline-falsified; §21 tcgen05.mma "sustained-load throttle" retest added 2026-04-24 as ❌ cliff-DOES-NOT-REPRODUCE + I-cache-hypothesis-falsified)
 - **41 ✅ replicated/verified** (full ncu + SASS + cudaDeviceProp evidence on this rig)
 - **7 ⚠ partially verified / refined** (some rows confirmed, some preserved; B6 added 2026-04-23)
-- **6 🟡 preserved** (catalog plausible but specific tests not re-run; e.g. tcgen05 throughput, multi-GPU all-reduce + P2P GEMM, methodology notes, tensor unified)
-- **+1 ❌ catalog-baseline-falsified** (§20 FMIN-penalty: pure FFMA2 = 5.57 cy claim is wrong; SoL is 2.14/4.03 cy depending on regime; all downstream overhead %s invalid)
+- **6 🟡 preserved** (catalog plausible but specific tests not re-run; e.g. multi-GPU all-reduce + P2P GEMM, methodology notes, tensor unified)
+- **+2 ❌ catalog-baseline-falsified**: §20 FMIN-penalty (pure FFMA2 = 5.57 cy claim is wrong; SoL is 2.14/4.03 cy depending on regime); **§21 tcgen05.mma sustained-load cliff (catalog 128→305→394 cy/MMA at 30K→50K→100K iters DOES NOT REPRODUCE; flat 64–67 cy/MMA across all iter counts; FULL-UNROLL 30K=9.1 MB cubin is only 5.6% slower than unroll=1, refuting the I-cache hypothesis too)**
 
 **REVIEW_CHECKLIST status (post D7+E7+B6 close):** **193 [x] resolved / 3 [ ] still open** across all checklist files:
 - **Main:** 77 closed / 3 open (started session at 23/61; B6 closed 2026-04-23)
