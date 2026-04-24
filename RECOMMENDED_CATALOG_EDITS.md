@@ -676,6 +676,24 @@ Catalog has the "Comprehensive Reference Card" at L8807 which is internally MORE
 
 ---
 
+### EDIT NEW-M: §3 contention rule 2 ("FFMA2 + UNPACK u=1.67, 16% friction specific to F2FP") — mechanism description wrong; regime caveat missing
+
+**Line**: L478
+
+**Wrong text** (current catalog):
+> "FFMA2 + UNPACK gives u=1.67 (16% SMSP friction specific to F2FP). Not present for PRMT+FFMA2 (u=1.95)."
+
+**Correct text (per `justifications/C5_ffma2_unpack_regport_DEEP.md`):**
+> **The 16% friction is REAL but the mechanism is operand-reuse cache disturbance, NOT raw RF read-port pressure, and it only manifests in clustered FFMA2-broadcast loops.**
+>
+> - **Replicated** in v52mirror shape (`N_FFMA2=8`, `N_ALU=8`, broadcast multiplier R0): F2FP+FFMA2 hits **u=3.37 / pipe 83%**; PRMT+FFMA2 hits **u=3.98 / pipe 98%** → same 1.18× ratio = 16% friction.
+> - **Mechanism (refined):** ptxas can stamp FFMA2's broadcast operand `R0` with `.reuse` to skip the RF read via the SMSP operand-reuse cache. PRMT preserves this — 127/128 = 99% of FFMA2 keep `.reuse`. **F2FP UNPACK invalidates the operand-reuse cache slot** (probably because F2FP's source operand maps to the same physical operand-cache port), forcing ptxas to drop `.reuse` on every other FFMA2 → only 79/128 = 62% retain `.reuse` → 38% of FFMA2 instructions pay an extra RF read → 16% throughput loss. **Raw RF read count is NOT predictive**: PRMT actually issues MORE reads/cycle (3.01 R/cy) than F2FP (2.38 R/cy), yet PRMT is faster.
+> - **LOP3 same mechanism, worse magnitude:** in 1:1 with FFMA2, LOP3 retains `.reuse` only 50% AND has 3 sources → 22% throughput loss (u=2.14 vs F2FP's u=2.74 in interleaved 1:1 shape; or u=2.69 vs u=3.37 in v52mirror).
+> - **Regime caveat:** in the **interleaved 1:1 inner loop with PRIVATE per-accumulator multiplicands**, ptxas cannot stamp `.reuse` at all → both F2FP+FFMA2 and PRMT+FFMA2 hit u=2.74 (no asymmetry). The catalog's 1.67/1.95 numbers are SHAPE-SPECIFIC to the v52-era clustered broadcast pattern.
+> - **Implication for kernel writers:** if writing an FFMA2-heavy loop with shared multipliers, prefer PRMT-flavor co-issue ops (or any op that doesn't clobber the operand-reuse port) over F2FP UNPACK.
+
+---
+
 ## How to apply these edits
 
 Option 1 (manual): `vim B300_PIPE_CATALOG.md`, jump to each line, apply edit.
