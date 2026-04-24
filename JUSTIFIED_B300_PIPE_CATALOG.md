@@ -53,7 +53,7 @@ The 6 remaining open are all genuinely measurement-blocked (B6 DRAM-write clock-
 
 ---
 
-> **Status:** Iteration in progress. Each section in `B300_PIPE_CATALOG.md` is being mapped to the test that produced it; replicated; and a per-section justification record is being written under `justifications/`.
+> **Status:** Audit complete (2026-04-23). 50 catalog sections audited (40 ✅ verified + 6 ⚠ partial + 4 🟡 preserved); 51+ per-section justification records written under `justifications/`. The 6 still-open REVIEW_CHECKLIST items are all genuinely measurement-blocked (TMEM, tcgen05 multi-format, multi-GPU, DRAM-write clock-dep) — outside this audit's scope.
 >
 > **Anchor doc:** `B300_PIPE_CATALOG.md` (19,742 lines). This file is a parallel structure that links each numerical claim to a per-section audit record.
 >
