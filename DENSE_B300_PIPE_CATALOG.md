@@ -2344,4 +2344,4 @@ Verified prefetch hints (catalog L2728-2750, all ~2 cy issue-only):
 
 ---
 
-(More sections added as agents finish replication.)
+**End of DENSE catalog (audit complete 2026-04-23).** 50 sections covered (40 ✅ verified + 6 ⚠ partial + 4 🟡 preserved) + 20 design rules. For per-section evidence trails, see `JUSTIFIED_B300_PIPE_CATALOG.md` and `justifications/<id>.md`. For yes/no review of specific claims, see `REVIEW_CHECKLIST_B300.md` (190/196 = 97% closed). The 6 still-open items are all genuinely measurement-blocked (TMEM, tcgen05 multi-format, multi-GPU, DRAM-write clock-dep) — outside this audit's scope.
