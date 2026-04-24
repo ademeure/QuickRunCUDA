@@ -739,7 +739,7 @@ DENSE pruning notes:
 For the full opcode table, refer to B300_PIPE_CATALOG.md L554-L897 directly. Most entries are inferred from opcode family rules (uniform-prefix → uniform pipe, etc.) — treat as best-effort but not all empirically tested.
 
 ---
-
+`/
 ## §10. L1/L2/HBM bandwidth ladder — replicated 2026-04-23 (justifications/00b_mem_hierarchy.md)
 
 | Tier | Catalog claim TB/s | Measured 2026-04-23 | Verdict |
