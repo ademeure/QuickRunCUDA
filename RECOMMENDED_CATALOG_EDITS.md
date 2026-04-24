@@ -13,6 +13,65 @@
 
 ## 🔴 CRITICAL FIXES — NEWLY ADDED 2026-04-23 (RIGOROUS REPLICATION RESULTS)
 
+### EDIT NEW-§20: FMIN penalty investigation (task #84) — baseline FALSIFIED, all overheads invalid
+
+**Lines:** L7773-7793 (the "FMIN Penalty Investigation" section)
+
+**Wrong text:**
+> | Pure FFMA2 (= 2 scalar FFMA / 1 inst) | 5.57 | baseline |
+> | FFMA2 + 1 IADD | 6.76 | **+21%** |
+> | FFMA2 + 1 scalar FFMA | 7.57 | +36% |
+> | FFMA2 + 2 FMIN | 9.45 | +70% (= +35% per FMIN) |
+>
+> Mechanism: FFMA2 takes ~5 cy per inst (low-rate dispatch but high-throughput pipe_fma).
+
+**Why wrong** (per `justifications/20_FMIN_baseline_RETEST.md`, 2026-04-24 user-flagged retest):
+
+The 5.57 cy/iter "Pure FFMA2" baseline doesn't match any clean SoL regime. Real measurements at 2032 MHz boost, single-warp, with SASS-verified FFMA2 emission:
+- N_CHAINS=1 RAW dependency: **4.03 cy/inst** (latency-bound; matches FFMA2 4-cy latency)
+- N_CHAINS=2 (issue-bound, single SMSP): **2.14 cy/inst** (90% of 2-cy single-SMSP issue limit)
+- N_CHAINS=4-6: 3.06 cy/inst (regime-stable)
+- N_CHAINS=12+: spills, 6+ cy
+- Chip-level (148 SMs × 16 warps/SM, persistent): **0.5 cy/inst per SMSP** = 1 inst/SMSP/cy = **77% of theoretical 76.96 TFLOPS**, ncu `pipe_fma.pct_of_peak_sustained_active = 42.7%` (= 85% of FFMA2-specific issue ceiling, since FFMA2 takes both sub-pipes)
+
+5.57 cy fits NONE of these regimes. Most likely it's an artifact from per-warp clock measured at chip-busy with ~3 warps/SMSP (= 8 cy / 1.5 ≈ 5.3) or insufficient ILP with extra inner-loop ops.
+
+**Bonus SASS finding** (also captured in `justifications/14_extended_ops.md`): the catalog's "FFMA2 + 2 FMIN" actually emits `1 FFMA2 + 1 FMNMX3` in SASS — the compiler fuses two `min.f32` PTX into ONE Blackwell 3-input `FMNMX3` instruction. So "+35% per FMIN" cannot be attributed because there's only ONE FMIN-equivalent in the SASS.
+
+**Recomputed overheads at proper ILP** (N_CHAINS=4 single-warp, vs P0 baseline of 3.06 cy):
+
+| Pattern | cy/chain | vs new baseline | Catalog claim |
+|---|---:|---:|---:|
+| Pure FFMA2 | **3.06** | — | 5.57 (1.82× too high) ❌ |
+| + 1 IADD (runtime-loaded so not hoisted) | 4.59 | +50% | +21% (under by 2.4×) |
+| + 1 scalar FFMA | 6.84 | +123% | +36% (under by 3.4×) |
+| + 1 FMNMX3 (= catalog's "2 FMIN" fused) | 6.82 | +123% | +70% (under by 1.75×) |
+
+**Correct text:**
+> ## FFMA2-with-companion-ALU cost (task #84, retested 2026-04-24)
+>
+> Pure FFMA2 baseline depends sharply on ILP regime — there is no single number:
+>
+> | Regime | cy/inst | Note |
+> |---|---:|---|
+> | Single-warp, NC=1, RAW chain | **4.03** | latency-bound (matches FFMA2 4-cy latency) |
+> | Single-warp, NC=2, partial overlap | **2.14** | near 2-cy single-SMSP issue limit |
+> | Chip-level, 148 SMs × 16 warps/SM | **~0.5** per SMSP | = 1 inst/SMSP/cy = 77% TFLOPS; ncu pipe_fma 43% (= 85% of FFMA2-specific cap, since FFMA2 takes both sub-pipes per cycle) |
+>
+> Adding any companion ALU op to a 1-FFMA2 chain step roughly doubles cy/iter at single-warp (chain becomes serialized through pipe_alu). Recomputed at N_CHAINS=4 single-warp, vs pure-FFMA2 baseline 3.06:
+>
+> | Pattern | cy/chain | overhead |
+> |---|---:|---:|
+> | + 1 IADD (runtime-loaded → not hoisted) | 4.59 | +50% |
+> | + 1 scalar FFMA | 6.84 | +123% |
+> | + 1 FMNMX3 (compiler-fused from 2× min.f32) | 6.82 | +123% |
+>
+> Mechanism: FFMA2 takes both sub-pipes per cycle, so a single-warp chain is bound by either (a) issue rate at NC≥2 (2 cy/inst) or (b) FFMA2 latency at NC=1 (4 cy/inst). Adding any pipe_alu op to the same chain serializes them and roughly doubles the per-chain-step cost; this is NOT a "+35% per FMIN" effect — it's a serialization effect of any single ALU op.
+>
+> Footgun for benchmark writers: two PTX `min.f32` ops in the same chain are silently fused into ONE `FMNMX3` SASS (Blackwell 3-input fused min/max, see §14). Inserting an FADD between them defeats the fusion but adds another inst. There is no clean way to measure "per-FMIN cost" because Blackwell doesn't really execute one-FMIN-at-a-time when the chain allows fusion.
+
+---
+
 ### EDIT NEW-A: NVFP4 9.9 PF needs clock context
 
 **Line:** L9303 (and similar)

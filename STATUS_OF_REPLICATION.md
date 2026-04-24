@@ -1,6 +1,6 @@
 # Status of Replication — B300_PIPE_CATALOG audit
 
-**Generated:** 2026-04-23. **Audit complete.** No active agents; this doc is now finalized for the 2026-04-23 session and reflects the terminal state (193/196 = 98.5% checklist closure; B6 closed 2026-04-23 evening).
+**Generated:** 2026-04-23. **Audit complete + ongoing user-flagged retests** (194/196 = 99.0% checklist closure as of 2026-04-24; B6 closed 2026-04-23 evening; §20 FMIN-baseline retested 2026-04-24).
 
 This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED_B300_PIPE_CATALOG.md` (per-section audit), `DENSE_B300_PIPE_CATALOG.md` (pruned reliable subset), `REVIEW_CHECKLIST_B300.md` (yes/no items).
 
@@ -77,6 +77,7 @@ For the full per-section trail with raw output, SASS, and ncu: see `JUSTIFIED_B3
 | §22m kernel launch overhead | 5.7 µs / 2.0 µs (looked inconsistent) | ✅✅✅ | RECONCILED: 2.05 µs pipelined / 5.20 µs per-iter event mode — NOT contradictory (different timing setups). Kernel-size table (L8385) reproduces EXACT (10/100/1000/4000 inst → 2.05/2.05/4.10/10.25 µs vs catalog 2.06/2.06/4.11/10.25). Cluster launch == single-CTA at 2.05 µs flat across cluster sizes 1/2/4/8. NOT YET TESTED: cudaLaunchKernelEx+PSS (1.47 µs claim) or cudaGraph batched (0.56 µs/kernel). | `22m_launch_overhead.md` |
 | D7 P2P GEMM remote weights | 1.00-1.01× slowdown (cuBLAS L2-tile) | 🟡 PRESERVED | 2-GPU test cannot run: only GPU 0 visible to CUDA (fabricmanager failed since 2026-04-17, NVSwitch driver enumerates no switches; both GPUs physically present at PCI 04:00.0 + 05:00.0 but CUDA refuses to expose GPU 1 without functional fabric manager). Catalog plausible from L2-tiling first-principles (4096³ BF16 weight = 32 MB fits in 126 MB L2) + prior `project_b300_multigpu` rig measurements (when 2 GPUs were enumerated: 718 GB/s P2P W, 820 GB/s P2P R). | `D7_p2p_gemm_remote_weights.md` |
 | E7 All-reduce ≤1 MB floor | 21 µs custom / 10 µs NCCL | 🟡 PRESERVED | Same rig constraint as D7. NCCL 2.29.3 IS installed (`/usr/lib/x86_64-linux-gnu/libnccl.so.2`) but `all_reduce_perf -g 2` requires 2 visible GPUs. Catalog 21 µs custom matches first-principles budget (launch 2 + NVLink RTT 1.55 + cross-GPU sync 5 + protocol ≈ 12-21 µs); NCCL 10 µs is well-known persistent-proxy-kernel floor. 1428 GB/s @ 256 MB consistent with prior 718+820 = 1538 GB/s NVLink unidir. | `E7_all_reduce_floor.md` |
+| §20 FMIN-penalty investigation (task #84) | Pure FFMA2 = 5.57 cy/iter, +21/+36/+70% for IADD/scalarFFMA/2FMIN | ❌ BASELINE FALSIFIED (2026-04-24) | User-flagged baseline error. Real pure-FFMA2 SoL: **2.14 cy/inst** issue-bound (NC=2, 1 warp), **4.03 cy/inst** latency-bound (NC=1 RAW), **0.5 cy/inst per SMSP** chip-level (77% TFLOPS, ncu pipe_fma 43% = 85% of FFMA2-specific issue ceiling). 5.57 fits no clean regime. ALL +21/+36/+70% overheads are referenced to a wrong baseline. Recomputed at proper ILP (N_CHAINS=4 single-warp): real overheads are +50/+120/+120%. **Bonus**: catalog's `2 FMIN` PTX is silently fused by compiler into ONE `FMNMX3` SASS — "+35% per FMIN" cannot be attributed because the SASS only has one FMIN-equivalent. | `20_FMIN_baseline_RETEST.md` |
 
 ## Pending agent work
 
@@ -101,6 +102,7 @@ For the full per-section trail with raw output, SASS, and ncu: see `JUSTIFIED_B3
 10. **§30.B "atom.f16/bf16 ~45× slower"**: → real 6.3× slower
 11. **mbarrier RTT 54 cy**: → 123 cy (54 was arrive-only)
 12. **redux.sync header**: add row for add/or/and/xor at 44 cy (only min/max=18 documented currently)
+13. **L7773-7793 §20 FMIN penalty table** (NEW 2026-04-24): replace pure-FFMA2 baseline `5.57 cy/iter` with explicit regime-stated SoL points (2.14 cy issue-bound, 4.03 cy latency-bound, 0.5 cy/inst/SMSP chip-level); drop the `+35% per FMIN` decomposition (compiler fuses 2× `min.f32` → 1 `FMNMX3`, so there's no per-FMIN to attribute); update relative overhead %s to ~+50/+120/+120% at proper ILP. See `justifications/20_FMIN_baseline_RETEST.md` and EDIT NEW-§20 in `RECOMMENDED_CATALOG_EDITS.md`.
 
 ## What's still NOT replicated (high-priority remaining)
 
@@ -130,9 +132,9 @@ These are now in DENSE §22o-§22r and §22e-§22n.
 
 ## Progress numbers
 
-**Final progress (2026-04-23):**
+**Final progress (2026-04-23, +§20 retest 2026-04-24):**
 - DENSE_B300_PIPE_CATALOG.md: **~2200 lines** (vs 19,742 source, 9:1 prune ratio; covers §0-§30 + design rules 1-20 + supplementary §17-§22r/§28/§30.L/§30.M)
-- JUSTIFIED_B300_PIPE_CATALOG.md: index + **51+ full justification records** under `justifications/`
-- REVIEW_CHECKLIST_B300.md: 80 main items + 116 supplementary; **190/196 = 97% resolved** (74/80 main + 55/55 + 61/61)
+- JUSTIFIED_B300_PIPE_CATALOG.md: index + **52+ full justification records** under `justifications/` (§20 added 2026-04-24)
+- REVIEW_CHECKLIST_B300.md: 80 main items + 116 supplementary; **194/196 = 99% resolved** (78/80 main: B6 + §20 closed; 55/55 + 61/61 supp)
 - B300_AUDIT_README.md, _USER_FAILS_INDEX.md, _AUDIT_OF_AUDIT.md — all consistent with mature state
-- 4 remaining open items are all genuinely measurement-blocked (TMEM B7/B8, tcgen05 multi-format D5, DRAM-write clock-dep B6); D7+E7 multi-GPU closed-as-preserved 2026-04-23 (rig has 2 GPUs but fabricmanager failure → only GPU 0 visible)
+- 2 remaining open items are genuinely measurement-blocked (TMEM B7/B8, tcgen05 multi-format D5); D7+E7 multi-GPU closed-as-preserved 2026-04-23; §20 retest 2026-04-24 added an additional ❌ catalog-baseline-falsified entry

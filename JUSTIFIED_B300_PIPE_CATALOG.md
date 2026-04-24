@@ -1,11 +1,12 @@
 # JUSTIFIED B300 / Blackwell sm_103a — SM Pipe Catalog
 
-## TLDR — current audit state (2026-04-23)
+## TLDR — current audit state (2026-04-23, +§20 retest 2026-04-24)
 
-**Coverage:** 53 catalog sections audited, 0 still pending (D7+E7 added 2026-04-23 as 🟡 closed-as-preserved due to single-GPU rig state; B6 DRAM-write clock-dep added 2026-04-23 as ⚠ refined)
-- **40 ✅ replicated/verified** (full ncu + SASS + cudaDeviceProp evidence on this rig)
+**Coverage:** 54 catalog sections audited, 0 still pending (D7+E7 added 2026-04-23 as 🟡 closed-as-preserved due to single-GPU rig state; B6 DRAM-write clock-dep added 2026-04-23 as ⚠ refined; §20 FMIN-penalty retest added 2026-04-24 as ❌ baseline-falsified)
+- **41 ✅ replicated/verified** (full ncu + SASS + cudaDeviceProp evidence on this rig)
 - **7 ⚠ partially verified / refined** (some rows confirmed, some preserved; B6 added 2026-04-23)
 - **6 🟡 preserved** (catalog plausible but specific tests not re-run; e.g. tcgen05 throughput, multi-GPU all-reduce + P2P GEMM, methodology notes, tensor unified)
+- **+1 ❌ catalog-baseline-falsified** (§20 FMIN-penalty: pure FFMA2 = 5.57 cy claim is wrong; SoL is 2.14/4.03 cy depending on regime; all downstream overhead %s invalid)
 
 **REVIEW_CHECKLIST status (post D7+E7+B6 close):** **193 [x] resolved / 3 [ ] still open** across all checklist files:
 - **Main:** 77 closed / 3 open (started session at 23/61; B6 closed 2026-04-23)
@@ -127,6 +128,7 @@ The 3 remaining open are all genuinely measurement-blocked (B7/B8 TMEM, D5 tcgen
 | §15 Atomics deep + latency | L1008 | ⚠ partially verified | [15_atomics.md](justifications/15_atomics.md) — MAJOR: REDG vs ATOMG = 25× (catalog conflated); POPC.INC compiler trick missed; CAS scope wrong (SYS not GPU); §15 latency entries OK ±25% |
 | §22 mma.sync FP16/BF16 = 577 TFLOPS | L25 (cheat-sheet) | ✅ replicated | [22_tensor_mma_sync.md](justifications/22_tensor_mma_sync.md) — FP16=571 ✓, TF32=285.7 ✓, **FP8 emulated 309 (catalog 276 was 12% LOW)**, INT8 IMMA 142.4 ✓ |
 | §22 dual-issue FFMA2+ALU | L31 cheat-sheet + L218 falsification | ✅ replicated | [22_dual_issue_ffma2_alu.md](justifications/22_dual_issue_ffma2_alu.md) — FFMA2+LOP3 1:1 saturates ALL 3 pipes (314 useful ops/SM/cy vs scalar+LOP3's 187) |
+| §20 FMIN-penalty investigation (task #84) | L7773-7793 | ❌ baseline FALSIFIED | [20_FMIN_baseline_RETEST.md](justifications/20_FMIN_baseline_RETEST.md) — catalog "Pure FFMA2 = 5.57 cy" is WRONG. Real SoL: 2.14 cy/inst issue-bound (NC=2 1 warp), 4.03 cy/inst RAW-latency-bound (NC=1), chip-level 0.5 cy/inst per SMSP = 77% TFLOPS. ALL +21/+36/+70% overheads invalid because referenced to artifact baseline. Recomputed at NC=4: real overheads are +50/+120/+120%. SASS shows catalog's "2 FMIN" actually emits ONE FMNMX3 (Blackwell 3-input fused) — "+35% per FMIN" is doubly wrong. |
 | §13 DSMEM | L7012 / L7029-7031 | ✅ replicated | [13_dsmem.md](justifications/13_dsmem.md) — **catalog "23 cy ≈ free" FALSIFIED**: real read latency 204-223 cy (9× slower); SASS reveals `ld.shared::cluster` → `LD.E` (global LSU); V53 write 87 GB/s/cluster ✓ |
 | §15a DSMEM EXHAUSTIVE | 9-dim sweep | ✅ replicated | [13_dsmem_exhaustive.md](justifications/13_dsmem_exhaustive.md) — v4 3.5× per-byte efficient; cluster=16 works; ILP=32 → 9 cy/load (LDS-equivalent); **B300 = 9 GPCs × 16 SMs + 1 partial 4-SM GPC = 148 (NOT 8 GPCs as catalog claims)**; per-GPC 20% silicon variation; aggregate 2.4 TB/s W / 1.9 TB/s R |
 | §16 tcgen05.mma | L6686+ | 🟡 covered by 00gh + DENSE §16 | (tcgen05 cy/MMA shape scaling preserved as plausible; SASS opcodes verified via 22g audit; throughput tests not re-run this session due to setup complexity) |

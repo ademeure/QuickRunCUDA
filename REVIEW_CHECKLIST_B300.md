@@ -1,8 +1,8 @@
 # B300 Catalog — Review Checklist (one-line yes/no per claim)
 
-## TLDR — current audit state (2026-04-23)
+## TLDR — current audit state (2026-04-23, +§20 retest 2026-04-24)
 
-**JUSTIFIED status:** **27 ✅ replicated/verified** sections + **7 🟡 partial** (D7+E7 added 2026-04-23 as 🟡 closed-as-preserved due to fabric-manager-failure → only GPU 0 visible). Audit covers essentially the entire foundational early/mid catalog (§0 through §29 + §30.G/L/M/B).
+**JUSTIFIED status:** **28 ✅ replicated/verified** sections + **7 🟡 partial** (D7+E7 added 2026-04-23 as 🟡 closed-as-preserved due to fabric-manager-failure → only GPU 0 visible). Audit covers essentially the entire foundational early/mid catalog (§0 through §29 + §30.G/L/M/B). §20 FMIN-penalty retest added 2026-04-24.
 
 **Top catalog errors to flag for correction (mark these first):**
 
@@ -70,6 +70,7 @@
 |---|---|---|
 | **§22e** (NEW) | ".reuse cache 94% of FFMA2" | ✅ AUDIT-VERIFIED via direct SASS grep: scalar FFMA 99.9%, FFMA2 82.8-99.2% across 5 configs. Catalog 94% is in-range for FFMA2; conservative for scalar FFMA. |
 | **§22h** (NEW) | "FFMA fully hidden by 522 cy memory load; ~16 FFMA free" | ✅ qualitative CONFIRMED but quantitative DIFFERS — cold DRAM is **882 cy** (not 522), free budget is **~225 FFMAs** (not ~16). Catalog's 522 was partial-cold; updated to "cold 882 / warm 335". |
+| **§20 FMIN-penalty retest** (RETEST 2026-04-24) | "Pure FFMA2 = 5.57 cy/iter; +21% IADD; +36% scalar FFMA; +70% (= +35%/FMIN) for 2 FMINs" | ❌ BASELINE WRONG. Real pure-FFMA2 SoL: **2.14 cy/inst** issue-bound (N_CHAINS=2, 1 warp), **4.03 cy/inst** latency-bound (1 chain RAW). 5.57 fits no clean regime — it's an artifact from insufficient ILP + per-warp clock at chip-busy. ALL overhead %s downstream are bogus. Recomputed at proper ILP (N_CHAINS=4): +50% / +120% / +120% (vs catalog's +21/+36/+70). **Bonus SASS finding**: catalog's "2 FMIN" actually emits ONE FMNMX3 (Blackwell 3-input fused), so "+35% per FMIN" is doubly wrong — there's no per-FMIN to attribute. See `20_FMIN_baseline_RETEST.md`. |
 | **§30B SASS-mapping** (CORRECTION) | "atom.global.add → REDG NOT ATOMG" | ⚠ OVERSTATED: direct SASS grep across 20K kernels shows ALL THREE opcodes emitted (REDG / ATOMG.E / ATOM.E) depending on context. Throughput numbers still valid; only SASS-name attribution was wrong. See `30B_atomics_FOLLOWUP.md`. |
 | **§11** (NEW) | redux.sync min/max=1.92, add/and/or/xor=0.50 ADU | ✅ CONFIRMED via ncu pipe metrics: min=1.89 (alu+fmaheavy), add=0.50 (adu) — within 2% of catalog. 4× asymmetry exact. |
 | **§12** (NEW) | pipe_alu cap = 2.00 warp-inst/SM/cy | ✅ CONFIRMED at 1.94 (97%) via pure LOP3 at NC=16+MIN_BLOCKS=4. Methodology lesson: need both high ILP AND high occupancy for true SoL. |
