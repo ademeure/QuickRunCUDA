@@ -1,6 +1,6 @@
 # Status of Replication — B300_PIPE_CATALOG audit
 
-**Generated:** 2026-04-23. **Audit complete.** No active agents; this doc is now finalized for the 2026-04-23 session and reflects the terminal state (190/196 = 97% checklist closure).
+**Generated:** 2026-04-23. **Audit complete.** No active agents; this doc is now finalized for the 2026-04-23 session and reflects the terminal state (193/196 = 98.5% checklist closure; B6 closed 2026-04-23 evening).
 
 This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED_B300_PIPE_CATALOG.md` (per-section audit), `DENSE_B300_PIPE_CATALOG.md` (pruned reliable subset), `REVIEW_CHECKLIST_B300.md` (yes/no items).
 
@@ -8,10 +8,10 @@ This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED
 
 ## TLDR — current mature state (2026-04-23)
 
-**Coverage:** 48 catalog sections audited (essentially the entire foundational early/mid catalog: §0-§30).
+**Coverage:** 49 catalog sections audited (essentially the entire foundational early/mid catalog: §0-§30, +B6 DRAM-write clock-dep added 2026-04-23 evening).
 
 - **38 ✅ verified** (full ncu + SASS + wall-clock evidence on this rig)
-- **6 ⚠ partial** (replicated but with a regime caveat or methodology note)
+- **7 ⚠ partial / refined** (replicated but with a regime caveat or methodology note; B6 added 2026-04-23)
 - **4 🟡 preserved** (catalog plausible, not re-run — tcgen05.mma, multi-GPU, methodology, tensor unified)
 
 **Top 10 catalog ERRORS** (numbers and recommended fix):
@@ -49,7 +49,7 @@ This is the at-a-glance status of the catalog audit. For details, see `JUSTIFIED
 
 For the full per-section trail with raw output, SASS, and ncu: see `JUSTIFIED_B300_PIPE_CATALOG.md` and `justifications/<id>.md`.
 
-**Checklist completion (2026-04-23, post-D7/E7):** 192/196 items closed across main REVIEW_CHECKLIST (76/80) + both supplementary reviews (_10_30: 55/55 DONE; _31_END: 61/61 DONE). The 4 remaining are all genuinely measurement-blocked at the rig-state level (TMEM B7/B8 needs tcgen05.ld/.st rig; D5 tcgen05 multi-format needs alloc/mbarrier setup; B6 DRAM-write needs clock-locked sweep with F-group power campaign). D7+E7 multi-GPU items closed-as-preserved 2026-04-23 with full justification records (`D7_p2p_gemm_remote_weights.md`, `E7_all_reduce_floor.md`) — host has 2 physical B300 GPUs but only GPU 0 exposed (nvidia-fabricmanager service failed since 2026-04-17 because no NVSwitch hardware enumerated on PCI; on this NVL5-class SXM6 host, fabric manager is required to expose peer GPUs).
+**Checklist completion (2026-04-23 evening, post-B6):** 193/196 items closed across main REVIEW_CHECKLIST (77/80) + both supplementary reviews (_10_30: 55/55 DONE; _31_END: 61/61 DONE). The 3 remaining are all genuinely measurement-blocked at the rig-state level (TMEM B7/B8 needs tcgen05.ld/.st rig; D5 tcgen05 multi-format needs alloc/mbarrier setup). **B6 DRAM-write closed 2026-04-23** (`B6_dram_write_clock_dep.md`): clock-locked sweep on GPU 0 confirms user's hypothesis — DRAM write is clock-dependent (5.51/6.20/6.75/6.86 TB/s @ 1500/1700/1920/2032 MHz); canonical write peak = 6.86 TB/s @ 2032 MHz boost (catalog 7.09 was 3% optimistic). D7+E7 multi-GPU items closed-as-preserved 2026-04-23 with full justification records (`D7_p2p_gemm_remote_weights.md`, `E7_all_reduce_floor.md`) — host has 2 physical B300 GPUs but only GPU 0 exposed (nvidia-fabricmanager service failed since 2026-04-17 because no NVSwitch hardware enumerated on PCI; on this NVL5-class SXM6 host, fabric manager is required to expose peer GPUs).
 
 ---
 

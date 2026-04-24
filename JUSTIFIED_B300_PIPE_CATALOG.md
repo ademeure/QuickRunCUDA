@@ -2,17 +2,17 @@
 
 ## TLDR — current audit state (2026-04-23)
 
-**Coverage:** 52 catalog sections audited, 0 still pending (D7+E7 added 2026-04-23 as 🟡 closed-as-preserved due to single-GPU rig state)
+**Coverage:** 53 catalog sections audited, 0 still pending (D7+E7 added 2026-04-23 as 🟡 closed-as-preserved due to single-GPU rig state; B6 DRAM-write clock-dep added 2026-04-23 as ⚠ refined)
 - **40 ✅ replicated/verified** (full ncu + SASS + cudaDeviceProp evidence on this rig)
-- **6 ⚠ partially verified** (some rows confirmed, some preserved)
+- **7 ⚠ partially verified / refined** (some rows confirmed, some preserved; B6 added 2026-04-23)
 - **6 🟡 preserved** (catalog plausible but specific tests not re-run; e.g. tcgen05 throughput, multi-GPU all-reduce + P2P GEMM, methodology notes, tensor unified)
 
-**REVIEW_CHECKLIST status (post D7+E7 close):** **192 [x] resolved / 4 [ ] still open** across all checklist files:
-- **Main:** 76 closed / 4 open (started session at 23/61)
+**REVIEW_CHECKLIST status (post D7+E7+B6 close):** **193 [x] resolved / 3 [ ] still open** across all checklist files:
+- **Main:** 77 closed / 3 open (started session at 23/61; B6 closed 2026-04-23)
 - **Supp _10_30:** 55 closed / 0 open (DONE)
 - **Supp _31_END:** 61 closed / 0 open (DONE)
 
-The 4 remaining open are all genuinely measurement-blocked (B6 DRAM-write clock-dep, B7/B8 TMEM, D5 tcgen05 multi-format). Power group (F1-F6) deferred en bloc to a separate power campaign; methodology meta-claims (H1-H7) resolved as documented audit lessons. **D7+E7 multi-GPU items closed-as-preserved 2026-04-23** (`justifications/D7_p2p_gemm_remote_weights.md`, `justifications/E7_all_reduce_floor.md`): host has 2 physical B300 GPUs (PCI 04:00.0 + 05:00.0) but only GPU 0 enumerated by CUDA; root cause is `nvidia-fabricmanager` service failed since 2026-04-17 because no NVSwitch hardware is on PCI (the SXM6 host's NVSwitch boards are missing/dead → fabric manager precheck flags "Pre-NVL5" then NVSwitch driver returns `NV_WARN_NOTHING_TO_DO`). Both items have full justification records with the catalog claim preserved as plausible from first-principles + prior `project_b300_multigpu` rig measurements (when both GPUs were enumerated: 718 GB/s P2P W, 820 GB/s P2P R). All other catalog claims have been either verified, refined, or falsified with cross-link to a per-section justification record.
+The 3 remaining open are all genuinely measurement-blocked (B7/B8 TMEM, D5 tcgen05 multi-format). Power group (F1-F6) deferred en bloc to a separate power campaign; methodology meta-claims (H1-H7) resolved as documented audit lessons. **B6 DRAM-write clock-dep closed 2026-04-23** (`justifications/B6_dram_write_clock_dep.md`): clock-locked sweep on GPU 0 confirms user's hypothesis — DRAM write scales with SM clock (5.51/6.20/6.75/6.86 TB/s @ 1500/1700/1920/2032 MHz); canonical write peak = 6.86 TB/s @ 2032 MHz (catalog 7.09 was 3% optimistic). **D7+E7 multi-GPU items closed-as-preserved 2026-04-23** (`justifications/D7_p2p_gemm_remote_weights.md`, `justifications/E7_all_reduce_floor.md`): host has 2 physical B300 GPUs (PCI 04:00.0 + 05:00.0) but only GPU 0 enumerated by CUDA; root cause is `nvidia-fabricmanager` service failed since 2026-04-17 because no NVSwitch hardware is on PCI (the SXM6 host's NVSwitch boards are missing/dead → fabric manager precheck flags "Pre-NVL5" then NVSwitch driver returns `NV_WARN_NOTHING_TO_DO`). Both items have full justification records with the catalog claim preserved as plausible from first-principles + prior `project_b300_multigpu` rig measurements (when both GPUs were enumerated: 718 GB/s P2P W, 820 GB/s P2P R). All other catalog claims have been either verified, refined, or falsified with cross-link to a per-section justification record.
 
 **The 51 detailed records under `justifications/` contain:** verbatim catalog claims, exact `./QuickRunCUDA` invocation, raw ncu metrics, SASS dumps with instruction counts, % delta vs catalog, verdict tag.
 
@@ -96,6 +96,7 @@ The 4 remaining open are all genuinely measurement-blocked (B6 DRAM-write clock-
 | §0 Cheat-sheet | L18 | ✅ consolidated | [00cdf_cheatsheet_design_rules.md](justifications/00cdf_cheatsheet_design_rules.md) — TMA/mbarrier/design rules + tensor unified; 4 catalog discrepancies flagged |
 | §0 FFMA peak (71.8 / 72.3 TFLOPS @ 1.92 GHz) | L30 | ✅ replicated | [00a_ffma_peak.md](justifications/00a_ffma_peak.md) — 71.82 TFLOPS measured (100% match), 99.51% pipe_fma, clock=1942 MHz DVFS settling |
 | §0 Memory hierarchy ladder | L37 | ✅ replicated | [00b_mem_hierarchy.md](justifications/00b_mem_hierarchy.md) — SMEM 35.88 TB/s, L2 20.3 TB/s, HBM 7.17-7.25 TB/s |
+| §B6 DRAM write peak — clock-dependence | L46 (catalog 7.09 TB/s) | ⚠ refined (clock-dep audit) | [B6_dram_write_clock_dep.md](justifications/B6_dram_write_clock_dep.md) — measured 5.51/6.20/6.75/6.86 TB/s @ 1500/1700/1920/2032 MHz. Catalog 7.09 OPTIMISTIC by 3-30%. **User's hypothesis CONFIRMED**: SM→L2 write path scales linearly with SM clock (74-80% SoL of 32B/clk×148 SMs ceiling); HBM binds only ≥1920 MHz. Canonical write peak = **6.86 TB/s @ 2032 MHz boost / 6.75 @ 1920 MHz lock**. |
 | §0 TMA cheatsheet + mbarrier + design rules + tensor unified | L54-153 | ⚠ partially verified | [00cdf_cheatsheet_design_rules.md](justifications/00cdf_cheatsheet_design_rules.md) — KEY FINDINGS: mbarrier.arrive 8.1→real 27 cy (3.4× off, modifier mismatch); Rule 9 atomic 5×→real 34× (warp-level only); Rule 11 FP64 300× slower→real ~2300×; __syncthreads 45→real 54 cy. TMA peaks confirmed. |
 | §0 Quick reference: latency/throughput | L97 | ⚠ partially verified | [00e_latency_table.md](justifications/00e_latency_table.md) — 11 confirmed (FFMA=4, MUFU.sin=24 exact, fences); 2 KNOWN WRONG (DFMA 92 should be 63.9; syncthreads 12+2W should be 22+2W); 3 plausible-not-re-tested |
 | §0 Tensor unified 128 cy/MMA | L120 | 🟡 covered by 00gh + 00cdf | (cross-ref) |
