@@ -360,28 +360,36 @@ Single-CTA, single-warp, no busy chip:
 | Op | cy |
 |---|--:|
 | `atom.global.add.u32` chain | **45** (matches LDS chain at 45 cy) |
-| `atom.global.add.u64` | 156 |
-| `atom.global.cas.b64` | 731 |
 | `atom.global.add.f32` | ~24% **faster** than u32 chip-wide |
 | `atomicAdd(__half / __nv_bfloat16)` | emits `ATOM.E.CAS.STRONG.GPU` loop, **6.3× slower than u32** (NOT 45×) |
 | `atom.global.add.{f16x2, bf16x2}` PTX | NATIVE `REDG.E.ADD.F16x2`, within 12% of u32 |
 | `atomicAdd(addr, 1u)` no-return | emits `ATOMS.POPC.INC.32` — 2.5× speedup at warp-broadcast |
 | `red.add.global` (no-return REDG) vs ATOMG with return | **25× faster** (32 cy vs 790 cy) |
 
-### Contention (148 CTAs × 128 threads)
+### Contention — chip-wide throughput (148 CTAs × 128 threads)
 
 | Pattern | Throughput Gops/s | vs 1-hotspot |
 |---|--:|--:|
 | 1 hotspot (single addr, all 18,944 threads) | 49.1 | 1× baseline |
 | **N=2 addresses** | 1.69 | **29× SLOWER** (real anomaly: L2 atomic-unit merging is lost, addresses serialize on same L2 slice) |
-| N=4 | 4.4 | 11× slower |
-| N=8 | 9.9 | 5× slower |
-| N=16 | 9.7 | 5× slower |
-| N=64 | 14.9 | 3.3× slower |
-| N=256+ | 22+ | 2.0× slower (asymptote) |
 | Per-warp clean (`addr_idx = warpId`) | 53.7 | 1.09× **FASTER** |
 | Per-CTA clean | 609 | 12.4× **FASTER** |
 | Coalesced unique-per-lane | 221 | 0.023 atom/cy/lane |
+
+### Contention — distinct-address sweep (single-warp regime, cy/atom)
+
+Different methodology from the throughput table above (smaller CTA × thread count → less L2 pressure), so the N=2 slowdown reads as 20× here vs 29× in the chip-wide regime.
+
+| Distinct addrs | cy/atom | × 1-hotspot |
+|---:|--:|--:|
+| 1 | 126 | 1.0× |
+| **2** | 2,537 | **20× WORSE** |
+| 4 | 1,246 | 10× |
+| 8 | 549 | 4.4× |
+| 16 | 564 | 4.5× |
+| 32 | 593 | 4.7× |
+| 64 | 373 | 3.0× |
+| 256 | 258 | 2.0× (asymptote) |
 
 ### Scope penalty (apples-to-apples)
 
@@ -441,7 +449,7 @@ Per-warp throughput (single warp, ILP=16, other SMSPs idle):
 | `rcp.approx.f32` | MUFU.RCP | 9.09 | 0.44 |
 | `ex2.approx.ftz.bf16x2` | MUFU.EX2.BF16x2 | — | same op-throughput at half dispatch pressure |
 
-**EX2 is uniquely 2× faster than every other MUFU op** — designed for activation functions. Latency at low ILP: RCP=44, SIN=24, EX2=18; need ILP ≥ ~5 (EX2) or ~10 (SIN) to saturate.
+**EX2 is uniquely 2× faster than every other MUFU op** — designed for activation functions. Latency at low ILP: RCP=44, SIN=24, EX2=18 cy. Need ILP ≥ 8 chains/warp to saturate (else latency-bound).
 
 Practical:
 - Softmax: prefer `ex2` (`exp = ex2 × ln(2)`).
@@ -837,6 +845,9 @@ Each item: **what** the claim is — **why uncertain** — **how to validate**. 
 - [ ] **L1 hit bandwidth at WS ≤ 1 MB** — catalog quotes 36.1 TB/s; current benches mix L1/L2. **Validate**: pure L1-resident kernel at WS = 256 KB with `.ca`, ncu `l1tex__t_bytes.sum.per_second`.
 - [ ] **SHFL broadcast peak** — catalog L83 mentions "1.9 cy free" in some context vs general 7.46 cy. Need explicit broadcast vs general benchmark. **Validate**: `bench_shfl.cu` with broadcast variant (all lanes read same source) vs general bfly.
 - [ ] **`atom.shared.add.f32` 97 cy emulation** (BSYNC + CAS loop) — catalog claim, no SASS confirmation here. **Validate**: dump SASS of `atomicAdd((float*)smem, val)`; count cy via clock64.
+- [ ] **`atom.global.add.u64` = 156 cy** — catalog "not retested"; widening from 32-bit (45 cy) to 64-bit triples cy, plausible but not confirmed on this rig. **Validate**: clock64-bracketed `atom.global.add.u64` chain.
+- [ ] **`atom.global.cas.b64` = 731 cy** — catalog "not retested"; ~30× slower than ADD claimed. **Validate**: clock64-bracketed CAS loop with consistent expected/desired so it always succeeds in 1 try.
+- [ ] **`atom.shared.add.u32` = 24 cy** — catalog "not retested" (ATOMS path, presumably faster than global ATOM at 45 cy). **Validate**: clock64-bracketed shared atomic chain.
 - [ ] **`MATCH.ANY` 375 cy claim** — single source, suspicious. **Validate**: isolated `match.any.sync.b32` chain.
 
 ### Methodology / infrastructure
