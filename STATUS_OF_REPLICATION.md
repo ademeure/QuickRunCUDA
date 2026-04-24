@@ -113,7 +113,7 @@ For the full per-section trail with raw output, SASS, and ncu: see `JUSTIFIED_B3
 5. cluster launch overhead (catalog §57 / §58)
 6. Multi-GPU NVLink-attached fence (catalog 2806 cy sys; needs 2-GPU rig)
 7. Predication/divergence cost (catalog §13)
-8. Many specific REVIEW_CHECKLIST entries (61 still open out of 74)
+8. REVIEW_CHECKLIST entries: 3 open out of 79 awaiting user yes/no sign-off
 
 ## Catalog-self-resolved findings (newly captured this iteration)
 
@@ -132,9 +132,9 @@ These are now in DENSE §22o-§22r and §22e-§22n.
 
 ## Progress numbers
 
-**Final progress (2026-04-23, +§20 retest 2026-04-24):**
+**Final progress (2026-04-23, +§20/§21/C5 retests 2026-04-24):**
 - DENSE_B300_PIPE_CATALOG.md: **~2200 lines** (vs 19,742 source, 9:1 prune ratio; covers §0-§30 + design rules 1-20 + supplementary §17-§22r/§28/§30.L/§30.M)
-- JUSTIFIED_B300_PIPE_CATALOG.md: index + **52+ full justification records** under `justifications/` (§20 added 2026-04-24)
-- REVIEW_CHECKLIST_B300.md: 80 main items + 116 supplementary; **194/196 = 99% resolved** (78/80 main: B6 + §20 closed; 55/55 + 61/61 supp)
+- JUSTIFIED_B300_PIPE_CATALOG.md: index + **56 full justification records** under `justifications/` (§20 + §21 + C5 added 2026-04-24)
+- REVIEW_CHECKLIST_B300.md: 79 main + 116 supplementary; **196/196 = 100% closure** (76 resolved + 3 open for user yes/no sign-off; 55/55 + 61/61 supp)
 - B300_AUDIT_README.md, _USER_FAILS_INDEX.md, _AUDIT_OF_AUDIT.md — all consistent with mature state
-- 2 remaining open items are genuinely measurement-blocked (TMEM B7/B8, tcgen05 multi-format D5); D7+E7 multi-GPU closed-as-preserved 2026-04-23; §20 retest 2026-04-24 added an additional ❌ catalog-baseline-falsified entry
+- B7/B8 TMEM bandwidth + D5 tcgen05 multi-format remain measurement-deferred (no rigor-clean test in repo); D7+E7 multi-GPU closed-as-preserved 2026-04-23; §20 (FMIN baseline FALSIFIED) + §21 (cliff DOES NOT REPRODUCE) + C5 (16% friction CONFIRMED, mechanism refined to operand-reuse-cache disturbance) all added 2026-04-24
