@@ -82,8 +82,8 @@ For the full per-section trail with raw output, SASS, and ncu: see `JUSTIFIED_B3
 
 ## Skeptical review supplements (entries indexed but not all replicated)
 
-- `_SKEPTICAL_REVIEW_10_30.md` — 50 entries, Groups I-O (redux/SHFL, latency table, atomics, TMA, ext op cat, research-log repetition, methodology, pipe placement, clock state, vendor doc inconsistencies)
-- `_SKEPTICAL_REVIEW_31_END.md` — 74 entries, Groups P-X (methodology, dual-issue map, tcgen05, DSMEM, fence/barrier, atomics, TMA, cache/L2, architectural limits)
+- `_SKEPTICAL_REVIEW_10_30.md` — **55/55 closed** (Groups I-R: redux/SHFL/warp-coop, latency, atomics, TMA/mbarrier, extended ops, research-log repetition, methodology, pipe-placement, clock state, vendor-doc inconsistencies)
+- `_SKEPTICAL_REVIEW_31_END.md` — **61/61 closed** (Groups P-Z: methodology, dual-issue + tcgen05 peak, DSMEM/cluster/cache, fence + barrier, atomics, TMA + cp.async, L2 cache, architectural-limits + mythbusts, latency + tcgen05 claims, contradicted-later, unverified SASS opcodes)
 
 ## Catalog corrections recommended (so far)
 

@@ -276,8 +276,8 @@ These five remaining items all need either a separate measurement campaign (B6/B
 ## Critical follow-up (top 10 from extended skeptical review)
 
 These are the highest-priority items that crossed multiple groups during the deeper §10–end skeptical pass. Full lists in:
-- [`justifications/_SKEPTICAL_REVIEW_10_30.md`](justifications/_SKEPTICAL_REVIEW_10_30.md) — **55/55 closed (DONE 2026-04-23)** — Groups I-R + supplementary O/P/Q
-- [`justifications/_SKEPTICAL_REVIEW_31_END.md`](justifications/_SKEPTICAL_REVIEW_31_END.md) — **61/61 closed (DONE 2026-04-23)** — Groups P-X + Y/Z
+- [`justifications/_SKEPTICAL_REVIEW_10_30.md`](justifications/_SKEPTICAL_REVIEW_10_30.md) — **55/55 closed (DONE 2026-04-23)** — Groups I-R (redux/SHFL/warp-coop, latency, atomics, TMA/mbarrier, extended ops, research-log repetition, methodology, pipe-placement, clock state, vendor-doc inconsistencies)
+- [`justifications/_SKEPTICAL_REVIEW_31_END.md`](justifications/_SKEPTICAL_REVIEW_31_END.md) — **61/61 closed (DONE 2026-04-23)** — Groups P-Z (methodology, dual-issue + tcgen05 peak, DSMEM/cluster/cache, fence + barrier, atomics, TMA + cp.async, L2 cache, architectural-limits + mythbusts, latency + tcgen05 claims, contradicted-later, unverified SASS opcodes)
 
 Each entry in those files is now cross-linked to the per-section justification record (`justifications/<id>.md`) that resolved it. Combined supplementary closure: 116/116. Combined main: 74/80.
 
