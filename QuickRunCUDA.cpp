@@ -290,7 +290,9 @@ int main(int argc, char **argv) {
 		// Initialize CUDA (unfortunately a bit slow which is another reason why server mode is useful)
 		checkCudaErrors(cuInit(0));
 		checkCudaErrors(cuDeviceGet(&cuDeviceGlobal, 0));
-		checkCudaErrors(cuCtxCreate(&cuContextGlobal, NULL, 0, cuDeviceGlobal));
+		// cuCtxCreate has had 3/4/5-arg signatures over the years; this matches the
+		// CUDA 12.5+ cuCtxCreate_v4 which takes a CUctxCreateParams* (NULL for default).
+		checkCudaErrors(cuCtxCreate(&cuContextGlobal, nullptr, 0, cuDeviceGlobal));
 
 		// Set GPU clock speed if requested
 		if (args.clock_speed > 0) {
@@ -455,8 +457,8 @@ int run_cuda_test(CmdLineArgs& args) {
 	if (args.randomArrayA || args.randomArrayB) {
 		uint *h_A = reinterpret_cast<uint *>(malloc(sizeA));
 		uint *h_B = reinterpret_cast<uint *>(malloc(sizeB));
-		const int chunk_size = 1024 * 1024;
-		const int num_chunks = (std::max(args.arrayDwordsA, args.arrayDwordsB) + chunk_size - 1) / chunk_size;
+		const size_t chunk_size = 1024 * 1024;
+		const size_t num_chunks = (std::max(args.arrayDwordsA, args.arrayDwordsB) + chunk_size - 1) / chunk_size;
 		#pragma omp parallel
 		{
 			#pragma omp for schedule(static)

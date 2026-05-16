@@ -89,8 +89,9 @@ class nvmlClass {
   public:
     nvmlClass( int const &deviceID, uint force_clock=0, bool gather_stats=true, bool force_fan_speed=true,
                bool write_csv=true, std::string const &filename="gpuStats.csv" ) :
-        time_steps_ {}, filename_ { filename }, outfile_ {}, device_ {}, forced_fan_ { force_fan_speed },
-        loop_ { false }, outer_loop_ { true }, inside_loop_ { false }, write_csv_ { write_csv } {
+        time_steps_ {}, filename_ { filename }, outfile_ {}, device_ {},
+        thread_alive_ { false }, write_csv_ { write_csv }, forced_fan_ { force_fan_speed },
+        loop_ { false }, outer_loop_ { true }, inside_loop_ { false } {
 
         // Initialize NVML library and get device handle
         NVML_RT_CALL( nvmlInit() );
@@ -200,7 +201,7 @@ class nvmlClass {
                 }
             }
 
-            if (samples[i].utilization.gpu >= min_util) {
+            if (samples[i].utilization.gpu >= static_cast<uint>(min_util)) {
                 if (samples[i].powerUsage > max_power) {
                     max_power = samples[i].powerUsage;
                 }
@@ -247,7 +248,7 @@ class nvmlClass {
                     ignore_first_power_sample = false;
                 }
             }
-            if (samples[i].utilization.gpu >= min_util) {
+            if (samples[i].utilization.gpu >= static_cast<uint>(min_util)) {
                 avg_power += samples[i].powerUsage;
                 avg_clock += samples[i].clockSM;
                 avg_temp += samples[i].temperature;
