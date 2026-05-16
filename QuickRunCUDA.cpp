@@ -370,7 +370,6 @@ int run_cuda_test(CmdLineArgs& args) {
 
 	// Compile or load kernel
 	char *cubin;
-	CudaHelper CUDA(cuDeviceGlobal);
 	CUfunction kernel_addr, init_addr;
 	size_t cubin_size;
 	CUmodule module;
@@ -390,7 +389,7 @@ int run_cuda_test(CmdLineArgs& args) {
 		}
 	} else {
 		// Compile the kernel to CUBIN (!!!)
-		CUDA.compileFileToCUBIN(cuDeviceGlobal, &cubin, args.kernel_filename.c_str(), args.header.c_str(), &cubin_size);
+		compileFileToCUBIN(cuDeviceGlobal, &cubin, args.kernel_filename.c_str(), args.header.c_str(), &cubin_size);
 
 		// Write the cubin to a binary file for potential reuse (and disassembly)
 		std::ofstream cubin_file("output.cubin", std::ios::binary);
@@ -425,8 +424,8 @@ int run_cuda_test(CmdLineArgs& args) {
 		}
 	}
 
-	// Load the module and get function pointers
-	module = CUDA.loadCUBIN(cubin, cuContextGlobal, cuDeviceGlobal);
+	// Load the module and get function pointers (takes ownership: delete[]s cubin)
+	module = loadCUBIN(cubin);
 	checkCudaErrors(cuModuleGetFunction(&kernel_addr, module, "kernel"));
 	if (args.runInitKernel) {
 		checkCudaErrors(cuModuleGetFunction(&init_addr, module, "init"));
