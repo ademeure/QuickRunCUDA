@@ -144,7 +144,8 @@ void setupCommandLineParser(CLI::App& app, CmdLineArgs& args) {
 	kernel_exec_group->add_option("-s,--sharedMemoryBlockBytes", args.sharedMemoryBlockBytes, "Shared memory size per block in bytes");
 	kernel_exec_group->add_option("-o,--sharedMemoryCarveoutBytes", args.sharedMemoryCarveoutBytes, "Shared memory carveout in bytes");
 	kernel_exec_group->add_flag("-i,--runInitKernel", args.runInitKernel, "Run initialization kernel before main kernel");
-	kernel_exec_group->add_option("--l2flush", args.l2FlushMode, "L2 flush mode: 0=none, 1=at start, 2=every run");
+	kernel_exec_group->add_option("--l2flush", args.l2FlushMode, "L2 flush mode: 0=none, 1=at start, 2=every run")
+		->check(CLI::Range(0, 2));
 
 	// Performance measurement
 	auto perf_group = app.add_option_group("Performance Measurement");
@@ -484,15 +485,14 @@ int run_cuda_test(CmdLineArgs& args) {
 		checkCudaErrors(cuMemsetD8(d_B, 0, sizeB));
 	}
 
-	// Prepare kernel arguments
-	int kernel_int_args[3] = {args.kernel_int_args[0], args.kernel_int_args[1], args.kernel_int_args[2]};
+	// Prepare kernel arguments (point directly into args; lifetime covers all launches below)
 	void *kernel_args[] = {
 		reinterpret_cast<void *>(&d_A),
 		reinterpret_cast<void *>(&d_B),
 		reinterpret_cast<void *>(&d_C),
-		reinterpret_cast<void *>(&kernel_int_args[0]),
-		reinterpret_cast<void *>(&kernel_int_args[1]),
-		reinterpret_cast<void *>(&kernel_int_args[2])
+		reinterpret_cast<void *>(&args.kernel_int_args[0]),
+		reinterpret_cast<void *>(&args.kernel_int_args[1]),
+		reinterpret_cast<void *>(&args.kernel_int_args[2])
 	};
 
 	// Launch the init kernel if requested
@@ -667,12 +667,13 @@ int run_cuda_test(CmdLineArgs& args) {
 		free(ref_C);
 	}
 
-	// Clean up resources
+	// Clean up resources. d_flush is intentionally not freed here — it's a global L2-flush
+	// scratch buffer that persists across run_cuda_test() invocations so server mode doesn't
+	// pay a 200 MiB alloc/free per command. The OS reclaims it on process exit.
 	free(h_C);
 	checkCudaErrors(cuMemFree(d_A));
 	checkCudaErrors(cuMemFree(d_B));
 	checkCudaErrors(cuMemFree(d_C));
-	if (d_flush) { checkCudaErrors(cuMemFree(d_flush)); d_flush = 0; }
 	checkCudaErrors(cuModuleUnload(module));
 
 	return 0;

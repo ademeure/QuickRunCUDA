@@ -65,10 +65,13 @@ ifeq ("$(CUDALIB)","")
 else
     CUDALIB := $(shell echo $(CUDALIB) | sed "s/ .*//" | sed "s/\/libcuda.so//" )
     LIBRARIES += -L$(CUDALIB) -lcuda
-    LIBRARIES += -L$(CUDA_PATH)/lib64 -lcupti -lnvidia-ml -lnvperf_host -lnvperf_target -lcurand
+    # Driver API + NVML (clock locking via --clock-speed). The host doesn't use cupti,
+    # nvperf_{host,target}, or curand directly — if you re-introduce profile-API or
+    # cuRAND calls, add the libs back here.
+    LIBRARIES += -L$(CUDA_PATH)/lib64 -lnvidia-ml
 endif
 
-# Always add NVRTC
+# NVRTC: always required (runtime kernel compilation)
 LIBRARIES += -lnvrtc
 
 # Include paths
