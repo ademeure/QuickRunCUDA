@@ -40,6 +40,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <cmath>
 #include <unistd.h>
@@ -195,36 +196,40 @@ void setupCommandLineParser(CLI::App& app, CmdLineArgs& args) {
 }
 
 /**
- * Parse a command string into CmdLineArgs (for server mode)
+ * Parse a command string into CmdLineArgs (for server mode).
+ * Splits on unquoted whitespace; supports both single and double quotes as
+ * argument delimiters (the closing quote must match the opener; the other
+ * kind embeds literally). Doesn't support backslash escapes.
  * @param cmd Command string to parse
  * @return Populated CmdLineArgs structure
  */
 CmdLineArgs parseCommandString(const std::string& cmd) {
-    // Parse command into argc/argv
     std::vector<std::string> args_vec{"QuickRunCUDA"};
     std::istringstream iss(cmd);
     std::string current_arg;
-    bool in_quotes = false;
+    char quote_char = 0;  // 0 = not in quotes, else the opening quote char
 
     iss >> std::noskipws;
     char c;
     while (iss.get(c)) {
-        if (c == '\'') {
-            if (!in_quotes) {
-                in_quotes = true;
-                current_arg = "";
-            } else {
-                in_quotes = false;
+        if (quote_char) {
+            if (c == quote_char) {
+                quote_char = 0;
                 args_vec.push_back(current_arg);
+            } else {
+                current_arg += c;
             }
             continue;
         }
-
-        if (in_quotes) {
-            current_arg += c;
-        } else if (!std::isspace(c)) {
+        if (c == '\'' || c == '"') {
+            quote_char = c;
+            current_arg.clear();
+            continue;
+        }
+        if (!std::isspace(static_cast<unsigned char>(c))) {
             current_arg = c;
-            while (iss.get(c) && !std::isspace(c)) {
+            while (iss.get(c) && !std::isspace(static_cast<unsigned char>(c))) {
+                if (c == '\'' || c == '"') { iss.unget(); break; }
                 current_arg += c;
             }
             args_vec.push_back(current_arg);
@@ -293,56 +298,55 @@ int main(int argc, char **argv) {
 
 		// Run in server mode (loop via IPC) or normal mode (single run based on provided arguments)
 		if (!args.server_mode) {
-			// Run the test directly
-			int result = run_cuda_test(args);
-		} else {
-			// Server mode - loop waiting for new commands via IPC
-			IPCHelper ipc;
-			while (true) {
-				std::string cmd;
-				if (ipc.waitForCommand(cmd)) {
-					if (cmd == "exit") {
-						break;
-					}
-					// Redirect stdout for capturing output
-					fflush(stdout);
-					int stdout_fd = dup(STDOUT_FILENO);
-					int pipe_fd[2];
-					pipe(pipe_fd);
-					dup2(pipe_fd[1], STDOUT_FILENO);
-					close(pipe_fd[1]);
-					// Parse command string into CmdLineArgs
-					CmdLineArgs cmd_args = parseCommandString(cmd);
+			return run_cuda_test(args);
+		}
 
-					// Run the test (!!!)
-					int result = run_cuda_test(cmd_args);
+		// Server mode - loop waiting for new commands via IPC.
+		// Catch per-command exceptions so a single bad kernel doesn't kill the daemon.
+		IPCHelper ipc;
+		while (true) {
+			std::string cmd;
+			if (!ipc.waitForCommand(cmd)) continue;
+			if (cmd == "exit") break;
 
-					// Restore stdout and get captured output
-					fflush(stdout);
-					dup2(stdout_fd, STDOUT_FILENO);
-					close(stdout_fd);
-					// Read captured output
-					std::stringstream buffer;
-					char buf[4096];
-					ssize_t n;
-					while ((n = read(pipe_fd[0], buf, sizeof(buf)-1)) > 0) {
-						buf[n] = '\0';
-						buffer << buf;
-					}
-					close(pipe_fd[0]);
-					// Send captured output
-					ipc.sendResponse(buffer.str());
-				}
+			// Redirect stdout into a pipe so we can capture and return what the test prints.
+			fflush(stdout);
+			int stdout_fd = dup(STDOUT_FILENO);
+			int pipe_fd[2];
+			pipe(pipe_fd);
+			dup2(pipe_fd[1], STDOUT_FILENO);
+			close(pipe_fd[1]);
+
+			std::string error_msg;
+			try {
+				CmdLineArgs cmd_args = parseCommandString(cmd);
+				run_cuda_test(cmd_args);
+			} catch (const std::exception &e) {
+				error_msg = e.what();
 			}
 
-			// Write server mode's exit status to file
-			std::ofstream file("returning.txt");
-			file << "returning 0" << "\n";
-			file.close();
-			return 0;
+			// Always restore stdout, even if the test threw.
+			fflush(stdout);
+			dup2(stdout_fd, STDOUT_FILENO);
+			close(stdout_fd);
+
+			std::stringstream buffer;
+			char buf[4096];
+			ssize_t n;
+			while ((n = read(pipe_fd[0], buf, sizeof(buf)-1)) > 0) {
+				buf[n] = '\0';
+				buffer << buf;
+			}
+			close(pipe_fd[0]);
+			if (!error_msg.empty()) buffer << "Error: " << error_msg << "\n";
+			ipc.sendResponse(buffer.str());
 		}
+		return 0;
 	} catch (const CLI::ParseError &e) {
 		return app.exit(e);
+	} catch (const std::exception &e) {
+		fprintf(stderr, "Error: %s\n", e.what());
+		return 1;
 	}
 }
 
@@ -384,8 +388,7 @@ int run_cuda_test(CmdLineArgs& args) {
 			cubin_file.read(cubin, cubin_size);
 			cubin_file.close();
 		} else {
-			fprintf(stderr, "Failed to open output.cubin for reading!\n");
-			exit(EXIT_FAILURE);
+			throw std::runtime_error("Failed to open output.cubin for reading");
 		}
 	} else {
 		// Compile the kernel to CUBIN (!!!)
@@ -397,8 +400,8 @@ int run_cuda_test(CmdLineArgs& args) {
 			cubin_file.write(cubin, cubin_size);
 			cubin_file.close();
 		} else {
-			fprintf(stderr, "Failed to open file to write cubin!\n");
-			exit(EXIT_FAILURE);
+			delete[] cubin;
+			throw std::runtime_error("Failed to open output.cubin for writing");
 		}
 
 		// Auto-dump SASS to sass/ directory
@@ -435,14 +438,12 @@ int run_cuda_test(CmdLineArgs& args) {
 	if (!args.load_c_array.empty()) {
 		std::ifstream infile(args.load_c_array, std::ios::binary);
 		if (!infile) {
-			fprintf(stderr, "Failed to open C array input file: %s\n", args.load_c_array.c_str());
-			exit(EXIT_FAILURE);
+			throw std::runtime_error("Failed to open C array input file: " + args.load_c_array);
 		}
 		infile.read(reinterpret_cast<char*>(h_C), sizeC);
-		if (infile.gcount() != sizeC) {
-			fprintf(stderr, "Input file size (%ld) does not match expected C array size (%ld)\n",
-					infile.gcount(), sizeC);
-			exit(EXIT_FAILURE);
+		if (static_cast<size_t>(infile.gcount()) != sizeC) {
+			throw std::runtime_error("Input file size (" + std::to_string(infile.gcount()) +
+									 ") does not match expected C array size (" + std::to_string(sizeC) + ")");
 		}
 		checkCudaErrors(cuMemcpyHtoD(d_C, h_C, sizeC));
 	} else {
@@ -638,9 +639,8 @@ int run_cuda_test(CmdLineArgs& args) {
 	// Optionally compare with reference file
 	if (!args.reference_c_filename.empty()) {
 		std::ifstream ref_file(args.reference_c_filename, std::ios::binary | std::ios::ate);
-		if (!ref_file || ref_file.tellg() != sizeC) {
-			fprintf(stderr, "Reference file missing or wrong size\n");
-			exit(EXIT_FAILURE);
+		if (!ref_file || static_cast<size_t>(ref_file.tellg()) != sizeC) {
+			throw std::runtime_error("Reference file missing or wrong size: " + args.reference_c_filename);
 		}
 		ref_file.seekg(0);
 

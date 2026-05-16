@@ -17,6 +17,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 
@@ -62,13 +63,11 @@ inline void compileFileToCUBIN(
     char const *cudaIncludePath = nullptr)
 {
   if (!filename || !*filename) {
-    std::cerr << "compileFileToCUBIN: filename is empty\n";
-    std::exit(EXIT_FAILURE);
+    throw std::runtime_error("compileFileToCUBIN: filename is empty");
   }
   std::ifstream inputFile(filename, std::ios::in | std::ios::binary | std::ios::ate);
   if (!inputFile.is_open()) {
-    std::cerr << "compileFileToCUBIN: cannot open " << filename << "\n";
-    std::exit(EXIT_FAILURE);
+    throw std::runtime_error(std::string("compileFileToCUBIN: cannot open ") + filename);
   }
   size_t inputSize = (size_t)inputFile.tellg();
   size_t headerSize = header ? std::strlen(header) : 0;
@@ -116,7 +115,10 @@ inline void compileFileToCUBIN(
               << log
               << "\n------- END LOG -------\n";
   }
-  checkCudaErrors(res);
+  if (res != NVRTC_SUCCESS) {
+    nvrtcDestroyProgram(&prog);
+    throw std::runtime_error(std::string("nvrtcCompileProgram failed: ") + nvrtcGetErrorString(res));
+  }
 
   size_t codeSize = 0;
   checkCudaErrors(nvrtcGetCUBINSize(prog, &codeSize));
