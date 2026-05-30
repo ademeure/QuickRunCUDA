@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 QuickRunCUDA is a microbenchmarking harness for CUDA kernels. A single C++ host binary (`QuickRunCUDA.cpp`) compiles a user-supplied `.cu` file to CUBIN at runtime via NVRTC, allocates three device buffers, launches the kernel once (optionally with an `init` kernel first), then optionally runs N timed iterations with CUDA events. This lets you iterate on a kernel without rebuilding the host every time.
 
+> **Deep harness reference:** `docs/HARNESS.md` is a line-level walk-through of the host — every CLI flag with edge cases, the L2-flush mode matrix, the server-mode protocol and its limits, helper internals (used vs dead), and a triaged known-issues list. Read it before modifying the harness itself. (This file is the index; `docs/HARNESS.md` is the 30-minute version.)
+
 ## Build & run
 
 ```bash
@@ -49,7 +51,7 @@ And, if `-i` is passed, an `init` kernel with the same signature. `A`, `B`, `C` 
 ## Repository layout
 
 - `QuickRunCUDA.cpp` — the whole host (~680 lines). `main` → `run_cuda_test` does allocation, NVRTC compile, event-based timing, optional dump/compare.
-- `utils/cuda_helper.h` — NVRTC wrapper (`compileFileToCUBIN`, `loadCUBIN`), error macros. Also defines `GPU_SM_COUNT=132` etc. — these constants are **H100/H200 defaults** and are not auto-detected.
+- `utils/cuda_helper.h` — NVRTC wrapper (`compileFileToCUBIN`, `loadCUBIN`) + `checkCudaErrors` macro. (Stripped 2026-05-16: the old dead `CudaHelper` class and the stale `GPU_SM_COUNT=132` H100 macros are gone — get the SM count via `-p` / `CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT` instead.)
 - `utils/nvmlClass.h` — clock locking via NVML.
 - `utils/ipc_helper.h` — named-pipe glue for server mode.
 - `utils/CLI11.hpp` — third-party CLI parser (header-only).
